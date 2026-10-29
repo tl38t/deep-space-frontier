@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>深空星疆：商业与战争</title>
+  <!-- 仓库根目录入口：重定向到 game/ 下的真实游戏页。
+       跳转后页面 base 为 game/，相对路径 css/、js/ 等均正确。 -->
+  <meta http-equiv="refresh" content="0; url=game/index.html" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a0e1a; color: #cfe3ff;
+      font-family: -apple-system, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+    .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+    .logo { font-size: 22px; letter-spacing: 2px; }
+    .sub { font-size: 13px; opacity: .6; }
+    .bar { width: 180px; height: 4px; border-radius: 4px; background: #1b2740; overflow: hidden; }
+    .bar > i { display: block; height: 100%; width: 40%; background: linear-gradient(90deg,#3fa9ff,#7be0ff);
+      animation: slide 1s linear infinite; }
+    @keyframes slide { from { transform: translateX(-100%);} to { transform: translateX(350%);} }
+    a { color: #7be0ff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">深空星疆：商业与战争</div>
+    <div class="bar"><i></i></div>
+    <div class="sub">正在进入星图…</div>
+    <div class="sub">若未自动跳转，<a href="game/index.html">点击此处</a>。</div>
+  </div>
+  <script>
+    // JS 兜底重定向（部分环境禁用 meta refresh 时仍有用）
+    try { location.replace("game/index.html"); } catch (e) {}
+  </script>
+</body>
+</html>
