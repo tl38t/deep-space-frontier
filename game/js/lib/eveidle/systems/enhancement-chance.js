@@ -1,0 +1,63 @@
+/* ================================================================
+   共用强化成功率 — 边际递减纯函数层
+
+   舰船强化与装备强化共享同一套成功率公式，防止两套复制公式漂移。
+   2026-07-24 建立：从 equipment-enhancement.js 提取，改为通用参数名。
+
+   skillBonus = 技能溢出收益，最高 0.30
+   levelPenalty = 强化等级递增惩罚
+   final = clamp(0.50 + skillBonus − levelPenalty, dynamic floor, dynamic cap)
+   ================================================================ */
+
+function getEnhancementChanceBreakdown(engineeringLevel, requirementLevel, currentLevel) {
+  const eng = Math.max(1, Number(engineeringLevel) || 1);
+  const req = Math.max(1, Number(requirementLevel) || 1);
+  const gap = Math.max(0, eng - req);
+  const L = Math.max(0, Math.floor(Number(currentLevel) || 0));
+
+  // 技能溢出收益（递减，最高 30%）
+  const skillBonusRaw =
+    0.02 * Math.min(gap, 10) +
+    0.005 * Math.min(Math.max(gap - 10, 0), 15) +
+    0.001 * Math.max(gap - 25, 0);
+  const skillBonus = Math.min(skillBonusRaw, 0.30);
+
+  // 强化等级惩罚（递增）
+  const levelPenalty =
+    0.015 * Math.min(L, 5) +
+    0.03 * Math.min(Math.max(L - 5, 0), 5) +
+    0.05 * Math.min(Math.max(L - 10, 0), 5) +
+    0.08 * Math.max(L - 15, 0);
+
+  const skillGap = Math.max(0, eng - req);
+  const boundSteps = Math.floor(skillGap / 5);
+  const minChance = Math.min(0.15, 0.05 + boundSteps * 0.01);
+  const maxChance = Math.min(0.90, 0.80 + boundSteps * 0.01);
+  const raw = 0.50 + skillBonus - levelPenalty;
+  const final = Math.max(minChance, Math.min(maxChance, raw));
+  return { base: 0.50, skillBonus, levelPenalty, minChance, maxChance, final };
+}
+
+function getEnhancementChance(engineeringLevel, requirementLevel, currentLevel) {
+  return getEnhancementChanceBreakdown(engineeringLevel, requirementLevel, currentLevel).final;
+}
+
+// 潜能芯片·强化催化芯片：在已有成功率上 +10%（一次性，成功才消耗）。
+// 单一真相源 = 资源持有量（special:强化催化芯片）；不另设独立计数器，避免双记账漂移。
+// 装备强化与改装件附魔共用此函数。夹取上限 1.0（下限本就是 final，无需再夹）。
+function applyEnhanceCatalyst(finalChance, useChip, state) {
+  if (!useChip) return finalChance;
+  const id = (typeof window !== "undefined" && window.POTENTIAL_CHIP_CATALYST_ID) || "special:强化催化芯片";
+  if (typeof ResourceRegistry === "undefined" || !ResourceRegistry || typeof ResourceRegistry.get !== "function") return finalChance;
+  if (Number(ResourceRegistry.get(state, id)) < 1) return finalChance;
+  return Math.min(1.0, finalChance + 0.10);
+}
+
+// 双模式出口（微信小游戏 CommonJS 适配）：本文件两个顶层函数被
+// equipment-enhancement.js 与 ship-enhancement.js 跨文件消费，在微信的模块包裹下
+// 不显式导出即不可见；浏览器侧是幂等赋值，行为零变化。
+// 写法与 js/data/ships.js 等已上线的同款出口一致。
+if (typeof window !== "undefined") window.getEnhancementChanceBreakdown = getEnhancementChanceBreakdown;
+if (typeof window !== "undefined") window.getEnhancementChance = getEnhancementChance;
+if (typeof window !== "undefined") window.applyEnhanceCatalyst = applyEnhanceCatalyst;
+if (typeof module !== "undefined" && module.exports) module.exports = { getEnhancementChanceBreakdown: getEnhancementChanceBreakdown, getEnhancementChance: getEnhancementChance, applyEnhanceCatalyst: applyEnhanceCatalyst };

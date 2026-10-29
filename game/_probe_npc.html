@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><link rel="stylesheet" href="css/main.css?v=28"></head>
+<body>
+<div id="nsk-app">
+  <header id="nsk-hud"></header>
+  <div class="redline-banner">x</div>
+  <nav id="nsk-tabs"></nav>
+  <main id="nsk-view"></main>
+</div>
+<div id="nsk-pop"></div>
+<script src="js/core/rng.js?v=11"></script>
+<script src="js/core/store.js?v=19"></script>
+<script src="js/data/resources.js?v=12"></script>
+<script src="js/data/starmap.js?v=17"></script>
+<script src="js/data/ships.js?v=13"></script>
+<script src="js/data/recipes.js?v=11"></script>
+<script src="js/lib/eveidle/host-stubs.js?v=2"></script>
+<script src="js/lib/eveidle/core/resources.js?v=1"></script>
+<script src="js/lib/eveidle/data/display-names.js?v=1"></script>
+<script src="js/lib/eveidle/data/equipment.js?v=1"></script>
+<script src="js/lib/eveidle/systems/enhancement-chance.js?v=1"></script>
+<script src="js/lib/eveidle/systems/equipment-enhancement.js?v=1"></script>
+<script src="js/lib/eveidle/systems/rigs.js?v=1"></script>
+<script src="js/lib/eveidle/systems/ship-enhancement.js?v=1"></script>
+<script src="js/lib/eveidle/data/ammunition.js?v=1"></script>
+<script src="js/lib/eveidle/data/cargo.js?v=1"></script>
+<script src="js/lib/eveidle/data/boosters.js?v=1"></script>
+<script src="js/lib/eveidle/data/implants.js?v=1"></script>
+<script src="js/lib/eveidle/data/ammo.js?v=1"></script>
+<script src="js/data/factions.js?v=12"></script>
+<script src="js/data/names.js?v=11"></script>
+<script src="js/engine/state.js?v=18"></script>
+<script src="js/engine/dispatch.js?v=17"></script>
+<script src="js/engine/npc.js?v=1"></script>
+<script src="js/engine/production.js?v=11"></script>
+<script src="js/engine/faction.js?v=13"></script>
+<script src="js/engine/combat.js?v=15"></script>
+<script src="js/narrative/events.js?v=15"></script>
+<script src="js/engine/settle.js?v=22"></script>
+<script src="js/ui/app.js?v=33"></script>
+<script>
+window.addEventListener('error', function(e){ window.__errs = window.__errs||[]; window.__errs.push(e.message); });
+setTimeout(function(){
+  try {
+    var out = {};
+    // 切到成员页
+    location.hash = 'members';
+    var view = document.getElementById('nsk-view');
+    out.memberCards = view.querySelectorAll('.member-card').length;
+    out.goalChips = view.querySelectorAll('.goal-chip').length;
+    out.perCard = out.memberCards ? Math.round(out.goalChips / out.memberCards) : 0;
+    // 开第一个成员详情
+    var card = view.querySelector('[data-act^="npc:"]');
+    out.firstCardAct = card ? card.getAttribute('data-act') : null;
+    card.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+    var mask = document.querySelector('.wh-detail-mask');
+    out.detailOpened = !!mask;
+    out.goalRows = mask ? mask.querySelectorAll('.goal-row').length : 0;
+    out.multText = mask ? (mask.querySelector('.whd-sec .cnt')||{}).textContent : null;
+    // 找一个可点目的按钮（赠予/满足舰船）
+    var btn = mask ? mask.querySelector('button[data-act^="goalgive:"],button[data-act^="goalship:"]') : null;
+    out.foundActionBtn = !!btn;
+    if (btn) {
+      var beforeDone = mask.querySelectorAll('.goal-row.done').length;
+      btn.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+      var mask2 = document.querySelector('.wh-detail-mask');
+      out.doneBefore = beforeDone;
+      out.doneAfter = mask2 ? mask2.querySelectorAll('.goal-row.done').length : 0;
+      out.multAfter = mask2 ? (mask2.querySelector('.whd-sec .cnt')||{}).textContent : null;
+      out.detailName = mask2 ? (mask2.querySelector('.whd-name')||{}).textContent : null;
+    }
+    out.errs = window.__errs || [];
+    var pre = document.createElement('pre'); pre.id='out'; pre.textContent = JSON.stringify(out, null, 1);
+    document.body.appendChild(pre);
+  } catch (ex) {
+    var p = document.createElement('pre'); p.id='out'; p.textContent = 'THROW: ' + ex.message + '\n' + (ex.stack||'');
+    document.body.appendChild(p);
+  }
+}, 400);
+</script>
+</body>
+</html>

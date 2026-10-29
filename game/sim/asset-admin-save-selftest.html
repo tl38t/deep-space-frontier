@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>selftest</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1200px;height:600px;border:1px solid #ccc"></iframe>
+<script>
+// 后台存图链路自测（无需真实目录）：
+//   场景1 勾选「清凉版」后存盘必须叫 <archId>_reveal.webp —— 回归「按钮 data-* 未跟随变体/清凉版」的旧 bug
+//   场景2 同 combo 再存一张 → <archId>_reveal_2.webp，第 1 张不被覆盖；manifest 键 = "<archId>/reveal"
+//   场景3 取消清凉版 → <archId>_v1.webp（回到基础变体命名）
+//   场景4 统计卡显示全库图片总数
+//   场景5 迁移旧图：npc/nsk_npc_*.webp → npc/<archId>/<archId>_v1.webp
+//   场景6 势力联络人 覆盖 + 撤销（单文件逻辑回归，确保没被多张逻辑破坏）
+const out=[];
+let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+
+function dataURLtoBlob(d){
+  const [head,b64]=d.split(",");
+  const mime=head.match(/:(.*?);/)[1];
+  const bin=atob(b64), u8=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+  return new Blob([u8],{type:mime});
+}
+// headless 虚拟时钟下 canvas.toBlob 不回调，改用同步 toDataURL 造图
+function makeImg(w,h,color,label){
+  const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+  const c=cv.getContext("2d");
+  c.fillStyle=color; c.fillRect(0,0,w,h);
+  c.fillStyle="#fff"; c.font="64px sans-serif"; c.fillText(label||"TEST",30,110);
+  return dataURLtoBlob(cv.toDataURL("image/webp",0.9));
+}
+
+// —— 内存文件树（支持多级目录 + entries() 迭代，模拟 File System Access）——
+const files=new Map();      // "npc/corp_heir/v1.webp" -> {blob,lastModified}
+const dirs=new Set([""]);   // 显式存在的目录
+const join=(a,b)=>a? a+"/"+b : b;
+function children(prefix){
+  const s=new Set();
+  const add=(k)=>{ const rest=prefix? k.slice(prefix.length+1) : k; if(rest) s.add(rest.split("/")[0]); };
+  for(const k of files.keys()) if(!prefix || k.startsWith(prefix+"/")) add(k);
+  for(const d of dirs) if(d && (!prefix || d.startsWith(prefix+"/"))) add(d);
+  return [...s];
+}
+function mkFile(key,name){
+  return {
+    kind:"file", name,
+    async getFile(){
+      const r=files.get(key);
+      if(!r){ const e=new Error("NotFound"); e.name="NotFoundError"; throw e; }
+      return new File([r.blob],name,{type:"image/webp",lastModified:r.lastModified||Date.now()});
+    },
+    async createWritable(){
+      const chunks=[];
+      return { async write(b){ chunks.push(b); }, async close(){ files.set(key,{blob:new Blob(chunks,{type:"image/webp"}),lastModified:Date.now()}); } };
+    },
+  };
+}
+function mkDir(prefix){
+  return {
+    kind:"directory", name: prefix? prefix.split("/").pop() : "portraits",
+    async getFileHandle(name,opts){
+      const key=join(prefix,name);
+      if(!files.has(key) && !(opts&&opts.create)){ const e=new Error("NotFound"); e.name="NotFoundError"; throw e; }
+      return mkFile(key,name);
+    },
+    async getDirectoryHandle(name,opts){
+      const key=join(prefix,name);
+      if(!(opts&&opts.create) && !dirs.has(key) && !children(key).length){ const e=new Error("NotFound"); e.name="NotFoundError"; throw e; }
+      dirs.add(key);
+      return mkDir(key);
+    },
+    async removeEntry(name){
+      const key=join(prefix,name);
+      if(!files.delete(key)){ const e=new Error("NotFound"); e.name="NotFoundError"; throw e; }
+    },
+    async *entries(){
+      for(const nm of children(prefix)){
+        const key=join(prefix,nm);
+        if(files.has(key)) yield [nm, mkFile(key,nm)];
+        else if(dirs.has(key)) yield [nm, mkDir(key)];
+      }
+    },
+  };
+}
+
+(async()=>{
+  const fr=document.getElementById("fr");
+  await new Promise(r=>{ fr.onload=r; fr.src="../asset-admin.html#art:npc"; });
+  await wait(600);
+  const win=fr.contentWindow, doc=fr.contentDocument;
+  log("iframe loaded · title="+doc.title);
+
+  // 桩：headless 下让 createImageBitmap / canvas.toBlob 立刻可用
+  win.createImageBitmap=async(src)=>{
+    const url=(src instanceof Blob)?URL.createObjectURL(src):src;
+    const im=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error("decode fail")); i.src=url; });
+    im.close=()=>{};
+    if(src instanceof Blob) setTimeout(()=>URL.revokeObjectURL(url),0);
+    return im;
+  };
+  win.HTMLCanvasElement.prototype.toBlob=function(cb,type,q){
+    try{ cb(dataURLtoBlob(this.toDataURL(type||"image/webp",q))); }catch(e){ cb(null); }
+  };
+  win.showDirectoryPicker=async()=>mkDir("");
+
+  const pasteFile=async(file)=>{
+    const dt=new DataTransfer(); dt.items.add(file);
+    const ev=new Event("paste",{bubbles:true,cancelable:true});
+    Object.defineProperty(ev,"clipboardData",{value:dt});
+    doc.dispatchEvent(ev);
+  };
+  const dlgEl=()=>doc.querySelector(".modal-bg.show .modal");
+  const dlgText=()=>{ const d=dlgEl(); return d?d.innerText.replace(/\s+/g," ").trim():null; };
+  const clickByText=(root,txt)=>{
+    const b=root?[...root.querySelectorAll("button")].find(x=>x.textContent.includes(txt)):null;
+    if(b) b.click();
+    return !!b;
+  };
+  // 取某原型的「📋粘贴」按钮（会读它当前的 data-*，用来验证参数是否跟随状态同步）
+  const armBtn=(arch)=>[...doc.querySelectorAll('[data-arm-npc="1"]')].find(x=>x.dataset.arch===arch);
+  const setReveal=(on)=>{
+    const t=doc.querySelector("#npcRevealToggle");
+    if(t.checked!==on){ t.checked=on; t.dispatchEvent(new win.Event("change",{bubbles:true})); }
+  };
+  const saveOnce=async(arch,color,label)=>{
+    const b=armBtn(arch); b.click(); await wait(300);
+    await pasteFile(new File([makeImg(1024,1536,color,label)],"p.webp",{type:"image/webp"}));
+    await wait(900);
+    return b.dataset.savekey;
+  };
+
+  // ============ 场景1：勾选清凉版后必须落成 reveal.webp ============
+  log("\n=== 场景1：清凉版独立文件名（回归：按钮参数随勾选同步）===");
+  setReveal(true); await wait(400);
+  const b1=armBtn("belt_nomad");
+  ok("勾选清凉版后按钮 reveal=1", b1 && b1.dataset.reveal==="1", b1?("reveal="+b1.dataset.reveal+", savekey="+b1.dataset.savekey):"(无按钮)");
+  await saveOnce("belt_nomad","#a33b3b","REV1");
+  ok("落盘 npc/belt_nomad/belt_nomad_reveal.webp", files.has("npc/belt_nomad/belt_nomad_reveal.webp"),
+     "实际文件："+[...files.keys()].filter(k=>k.startsWith("npc/")&&k.endsWith(".webp")).join(", "));
+  ok("旧扁平名未出现", ![...files.keys()].some(k=>/nsk_npc_/.test(k)));
+
+  // ============ 场景2：同 combo 第二张 → reveal_2，不覆盖 ============
+  log("\n=== 场景2：同 combo 多张不覆盖 + manifest ===");
+  const firstSize=files.get("npc/belt_nomad/belt_nomad_reveal.webp").blob.size;
+  await saveOnce("belt_nomad","#3b5fa3","REV2");
+  ok("第二张落盘 npc/belt_nomad/belt_nomad_reveal_2.webp", files.has("npc/belt_nomad/belt_nomad_reveal_2.webp"));
+  ok("第一张未被覆盖", files.has("npc/belt_nomad/belt_nomad_reveal.webp") && files.get("npc/belt_nomad/belt_nomad_reveal.webp").blob.size===firstSize);
+  ok("两次都无覆盖弹窗", !dlgEl());
+  const mf=files.get("npc/manifest.json");
+  let mj=null; try{ mj=JSON.parse(await mf.blob.text()); }catch(e){ mj="PARSE_FAIL:"+e.message; }
+  log("manifest = "+JSON.stringify(mj));
+  ok("manifest 键 = belt_nomad/reveal", mj && Array.isArray(mj["belt_nomad/reveal"]), mj?Object.keys(mj).join(","):"(空)");
+  ok("manifest 两张齐且为相对路径", mj && mj["belt_nomad/reveal"] &&
+     mj["belt_nomad/reveal"].length===2 &&
+     mj["belt_nomad/reveal"][0]==="belt_nomad/belt_nomad_reveal.webp" &&
+     mj["belt_nomad/reveal"][1]==="belt_nomad/belt_nomad_reveal_2.webp");
+
+  // ============ 场景3：取消清凉版 → v1.webp ============
+  log("\n=== 场景3：取消清凉版回到基础命名 ===");
+  setReveal(false); await wait(400);
+  const b3=armBtn("belt_nomad");
+  ok("取消勾选后按钮 reveal=0", b3 && b3.dataset.reveal==="0");
+  await saveOnce("belt_nomad","#3ba36b","BASE1");
+  ok("落盘 npc/belt_nomad/belt_nomad_v1.webp", files.has("npc/belt_nomad/belt_nomad_v1.webp"));
+  ok("清凉版两张仍在", files.has("npc/belt_nomad/belt_nomad_reveal.webp") && files.has("npc/belt_nomad/belt_nomad_reveal_2.webp"));
+
+  // ============ 场景4：统计卡 ============
+  log("\n=== 场景4：统计卡（当前列表 / 全库）===");
+  await wait(600);
+  const stat=doc.querySelector("#npcStatsBody");
+  const stxt=stat?stat.innerText.replace(/\s+/g," "):"(null)";
+  log("统计卡文本 = "+stxt);
+  ok("显示全库图片总数 3", /(^|\D)3(\D|$)/.test(stxt) && /全库图片/.test(stxt));
+  ok("显示分类 清凉版 reveal", /清凉版 reveal/.test(stxt));
+  const badge=doc.querySelector("#npc_count_0");
+  log("belt_nomad 徽标 = "+(badge?badge.textContent:"(null)"));
+  ok("徽标随当前 combo 变化（取消清凉版→显示 v1 的 1 张）", badge && /已存 1 张/.test(badge.textContent));
+
+  // ============ 场景5：迁移旧图 ============
+  log("\n=== 场景5：旧图迁移到原型文件夹 ===");
+  const legacyOld=makeImg(900,1200,"#554433","OLDHEIR");
+  files.set("npc/nsk_npc_corp_heir_1.webp",{blob:legacyOld,lastModified:Date.UTC(2026,9,23,9,0)});
+  files.set("npc/nsk_npc_corp_heir_1_2.webp",{blob:makeImg(900,1200,"#443355","OLDHEIR2"),lastModified:Date.UTC(2026,9,23,9,5)});
+  doc.querySelector("#migrateNpcBtn").click(); await wait(700);
+  ok("迁移确认弹窗出现", !!dlgEl());
+  log("弹窗首行 = "+String(dlgText()).slice(0,120));
+  clickByText(dlgEl(),"开始迁移"); await wait(1600);
+  ok("旧文件已移动到 corp_heir/corp_heir_v1.webp", files.has("npc/corp_heir/corp_heir_v1.webp"));
+  ok("旧文件已移动到 corp_heir/corp_heir_v1_2.webp", files.has("npc/corp_heir/corp_heir_v1_2.webp"));
+  ok("根目录旧文件已删除", !files.has("npc/nsk_npc_corp_heir_1.webp") && !files.has("npc/nsk_npc_corp_heir_1_2.webp"));
+  ok("迁移后字节一致", files.get("npc/corp_heir/corp_heir_v1.webp").blob.size===legacyOld.size);
+  const mf2=JSON.parse(await files.get("npc/manifest.json").blob.text());
+  log("迁移后 manifest = "+JSON.stringify(mf2));
+  ok("manifest 收录 corp_heir/v1", mf2 && Array.isArray(mf2["corp_heir/v1"]));
+
+  // ============ 场景6：势力联络人覆盖 + 撤销（回归）============
+  log("\n=== 场景6：势力联络人 覆盖→撤销（回归）===");
+  const artBtn=doc.querySelector('[data-art="contact"]');
+  if(artBtn){ artBtn.click(); await wait(500); }
+  const facName="nsk_fac_angel_contact.webp";
+  const oldFac=makeImg(800,1066,"#223344","OLDFAC");
+  files.set("factions/"+facName,{blob:oldFac,lastModified:Date.UTC(2026,9,1,2,30)});
+  const facArm=[...doc.querySelectorAll('[data-arm="1"]')].find(b=>b.dataset.name===facName);
+  ok("找到联络人行按钮", !!facArm);
+  if(facArm){
+    facArm.click(); await wait(300);
+    await pasteFile(new File([makeImg(1024,1536,"#7a3b2e","NEWFAC")],"p.webp",{type:"image/webp"}));
+    await wait(800);
+    const t=dlgText();
+    ok("覆盖弹窗含新旧对比", t!==null && /旧图（将被覆盖）/.test(t) && /新图（即将写入）/.test(t));
+    clickByText(dlgEl(),"覆盖写入"); await wait(900);
+    ok("已覆盖写入", files.has("factions/"+facName) && files.get("factions/"+facName).blob.size!==oldFac.size);
+    const st=doc.querySelector('[data-savestatus="'+facName+'"]');
+    const undo=st?[...st.querySelectorAll("button")].find(x=>x.textContent.includes("撤销")):null;
+    ok("撤销按钮出现", !!undo);
+    if(undo){ undo.click(); await wait(900);
+      ok("撤销后还原旧图字节", files.get("factions/"+facName).blob.size===oldFac.size); }
+  }
+
+  // ============ 场景7：清凉版服装选择器（方案 A：下拉 + 🎲随机）============
+  log("\n=== 场景7：清凉版服装选择器 下拉+🎲随机 ===");
+  // 场景6 切到了 contact 页，先切回 npc 页再测服装选择器
+  const backNpc = doc.querySelector('[data-art="npc"]'); if(backNpc){ backNpc.click(); await wait(600); }
+  setReveal(true); await wait(300);
+  const tr7 = [...doc.querySelectorAll("tr")].find(r=>r.querySelector('[data-arm-npc="1"][data-arch="corp_heir"]'));
+  const sel7 = tr7 ? tr7.querySelector("select[data-outfit]") : null;
+  const ta7 = doc.querySelector('textarea[data-prompt="npc"][data-id="corp_heir"]');
+  const sk7 = tr7 ? tr7.querySelector('[data-arm-npc="1"][data-arch="corp_heir"]').dataset.savekey : null;
+  ok("corp_heir 行出现服装风格下拉", !!sel7);
+  if(sel7 && ta7){
+    sel7.value = "1"; sel7.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(200);
+    ok("选第 2 套(tuxedo)后 Prompt 含 tuxedo", /tuxedo/i.test(ta7.value), ta7.value.slice(0,70));
+    ok("切换服装不改落盘 combo(savekey 仍是 reveal)", sk7==="npc:corp_heir:0:1:", "savekey="+sk7);
+    sel7.value = "2"; sel7.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(200);
+    ok("选第 3 套(gown)后 Prompt 含 off-shoulder/gown", /off-shoulder|gown/i.test(ta7.value), ta7.value.slice(0,70));
+    const rb7 = tr7.querySelector('button[data-outfit-rand="1"]') || tr7.querySelector("button[data-outfit-rand]");
+    ok("出现 🎲 随机按钮", !!rb7);
+    if(rb7){ rb7.click(); await wait(200);
+      ok("点🎲后 Prompt 仍取自服装池(tuxedo/gown/silk/corset 之一)", /tuxedo|off-shoulder|gown|silk top|halter|corset/i.test(ta7.value), ta7.value.slice(0,70));
+    }
+  }
+
+  // ============ 场景8：挑染（发色高光）选择器 ============
+  log("\n=== 场景8：挑染（发色高光）下拉 + 🎲随机 ===");
+  const tr8 = [...doc.querySelectorAll("tr")].find(r=>r.querySelector('textarea[data-prompt="npc"][data-id="corp_heir"]'));
+  const sel8 = tr8 ? tr8.querySelector("select[data-hair]") : null;
+  const ta8 = doc.querySelector('textarea[data-prompt="npc"][data-id="corp_heir"]');
+  const sk8Before = tr8 ? tr8.querySelector('[data-arm-npc]').dataset.savekey : null;
+  ok("corp_heir 行出现挑染下拉", !!sel8);
+  if(sel8 && ta8){
+    ok("默认 = 无挑染（Prompt 不含 highlight streaks）", !/highlight streaks/.test(ta8.value), ta8.value.slice(0,70));
+    sel8.value = "2"; sel8.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(200);
+    ok("选霓虹青紫后 Prompt 含 neon highlight streaks", /neon cyan-and-violet highlight streaks/.test(ta8.value), ta8.value.slice(0,90));
+    const sk8After = tr8.querySelector('[data-arm-npc]').dataset.savekey;
+    ok("选挑染不改落盘 combo(savekey 不变)", sk8Before===sk8After, "before="+sk8Before+" after="+sk8After);
+    const rb8 = tr8.querySelector('button[data-hair-rand]');
+    ok("出现 🎲 随机按钮", !!rb8);
+    if(rb8){ rb8.click(); await wait(200);
+      ok("点🎲后 Prompt 含某款 highlight streaks（非无）", /highlight streaks/.test(ta8.value), ta8.value.slice(0,90));
+      ok("🎲 后下拉非「无」", sel8.value!=="0", "value="+sel8.value);
+    }
+  }
+
+  // ============ 场景9：男性特征（墨镜/光头）选择器 —— 仅男性变体生效 ============
+  log("\n=== 场景9：男性特征（墨镜/光头）下拉 + 🎲随机，且仅男性变体显示/生效 ===");
+  const tr9 = [...doc.querySelectorAll("tr")].find(r=>r.querySelector('textarea[data-prompt="npc"][data-id="merc_veteran"]'));
+  const ta9 = doc.querySelector('textarea[data-prompt="npc"][data-id="merc_veteran"]');
+  const vsel9 = tr9 ? tr9.querySelector("select[data-variant]") : null;
+  const mwrap9 = tr9 ? tr9.querySelector('span[id^="npcmale_"]') : null;
+  // —— 先切到女性变体 V1（index 0），男性特征框必须隐藏，且墨镜不生效
+  if(vsel9){ vsel9.value="0"; vsel9.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("V1(女)时男性特征框隐藏", mwrap9 && mwrap9.style.display==="none");
+  // —— 切到年轻男性 V4（index 3）
+  if(vsel9){ vsel9.value="3"; vsel9.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("V4(男)时男性特征框显示", mwrap9 && mwrap9.style.display!=="none");
+  const sel9 = tr9 ? tr9.querySelector("select[data-male]") : null;
+  ok("merc_veteran 行出现男性特征下拉", !!sel9);
+  if(sel9 && ta9){
+    ok("默认=无（Prompt 不含 sunglasses/bald）", !/sunglasses|completely bald/.test(ta9.value), ta9.value.slice(0,70));
+    const sk9Before = tr9.querySelector('[data-arm-npc]').dataset.savekey;
+    sel9.value="1"; sel9.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150);
+    ok("选墨镜后 Prompt 含 wraparound sunglasses", /wraparound sunglasses/.test(ta9.value), ta9.value.slice(0,90));
+    const sk9After = tr9.querySelector('[data-arm-npc]').dataset.savekey;
+    ok("选墨镜不改落盘 combo(savekey 不变)", sk9Before===sk9After, "before="+sk9Before+" after="+sk9After);
+    sel9.value="2"; sel9.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150);
+    ok("选光头后 Prompt 含 completely bald", /completely bald/.test(ta9.value), ta9.value.slice(0,90));
+    const rb9 = tr9.querySelector('button[data-male-rand]');
+    ok("出现 🎲 随机按钮", !!rb9);
+    if(rb9){ rb9.click(); await wait(150);
+      ok("点🎲后 Prompt 含墨镜或光头（非无）", /sunglasses|completely bald/.test(ta9.value), ta9.value.slice(0,90));
+      ok("🎲 后下拉非「无」", sel9.value!=="0", "value="+sel9.value);
+    }
+  }
+  // —— 切回女性 V1，已选的墨镜必须被忽略（Prompt 不再含 sunglasses/bald）
+  if(vsel9){ vsel9.value="0"; vsel9.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("切回 V1(女)后男性特征被忽略（Prompt 不含墨镜/光头）", ta9 && !/sunglasses|completely bald/.test(ta9.value), ta9?ta9.value.slice(0,70):"");
+
+  // ============ 场景10：战术目镜（所有变体通用）下拉 + 🎲随机 ============
+  log("\n=== 场景10：战术目镜（所有变体通用）下拉 + 🎲随机，且不影响落盘 combo ===");
+  const tr10 = [...doc.querySelectorAll("tr")].find(r=>r.querySelector('textarea[data-prompt="npc"][data-id="corp_heir"]'));
+  const ta10 = doc.querySelector('textarea[data-prompt="npc"][data-id="corp_heir"]');
+  const vsel10 = tr10 ? tr10.querySelector("select[data-variant]") : null;
+  const opticWrap10 = tr10 ? tr10.querySelector('span[id^="npcoptic_"]') : null;
+  const sel10 = tr10 ? tr10.querySelector("select[data-optic]") : null;
+  const sk10Before = tr10 ? tr10.querySelector('[data-arm-npc]').dataset.savekey : null;
+  // —— 切到 V1（女）：战术目镜框仍要显示（与男性特征不同，它是全变体通用）
+  if(vsel10){ vsel10.value="0"; vsel10.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("V1(女)时战术目镜框仍显示（全变体通用）", opticWrap10 && opticWrap10.style.display!=="none");
+  ok("corp_heir 行出现战术目镜下拉", !!sel10);
+  if(sel10 && ta10){
+    ok("默认=无（Prompt 不含 tactical eyepiece/goggles/visor）", !/tactical eyepiece|tactical goggles|tactical half-face visor/.test(ta10.value), ta10.value.slice(0,70));
+    sel10.value="1"; sel10.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150);
+    ok("选单眼战术目镜后 Prompt 含 tactical eyepiece/HUD glow", /tactical eyepiece|HUD glow/i.test(ta10.value), ta10.value.slice(0,90));
+    const sk10After = tr10.querySelector('[data-arm-npc]').dataset.savekey;
+    ok("选战术目镜不改落盘 combo(savekey 不变)", sk10Before===sk10After, "before="+sk10Before+" after="+sk10After);
+    const rb10 = tr10.querySelector('button[data-optic-rand]');
+    ok("出现 🎲 随机按钮", !!rb10);
+    if(rb10){ rb10.click(); await wait(150);
+      ok("点🎲后 Prompt 含某款战术目镜（非无）", /tactical eyepiece|tactical goggles|tactical half-face visor/i.test(ta10.value), ta10.value.slice(0,90));
+      ok("🎲 后下拉非「无」", sel10.value!=="0", "value="+sel10.value);
+    }
+  }
+  // —— 切到 V4（男）：战术目镜框同样显示
+  if(vsel10){ vsel10.value="3"; vsel10.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("V4(男)时战术目镜框仍显示", opticWrap10 && opticWrap10.style.display!=="none");
+  // —— 切回 V1 并确认已选目镜在女性变体也生效（全变体注入，不像男性特征那样被忽略）
+  if(vsel10){ vsel10.value="0"; vsel10.dispatchEvent(new win.Event("change",{bubbles:true})); await wait(150); }
+  ok("V1(女)时战术目镜仍注入 Prompt（全变体生效，不忽略）", ta10 && /tactical eyepiece|tactical goggles|tactical half-face visor/i.test(ta10.value), ta10?ta10.value.slice(0,90):"");
+
+  // ============ 场景11：新手引导角色（Flora 全息 AI / 边疆登记人）3 变体切换 ============
+  log("\n=== 场景11：引导角色页 2 角色 × 3 变体，变体切换同步 Prompt 与落盘文件名 ===");
+  const guideBtn = doc.querySelector('[data-art="guide"]'); if(guideBtn){ guideBtn.click(); await wait(600); }
+  const gRows = doc.querySelectorAll('select[data-guide-variant]');
+  ok("引导角色页出现 2 个角色变体下拉", gRows.length===2, "count="+gRows.length);
+  const fTa = doc.querySelector('textarea[data-guide-prompt="0"]');
+  const fOut = doc.querySelector('#guideout_0');
+  ok("Flora 默认 Prompt 用全息基底", fTa && /holographic character portrait/.test(fTa.value), fTa?fTa.value.slice(0,80):"");
+  ok("Flora 默认落盘名 = nsk_guide_flora.webp", fOut && /nsk_guide_flora\.webp/.test(fOut.textContent), fOut?fOut.textContent:"");
+  if(gRows[0]){
+    gRows[0].value="1"; gRows[0].dispatchEvent(new win.Event("change",{bubbles:true})); await wait(250);
+    ok("Flora 切到对话头像后 Prompt 含 Head-and-shoulders bust", fTa && /Head-and-shoulders bust/.test(fTa.value), fTa?fTa.value.slice(0,80):"");
+    ok("Flora 切到对话头像后落盘名 = nsk_guide_flora_bust.webp", fOut && /nsk_guide_flora_bust\.webp/.test(fOut.textContent), fOut?fOut.textContent:"");
+    const armF = doc.querySelector('#guidesave_0 [data-arm]');
+    ok("Flora 存图按钮 data-name 跟随变体", armF && armF.dataset.name==="nsk_guide_flora_bust.webp", armF?armF.dataset.name:"(none)");
+    gRows[0].value="2"; gRows[0].dispatchEvent(new win.Event("change",{bubbles:true})); await wait(250);
+    ok("Flora 切到引导指向后落盘名 = nsk_guide_flora_point.webp", fOut && /nsk_guide_flora_point\.webp/.test(fOut.textContent), fOut?fOut.textContent:"");
+  }
+  const rTa = doc.querySelector('textarea[data-guide-prompt="1"]');
+  const rOut = doc.querySelector('#guideout_1');
+  ok("登记人 Prompt 用真人基底（非全息）", rTa && /Stylized sci-fi character portrait/.test(rTa.value) && !/holographic character portrait/.test(rTa.value), rTa?rTa.value.slice(0,80):"");
+  ok("登记人 Prompt 含猩红电子眼（crimson cybernetic eye）", rTa && /crimson cybernetic eye/.test(rTa.value));
+  ok("登记人默认落盘名 = nsk_guide_registrar.webp", rOut && /nsk_guide_registrar\.webp/.test(rOut.textContent), rOut?rOut.textContent:"");
+  if(gRows[1]){
+    gRows[1].value="2"; gRows[1].dispatchEvent(new win.Event("change",{bubbles:true})); await wait(250);
+    ok("登记人切到盖章姿态后落盘名 = nsk_guide_registrar_stamp.webp", rOut && /nsk_guide_registrar_stamp\.webp/.test(rOut.textContent), rOut?rOut.textContent:"");
+    ok("登记人盖章姿态 Prompt 含 rubber stamp", rTa && /rubber stamp/.test(rTa.value));
+    const armR = doc.querySelector('#guidesave_1 [data-arm]');
+    ok("登记人存图按钮 data-name 跟随变体", armR && armR.dataset.name==="nsk_guide_registrar_stamp.webp", armR?armR.dataset.name:"(none)");
+  }
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+  document.title="RESULT::"+(FAIL?"FAIL":"OK")+"::"+PASS+"_"+FAIL;
+  log("DONE");
+})().catch(e=>{ FAIL++; log("EXCEPTION::"+e.message+"\n"+(e.stack||"")); document.title="RESULT::FAIL"; });
+</script>
+</body></html>

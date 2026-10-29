@@ -1,0 +1,254 @@
+/* ================================================================
+   改装件（rig）纯函数层
+   见 RIG_SYSTEM_IMPLEMENTATION_PLAN.md 第七节。
+
+   规则：
+   - 纯函数：只读传入的 state / instance，不访问 DOM、不产生副作用。
+   - rig 不参与装备强化（安装即消耗，无 enhancementLevel），故聚合时直接取
+     def.bonuses，不乘强化倍率。
+   - 同 stackGroup（同系列）可重复装配，但按 EVE 谐振（堆叠）惩罚聚合：
+     getRigModifiers 返回按 bonusKey 聚合、组内按数值降序（最大吃满效）施加惩罚后的加权求和，
+     供各系统（战斗容量 / 工业 / 考古扫描 / 燃料 / 干扰）读取。
+   ================================================================ */
+
+// EVE 谐振（堆叠）惩罚系数：同 stackGroup 内第 n 件（按数值降序排位，最大者 n=1 吃满效）的实际效果系数
+// S(n) = 0.5 ^ ( ((n-1)/2.22292081)^2 )
+const RIG_RESONANCE_DIVISOR = 2.22292081;
+function getRigStackPenalty(position0) {
+  const n = position0 + 1;
+  return Math.pow(0.5, Math.pow((n - 1) / RIG_RESONANCE_DIVISOR, 2));
+}
+
+// 获取改装件定义
+function getRigDefinition(rigItemId) {
+  const def = EQUIPMENT_DB[rigItemId];
+  return def && def.slot === "rig" ? def : null;
+}
+
+// 判断某装备定义是否为改装件
+function isRigDefinition(def) {
+  return Boolean(def && def.slot === "rig");
+}
+
+// 获取指定舰船实例上所有已安装改装件的定义
+function getFittedRigDefinitions(state, instance) {
+  const fitting = getFittingFromInstance(instance);
+  return (fitting.rig || [])
+    .map(ref => (ref ? resolveEquipmentReference(state, ref) : null))
+    .filter(r => r && r.definition && r.definition.slot === "rig")
+    .map(r => r.definition);
+}
+
+// 聚合改装件效果：按 stackGroup 分组，组内按数值降序（rigSeq 仅作同值并列时的稳定占位）施加 EVE 谐振惩罚后加权求和。
+// 每个 stackGroup 对应唯一 bonusKey，故分组等价于按 bonusKey 聚合；不同系列互不惩罚。
+function getRigModifiers(state, instance) {
+  const fitting = getFittingFromInstance(instance);
+  const rigSlots = (fitting && fitting.rig) || [];
+  const groups = {}; // stackGroup -> [{ bonusKey, value, seq }]
+  for (const ref of rigSlots) {
+    if (!ref) continue;
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    const def = r.definition;
+    const sg = def.stackGroup || def.id;
+    const seq = Number(r.instance && r.instance.rigSeq) || 0;
+    for (const [key, value] of Object.entries(def.bonuses || {})) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) continue;
+      (groups[sg] = groups[sg] || []).push({ bonusKey: key, value: num, seq });
+    }
+  }
+  // 2026-09-26 改装件强化（蓝图发明）：带词条的改装件实例额外提供词条加成。
+  // ⚠️ 词条值在谐振惩罚「之外」直加——玩家花发明等级与资源赌出来的词条不应因同系列堆叠而衰减，
+  // 这也是「词条不吃谐振惩罚」的唯一落地处。与基础件加成分开累积，避免污染上面的降序排位。
+  const affixMods = {};
+  const mods = {};
+  for (const list of Object.values(groups)) {
+    list.sort((a, b) => b.value - a.value || a.seq - b.seq); // 数值大者优先吃满效；同值按装配顺序，先装者占优
+    list.forEach((entry, idx) => {
+      const effective = entry.value * getRigStackPenalty(idx);
+      mods[entry.bonusKey] = (mods[entry.bonusKey] || 0) + effective;
+    });
+  }
+  for (const ref of rigSlots) {
+    if (!ref) continue;
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    const affixes = r.instance && Array.isArray(r.instance.affixes) ? r.instance.affixes : null;
+    if (!affixes || !affixes.length) continue;
+    for (const affix of affixes) {
+      const key = affix && affix.bonusKey;
+      const num = Number(affix && affix.value);
+      if (!key || !Number.isFinite(num) || num === 0) continue;
+      affixMods[key] = (affixMods[key] || 0) + num;
+    }
+  }
+  for (const [key, value] of Object.entries(affixMods)) mods[key] = (mods[key] || 0) + value;
+  return mods;
+}
+
+// 采集效率展示专用：返回 instance 上每件已安装改装件对指定 bonusKey 集的有效贡献明细，
+// 口径与 getRigModifiers 完全一致（同 stackGroup 按数值降序施加 EVE 谐振惩罚；词条在谐振外直加），
+// 保证「采集效率面板显示」与「真实产出（getProductionEfficiencyState.total）」同源。
+// 返回数组每项：{ name, stackGroup, primary, secondary, amplifier }，
+// 其中 primary/secondary/amplifier 是该件在对应 bonusKey 上的有效值（无则该键为 0）。
+// 调用点：selectors.js getProductionEfficiencyState 的 rig 槽（修复此前手搓循环直接读裸值导致的
+// 「全吃无衰减 / 强化词条不生效」）。
+function getRigPerRigContribution(state, instance, primaryKey, secondaryKey, amplifierKey) {
+  const fitting = getFittingFromInstance(instance);
+  const rigSlots = (fitting && fitting.rig) || [];
+  const wanted = [primaryKey, secondaryKey, amplifierKey].filter(Boolean);
+  if (!wanted.length) return [];
+  const entries = []; // { ref, sg, bk, base, seq, affixes } —— 仅收集与采集相关的 bonusKey
+  for (const ref of rigSlots) {
+    if (!ref) continue;
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    const def = r.definition;
+    const sg = def.stackGroup || def.id;
+    const affixes = (r.instance && Array.isArray(r.instance.affixes)) ? r.instance.affixes : null;
+    for (const bk of wanted) {
+      const base = Number(def.bonuses && def.bonuses[bk]) || 0;
+      const hasAffix = affixes && affixes.some(a => a && a.bonusKey === bk && Number(a.value) !== 0);
+      if (base === 0 && !hasAffix) continue;
+      entries.push({ ref, sg, bk, base, seq: Number(r.instance && r.instance.rigSeq) || 0, affixes });
+    }
+  }
+  // 按 stackGroup 分组（与 getRigModifiers 一致），组内按基础值降序排位施加谐振惩罚
+  const groups = {};
+  for (const e of entries) (groups[e.sg] = groups[e.sg] || []).push(e);
+  for (const list of Object.values(groups)) list.sort((a, b) => b.base - a.base || a.seq - b.seq);
+  const penaltyOf = new Map();
+  for (const list of Object.values(groups)) list.forEach((e, idx) => penaltyOf.set(e, getRigStackPenalty(idx)));
+  const perRig = new Map();
+  for (const ref of rigSlots) {
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    perRig.set(ref, { name: r.definition.name, stackGroup: r.definition.stackGroup || r.definition.id, primary: 0, secondary: 0, amplifier: 0 });
+  }
+  for (const e of entries) {
+    const target = perRig.get(e.ref);
+    if (!target) continue;
+    let eff = e.base * penaltyOf.get(e);
+    if (e.affixes) for (const a of e.affixes) if (a && a.bonusKey === e.bk) { const v = Number(a.value); if (Number.isFinite(v)) eff += v; }
+    if (e.bk === primaryKey) target.primary += eff;
+    else if (e.bk === secondaryKey) target.secondary += eff;
+    else if (e.bk === amplifierKey) target.amplifier += eff;
+  }
+  return [...perRig.values()];
+}
+
+// 安装合法性检查（slot 类型 + 是否为 rig）。
+// 同 stackGroup（同系列）允许重复装配（谐振惩罚在聚合层处理），故此处不再排重。
+// level / slotIndex 边界 / combat-lock 等由 Action 层负责，此处只判定 rig 相关规则。
+function canFitRig(state, instance, rigItemId, excludeSlotIndex) {
+  const def = getRigDefinition(rigItemId);
+  if (!def) return { ok:false, reason:"not-rig" };
+  return { ok:true };
+}
+
+// 谐振预览：在 instance 上安装 rigItemId（同 stackGroup）后，该件的实际效果与累计。
+// 返回 null 表示非 rig。按 EVE 规则：同组改装件按数值降序排位（最大者吃满效 S(1)），
+// 新件依其数值在「现有+新件」降序队列中的位置确定实际生效系数（同值时现有件优先占位）。
+function getRigResonancePreview(state, instance, rigItemId) {
+  // 2026-09-26：候选可能传 instanceId（改装件强化产出的带词条件）而非裸 itemId，
+  // 故统一走 resolveEquipmentReference 解析，保证强化件的预览与提示弹窗仍然可用。
+  const resolvedRef = resolveEquipmentReference(state, rigItemId);
+  const def = resolvedRef ? resolvedRef.definition : null;
+  if (!def || !def.bonuses || def.slot !== "rig") return null;
+  const sg = def.stackGroup || def.id;
+  const bonusKey = Object.keys(def.bonuses)[0];
+  const baseValue = Number(def.bonuses[bonusKey]) || 0;
+  const fitting = getFittingFromInstance(instance);
+  const rigSlots = (fitting && fitting.rig) || [];
+  const existing = [];
+  // 待装强化件自身的词条加成：不吃谐振，直加。
+  const newAffixBonus = sumRigAffixValues(resolvedRef && resolvedRef.instance);
+  for (const ref of rigSlots) {
+    if (!ref) continue;
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    const dsg = r.definition.stackGroup || r.definition.id;
+    if (dsg !== sg) continue;
+    const dVal = Number(Object.values(r.definition.bonuses || {})[0]) || 0;
+    existing.push(dVal);
+  }
+  const sortedExisting = existing.slice().sort((a, b) => b - a);
+  let totalBefore = 0;
+  sortedExisting.forEach((v, idx) => { totalBefore += v * getRigStackPenalty(idx); });
+  // 已装强化件词条同样计入基准（与 getRigModifiers 口径一致；未强化时为 0，行为不变）
+  totalBefore += existingAffixBonus(state, rigSlots, sg);
+  // 含待装件的完整降序队列；同值时现有件优先占位（新件排后，吃更高惩罚）
+  // ⚠️ 词条不参与降序排位：它不吃谐振，与「数值大者优先」无关。
+  const full = existing.map(v => ({ val: v, isNew: false }))
+    .concat([{ val: baseValue, isNew: true }])
+    .sort((a, b) => b.val - a.val || (a.isNew ? 1 : 0) - (b.isNew ? 1 : 0));
+  const newIndex = full.findIndex(e => e.isNew);
+  const newPosition = newIndex + 1;
+  const penalty = getRigStackPenalty(newPosition - 1);
+  const effectiveValue = baseValue * penalty + newAffixBonus;
+  const totalAfter = totalBefore + baseValue * penalty + newAffixBonus;
+  return {
+    stackGroup: sg,
+    bonusKey,
+    baseValue,
+    affixBonus: newAffixBonus,
+    existingCount: existing.length,
+    newPosition,
+    penalty,
+    effectiveValue,
+    reductionPct: 1 - penalty,
+    totalBefore,
+    totalAfter
+  };
+}
+
+// 单个改装件实例的词条加成总和（只吃 value，不关心命中哪个 bonusKey）。
+function sumRigAffixValues(inst) {
+  if (!inst || !Array.isArray(inst.affixes)) return 0;
+  let sum = 0;
+  for (const affix of inst.affixes) {
+    const num = Number(affix && affix.value);
+    if (!Number.isFinite(num) || num === 0) continue;
+    sum += num;
+  }
+  return sum;
+}
+
+// 同 stackGroup 下已装改装件的词条加成总和（预览基准口径与 getRigModifiers 对齐）。
+function existingAffixBonus(state, rigSlots, sg) {
+  let sum = 0;
+  for (const ref of rigSlots) {
+    if (!ref) continue;
+    const r = resolveEquipmentReference(state, ref);
+    if (!r || !r.definition || r.definition.slot !== "rig") continue;
+    const dsg = r.definition.stackGroup || r.definition.id;
+    if (dsg !== sg) continue;
+    sum += sumRigAffixValues(r.instance);
+  }
+  return sum;
+}
+
+// 改装件显示态（供 UI 列出已装改装件）
+function getRigDisplayState(state, instance) {
+  return getFittedRigDefinitions(state, instance).map(d => ({
+    id: d.id,
+    name: d.name,
+    stackGroup: d.stackGroup,
+    rigCategory: d.rigCategory || "",
+    level: d.level,
+    tier: d.rigTier || "",
+    bonuses: d.bonuses || {},
+    levelLabel: (d.name.match(/[IVXL]+$/) || [""])[0]
+  }));
+}
+
+window.getRigDefinition = getRigDefinition;
+window.isRigDefinition = isRigDefinition;
+window.getFittedRigDefinitions = getFittedRigDefinitions;
+window.getRigModifiers = getRigModifiers;
+window.getRigPerRigContribution = getRigPerRigContribution;
+window.canFitRig = canFitRig;
+window.getRigDisplayState = getRigDisplayState;
+window.getRigStackPenalty = getRigStackPenalty;
+window.getRigResonancePreview = getRigResonancePreview;

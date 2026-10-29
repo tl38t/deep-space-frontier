@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" fill="none">
+  <g stroke="#80cde1" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Main pressure hull and stepped armor envelope -->
+    <path d="M500 38 C472 56 411 50 376 75 L326 112 L292 164 L211 229 L176 271 L194 316 L352 292 L386 326 L402 425 L438 542 L472 614 L500 659 L528 614 L562 542 L598 425 L614 326 L648 292 L806 316 L824 271 L789 229 L708 164 L674 112 L624 75 C589 50 528 56 500 38Z" stroke-width="2.2" opacity=".86"/>
+    <path d="M500 61 C474 78 429 70 395 94 L348 128 L316 173 L226 246 L200 278 M500 61 C526 78 571 70 605 94 L652 128 L684 173 L774 246 L800 278" stroke-width="1.2" opacity=".56"/>
+    <path d="M200 304 L350 281 L379 311 M800 304 L650 281 L621 311" stroke-width="1.35" opacity=".76"/>
+
+    <!-- Center keel, frame stations, and transverse bulkheads -->
+    <path d="M500 50 V646" stroke-width="1" stroke-dasharray="8 7" opacity=".56"/>
+    <path d="M439 179 H561 M382 252 H618 M370 300 H630 M393 351 H607 M407 414 H593 M431 477 H569 M450 535 H550 M473 590 H527" stroke-width="1.15" opacity=".62"/>
+    <path d="M420 202 L461 248 M580 202 L539 248 M386 326 L443 352 M614 326 L557 352 M402 425 L455 414 M598 425 L545 414" stroke-width=".9" opacity=".42"/>
+
+    <!-- Forward command bridge and sensor blister -->
+    <path d="M500 92 C478 108 470 132 475 157 L500 177 L525 157 C530 132 522 108 500 92Z" stroke-width="1.5" opacity=".8"/>
+    <circle cx="500" cy="121" r="10" stroke-width="1.2" opacity=".76"/>
+    <path d="M485 158 H515 M489 168 H511 M500 177 V197" stroke-width="1" opacity=".62"/>
+
+    <!-- Modular dorsal deck blocks -->
+    <path d="M463 211 H493 V239 H463Z M507 211 H537 V239 H507Z M455 260 H490 V289 H455Z M510 260 H545 V289 H510Z" stroke-width="1" opacity=".6"/>
+    <path d="M446 315 H481 V341 H446Z M519 315 H554 V341 H519Z M450 365 H486 V397 H450Z M514 365 H550 V397 H514Z" stroke-width="1" opacity=".62"/>
+    <path d="M454 431 H490 V461 H454Z M510 431 H546 V461 H510Z M466 486 H493 V516 H466Z M507 486 H534 V516 H507Z" stroke-width="1" opacity=".55"/>
+    <path d="M481 206 V521 M519 206 V521" stroke-width=".8" opacity=".36"/>
+
+    <!-- Port and starboard service wings / radiator banks -->
+    <path d="M222 264 L344 239 L359 272 L342 283 L215 301Z M778 264 L656 239 L641 272 L658 283 L785 301Z" stroke-width="1.2" opacity=".72"/>
+    <path d="M238 267 L347 245 M232 275 L350 253 M226 283 L354 261 M220 291 L357 269" stroke-width=".8" opacity=".58"/>
+    <path d="M762 267 L653 245 M768 275 L650 253 M774 283 L646 261 M780 291 L643 269" stroke-width=".8" opacity=".58"/>
+    <path d="M282 304 L362 296 L380 319 M718 304 L638 296 L620 319" stroke-width="1" opacity=".54"/>
+
+    <!-- Twin aft drive nacelles and service collars -->
+    <path d="M353 340 C336 363 330 403 335 452 L350 501 L379 493 L390 444 L380 374Z M647 340 C664 363 670 403 665 452 L650 501 L621 493 L610 444 L620 374Z" stroke-width="1.5" opacity=".78"/>
+    <path d="M344 376 H384 M337 426 H389 M345 470 H382 M656 376 H616 M663 426 H611 M655 470 H618" stroke-width="1" opacity=".62"/>
+    <path d="M367 351 L405 331 M633 351 L595 331 M377 488 L426 523 M623 488 L574 523" stroke-width="1.15" opacity=".58"/>
+    <circle cx="357" cy="514" r="17" stroke-width="1.6" opacity=".82"/>
+    <circle cx="643" cy="514" r="17" stroke-width="1.6" opacity=".82"/>
+    <circle cx="357" cy="514" r="8" stroke-width="1" opacity=".66"/>
+    <circle cx="643" cy="514" r="8" stroke-width="1" opacity=".66"/>
+    <path d="M454 552 L468 597 H490 L500 617 L510 597 H532 L546 552 M468 597 H490 M510 597 H532" stroke-width="1.35" opacity=".8"/>
+    <path d="M478 626 L500 646 L522 626" stroke-width="1" opacity=".58"/>
+
+    <!-- Docking collars and RCS details -->
+    <circle cx="500" cy="254" r="16" stroke-width="1.25" opacity=".65"/>
+    <circle cx="500" cy="254" r="7" stroke-width="1" opacity=".58"/>
+    <path d="M484 254 H469 M516 254 H531 M500 238 V223 M500 270 V285" stroke-width=".9" opacity=".58"/>
+    <path d="M411 238 l-9 8 9 8 M589 238 l9 8-9 8 M414 462 l-8 7 8 7 M586 462 l8 7-8 7" stroke-width="1.1" opacity=".7"/>
+  </g>
+
+  <!-- Drawing registration, frame dimensions, and unobtrusive plan labels -->
+  <g stroke="#88c7da" fill="#88c7da" stroke-width=".8" font-family="Consolas, monospace" font-size="10" opacity=".54">
+    <path d="M102 84 H153 M102 84 V612 M102 612 H153 M847 84 H898 M898 84 V612 M847 612 H898"/>
+    <path d="M116 96 V600 M110 110 H122 M110 160 H122 M110 210 H122 M110 260 H122 M110 310 H122 M110 360 H122 M110 410 H122 M110 460 H122 M110 510 H122 M110 560 H122 M110 600 H122"/>
+    <path d="M102 84 l6 10 M102 84 l10 6 M898 84 l-6 10 M898 84 l-10 6 M102 612 l6-10 M102 612 l10-6 M898 612 l-6-10 M898 612 l-10-6"/>
+    <path d="M138 130 H252 L438 177 M862 130 H748 L562 177 M138 462 H260 L336 441 M862 462 H740 L664 441" fill="none"/>
+    <text x="128" y="121" stroke="none">FLIGHT DECK / 01</text>
+    <text x="755" y="121" stroke="none">PRESSURE HULL</text>
+    <text x="128" y="453" stroke="none">PORT DRIVE BANK</text>
+    <text x="755" y="453" stroke="none">STARBOARD DRIVE</text>
+    <text x="128" y="632" stroke="none">FRAME 00</text>
+    <text x="803" y="632" stroke="none">FRAME 24</text>
+  </g>
+</svg>

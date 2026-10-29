@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>深空星疆 · 商业与战争</title>
+<link rel="stylesheet" href="css/main.css?v=62">
+</head>
+<body>
+<div id="nsk-app">
+  <header id="nsk-hud"><div class="hud-scroll"><span class="brand">🌌 深空星疆</span><span class="res" title="星币">💠 <b>20.0K</b></span><span class="res" title="跃迁燃料">⛽ <b>100</b></span></div><button class="hud-act-btn" data-act="openSettings" title="设置 · 存档" aria-label="设置">⚙</button><button class="hud-act-btn" data-act="toggleActivity" title="成员动态 · 他们在干什么" aria-label="成员动态">👥</button></header>
+  <div class="redline-banner">⚠️ 离线结算铁律（§14.5）：单核时间戳驱动 · 纯闭式 · 绝不逐秒回放 · dt 封顶 24h · 计算耗时 O(1)（离线 30 天 = 离线 1 小时）</div>
+  <nav id="nsk-tabs"><div class="tab" data-act="tab:starmap">星图</div><div class="tab" data-act="tab:system">星系</div><div class="tab" data-act="tab:base">舰基</div><div class="tab" data-act="tab:warehouse">仓库</div><div class="tab" data-act="tab:members">成员</div><div class="tab" data-act="tab:factions">势力</div><div class="tab on" data-act="tab:story">剧情<i class="tab-dot"></i></div><div class="tab" data-act="tab:report">日报</div><div class="tab" data-act="tab:settings">设置</div></nav>
+  <main id="nsk-view"><h2>剧情</h2><div class="story-play"><div class="dlg fx-holo"><div class="dlg-head"><div class="dlg-av"><img src="assets/portraits/guides/nsk_guide_flora_bust.webp" alt="菲欧娜" draggable="false" onerror="this.parentNode.classList.add('miss')"><span class="av-ph">菲</span></div><div class="dlg-body"><div class="dlg-name" style="color:#62d5af">菲欧娜</div><div class="dlg-text">您好，指挥官，我是隶属于联邦拓殖公社的边疆区统括助理AI，全称为 Frontier Integrated Operations and Networking Assistant，通称 F.I.O.N.A，欢迎来到边疆区，接下来，我将——</div><div class="dlg-bar"><button class="sm" data-act="story:next">下一句 ›</button><span class="dlg-prog">1 / 6</span><span class="dim">序章 · 边疆登记处</span></div></div></div></div></div></main>
+</div>
+<div id="nsk-pop"></div>
+<div id="nsk-nodepop"></div>
+<aside id="nsk-activity"></aside>
+
+<!-- 设置 / 存档面板 -->
+<div id="nsk-settings" class="nsk-overlay">
+  <div class="nsk-panel">
+    <div class="nsk-panel-head">设置 · 存档 <button id="nsk-settings-close" class="nsk-x" aria-label="关闭">✕</button></div>
+    <div class="nsk-cloud-status" id="nsk-cloud-status">云存档：检测中…</div>
+    <div class="nsk-row">
+      <button id="nsk-export-code" class="sm">生成存档码</button>
+      <button id="nsk-copy-code" class="sm" disabled="">复制存档码</button>
+    </div>
+    <textarea id="nsk-code-area" class="nsk-code" placeholder="存档码 / 存档文本（NSK1. / NSK1P. / NSK2. / 信封JSON）" readonly=""></textarea>
+    <div class="nsk-row">
+      <button id="nsk-import-code" class="sm" disabled="">导入上方存档码</button>
+    </div>
+    <div class="nsk-row">
+      <button id="nsk-export-file" class="sm">导出存档文件</button>
+      <label class="sm file-btn">导入存档文件<input type="file" id="nsk-import-file" accept=".json,.txt,application/json" hidden=""></label>
+    </div>
+    <div class="nsk-row danger-row">
+      <button id="nsk-delete-save" class="sm danger-btn">删除本机存档</button>
+    </div>
+    <div class="nsk-hint" id="nsk-settings-hint"></div>
+  </div>
+</div>
+
+<!-- 启动存档冲突弹窗（本地 vs 云端） -->
+<div id="nsk-cloud-conflict" class="nsk-overlay">
+  <div class="nsk-panel">
+    <div class="nsk-panel-head">存档冲突</div>
+    <div class="nsk-conflict-body" id="nsk-conflict-body"></div>
+    <div class="nsk-row">
+      <button id="nsk-conflict-local" class="sm">保留本机</button>
+      <button id="nsk-conflict-cloud" class="sm primary">使用云端</button>
+    </div>
+  </div>
+</div>
+
+<!-- Core 层 -->
+<script src="js/core/rng.js?v=11"></script>
+<script src="js/core/codec.js?v=1"></script>
+<script src="js/core/storage.js?v=1"></script>
+<script src="js/core/store.js?v=22"></script>
+<script src="js/core/save-envelope.js?v=1"></script>
+<script src="js/core/cloud-save-contract.js?v=1"></script>
+<script src="js/core/cloud-providers.js?v=1"></script>
+<script src="js/core/cloud-save-service.js?v=1"></script>
+<script src="js/core/persistence.js?v=1"></script>
+<!-- Data 层 -->
+<script src="js/data/resources.js?v=15"></script>
+<script src="js/data/starmap.js?v=18"></script>
+<script src="js/data/ships.js?v=17"></script>
+<script src="js/data/recipes.js?v=11"></script>
+<!-- ============ lib: EVE-IDLE 复用（数据+纯函数，复制进本地库，非共享） ============ -->
+<!-- 加载顺序：宿主契约垫片 → 资源注册表 → 装备数据 → 强化/改装纯函数 → 纯数据表 -->
+<script src="js/lib/eveidle/host-stubs.js?v=2"></script>
+<script src="js/lib/eveidle/core/resources.js?v=1"></script>
+<script src="js/lib/eveidle/data/display-names.js?v=1"></script>
+<script src="js/lib/eveidle/data/equipment.js?v=1"></script>
+<script src="js/lib/eveidle/systems/enhancement-chance.js?v=1"></script>
+<script src="js/lib/eveidle/systems/equipment-enhancement.js?v=1"></script>
+<script src="js/lib/eveidle/systems/rigs.js?v=1"></script>
+<script src="js/lib/eveidle/systems/ship-enhancement.js?v=1"></script>
+<script src="js/lib/eveidle/data/ammunition.js?v=1"></script>
+<script src="js/lib/eveidle/data/cargo.js?v=1"></script>
+<script src="js/lib/eveidle/data/boosters.js?v=1"></script>
+<script src="js/lib/eveidle/data/implants.js?v=1"></script>
+<script src="js/lib/eveidle/data/ammo.js?v=1"></script>
+<script src="js/data/factions.js?v=15"></script>
+<script src="js/data/names.js?v=11"></script>
+<!-- Engine 层（无 DOM 依赖） -->
+<script src="js/engine/state.js?v=21"></script>
+<script src="js/engine/recruit.js?v=2"></script>
+<script src="js/engine/base.js?v=2"></script>
+<script src="js/engine/dispatch.js?v=17"></script>
+<script src="js/engine/npc.js?v=2"></script>
+<script src="js/engine/booster.js?v=1"></script>
+<script src="js/engine/mastery.js?v=1"></script>
+<script src="js/engine/production.js?v=13"></script>
+<script src="js/engine/faction.js?v=14"></script>
+  <script src="js/engine/combat.js?v=15"></script>
+  <script src="js/engine/logistics.js?v=2"></script>
+  <script src="js/engine/sites.js?v=1"></script>
+<!-- Narrative 层（零 API，静态事件库，须先于 settle 加载） -->
+<script src="js/narrative/events.js?v=17"></script>
+<!-- 剧情：数据（story.js 由 story-editor.html 生成）+ 运行时（播放状态机/头像解析/分支） -->
+<script src="js/narrative/story.js?v=1"></script>
+<script src="js/narrative/story-runtime.js?v=1"></script>
+<script src="js/engine/settle.js?v=24"></script>
+<!-- UI 层 -->
+<script src="js/ui/portraits.js?v=2"></script>
+<script src="js/ui/app.js?v=64"></script>
+
+
+</body></html>

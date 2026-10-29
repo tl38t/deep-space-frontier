@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>舰基方案 B · 网格舱段放置</title>
+<style>
+:root{--bg:#0b1020;--panel:#131a30;--panel2:#1a2340;--line:#2a3558;--fg:#dce4f5;--dim:#8b96b8;--good:#5ad1a0;--warn:#e8b45a;--acc:#5a8de8;--bad:#e879a8;--card-a:#16203a;--card-b:#0f1629}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;padding:16px;max-width:760px;margin:0 auto}
+h1{font-size:18px;color:#fff;margin-bottom:2px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+.hud{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.res{background:rgba(90,141,232,.1);border:1px solid var(--line);padding:4px 10px;border-radius:999px;font-size:13px}
+.res b{color:#fff}
+.panel{background:linear-gradient(160deg,#151d35,#101728);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0}
+button{background:var(--acc);color:#fff;border:none;padding:9px 16px;border-radius:8px;cursor:pointer;font-size:14px;min-height:38px}
+button:disabled{background:#3a4468;color:#7c86a8;cursor:not-allowed}
+.tag{display:inline-block;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:4px;padding:1px 7px;font-size:12px}
+.tag.good{color:var(--good)}.tag.warn{color:var(--warn)}.tag.bad{color:var(--bad)}
+svg{display:block;width:100%;height:auto;background:radial-gradient(circle at 50% 45%,#16203a,#0b1020);border-radius:12px;border:1px solid var(--line);touch-action:manipulation}
+.buildbar{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.bld{display:flex;flex-direction:column;align-items:center;gap:2px;background:#101728;border:1px solid var(--line);border-radius:8px;padding:7px 9px;cursor:pointer;min-width:62px;transition:.12s}
+.bld:hover{border-color:#3a4a78}
+.bld.sel{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset}
+.bld.locked{opacity:.4;cursor:not-allowed}
+.bld .ic{font-size:20px}
+.bld .nm{font-size:11px;color:var(--dim)}
+.bld .lk{font-size:10px;color:var(--bad)}
+.hint{font-size:12px;color:var(--dim);margin-top:8px;line-height:1.6}
+.stat{font-size:13px;color:var(--acc);margin-top:6px}
+</style>
+</head>
+<body>
+<h1>舰基建设 · 方案 B</h1>
+<div class="sub">网格舱段放置 —— 真·在基地里盖东西。格子 = 建筑（自带产线），本体等级解锁格子数 + 高级舱段</div>
+<div class="hud">
+ <span class="res">⛁ <b id="credits">9000</b></span>
+ <span class="res">🪨 <b id="ore">400</b></span>
+ <span class="tag" id="bodyLv">本体 Lv.1</span>
+ <button id="upBtn">升级本体</button>
+</div>
+<div class="panel">
+ <svg id="svg" viewBox="0 0 320 320" aria-label="舰基网格"></svg>
+ <div class="stat" id="stat"></div>
+</div>
+<div class="panel">
+ <h3 style="font-size:14px;color:var(--acc);margin:0 0 4px">舱段库（点选 → 点空格放置）</h3>
+ <div class="buildbar" id="buildbar"></div>
+ <div class="hint" id="hint">点击上方舱段选中，再点网格里的空格放下。点已放置的舱段可拆除回收。</div>
+</div>
+<script>
+const GRID=4;
+let lvl=0; // bodyLevel 0..3
+const UNLOCK=[4,7,11,16];
+const BODY_NAMES=["空间站","星堡","星城","深空要塞"];
+const BUILDINGS={
+ refine:{ic:"⚗️",nm:"精炼舱",need:0,cost:300},
+ manu:{ic:"🔧",nm:"制造舱",need:0,cost:500},
+ cargo:{ic:"📦",nm:"货舱",need:1,cost:400},
+ habitat:{ic:"🛏️",nm:"居住舱",need:0,cost:200},
+ dock:{ic:"🚀",nm:"船坞",need:2,cost:2000},
+ command:{ic:"🛰️",nm:"指挥塔",need:2,cost:1500},
+};
+let cells=Array(16).fill(null);
+let selected=null;
+const svg=document.getElementById('svg');
+const buildbar=document.getElementById('buildbar');
+function drawGrid(){
+ const W=320,pad=12,gap=8,size=(W-pad*2-gap*(GRID-1))/GRID;
+ let s='';
+ for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){
+  const idx=r*GRID+c,x=pad+c*(size+gap),y=pad+r*(size+gap);
+  const locked=idx>=UNLOCK[lvl],b=cells[idx];
+  if(locked){s+=`<g><rect x="${x}" y="${y}" width="${size}" height="${size}" rx="9" fill="#0d1329" stroke="#1c2745"/><text x="${x+size/2}" y="${y+size/2+6}" text-anchor="middle" fill="#3a4468" font-size="20">🔒</text></g>`;}
+  else if(b){const d=BUILDINGS[b];const dur=(2+ (idx%5)*0.4).toFixed(1);
+   s+=`<g class="cell" data-idx="${idx}"><rect x="${x}" y="${y}" width="${size}" height="${size}" rx="9" fill="#16203a" stroke="#5a8de8" stroke-width="2"/><text x="${x+size/2}" y="${y+size/2-4}" text-anchor="middle" font-size="26">${d.ic}</text><text x="${x+size/2}" y="${y+size-9}" text-anchor="middle" fill="#8b96b8" font-size="10">${d.nm}</text><rect x="${x+8}" y="${y+size-6}" width="${size-16}" height="4" rx="2" fill="#0d1329"/><rect x="${x+8}" y="${y+size-6}" height="4" rx="2" fill="#5ad1a0"><animate attributeName="width" values="0;${size-16};0" dur="${dur}s" repeatCount="indefinite"/></rect></g>`;}
+  else{const sel=selected?'stroke="#e8b45a" stroke-dasharray="4 3"':'stroke="#2a3558"';
+   s+=`<g class="cell empty" data-idx="${idx}"><rect x="${x}" y="${y}" width="${size}" height="${size}" rx="9" fill="#101728" stroke="${sel}"/><text x="${x+size/2}" y="${y+size/2+8}" text-anchor="middle" fill="#3a4a78" font-size="24">＋</text></g>`;}
+ }
+ svg.innerHTML=s;
+ svg.querySelectorAll('.cell').forEach(g=>{g.style.cursor='pointer';g.addEventListener('click',()=>onCell(+g.dataset.idx));});
+}
+function onCell(idx){
+ if(idx>=UNLOCK[lvl])return;
+ if(cells[idx]){cells[idx]=null;drawGrid();updateStat();return;}
+ if(!selected)return;
+ const d=BUILDINGS[selected];if(lvl<d.need)return;
+ cells[idx]=selected;drawGrid();updateStat();
+}
+function renderBuildbar(){
+ let h='';
+ for(const k in BUILDINGS){const d=BUILDINGS[k],locked=lvl<d.need;
+  h+=`<div class="bld ${selected===k?'sel':''} ${locked?'locked':''}" data-k="${k}"><div class="ic">${d.ic}</div><div class="nm">${d.nm}</div>${locked?`<div class="lk">Lv${d.need}🔒</div>`:''}</div>`;}
+ buildbar.innerHTML=h;
+ buildbar.querySelectorAll('.bld').forEach(el=>{
+  const k=el.dataset.k;if(lvl<BUILDINGS[k].need)return;
+  el.addEventListener('click',()=>{selected=selected===k?null:k;renderBuildbar();drawGrid();});
+ });
+}
+function updateStat(){
+ const c={};cells.forEach(b=>{if(b)c[b]=(c[b]||0)+1;});
+ const txt=Object.keys(c).map(k=>BUILDINGS[k].ic+BUILDINGS[k].nm+'×'+c[k]).join('  ')||'空基地';
+ document.getElementById('stat').textContent='已建：'+txt+'　·　可用格 '+UNLOCK[lvl]+'/16';
+}
+function refresh(){
+ document.getElementById('bodyLv').textContent='本体 Lv.'+(lvl+1)+' · '+BODY_NAMES[lvl];
+ const up=document.getElementById('upBtn');
+ if(lvl>=3){up.disabled=true;up.textContent='已达终级';}
+ else{up.disabled=false;up.textContent='升级 → '+BODY_NAMES[lvl+1]+'（解锁 '+(UNLOCK[lvl+1]-UNLOCK[lvl])+' 格）';}
+ // 清掉因升级而越界的放置
+ for(let i=UNLOCK[lvl];i<16;i++)cells[i]=null;
+ // 取消已锁建筑的选择
+ if(selected&&lvl<BUILDINGS[selected].need)selected=null;
+ renderBuildbar();drawGrid();updateStat();
+}
+document.getElementById('upBtn').onclick=()=>{
+ if(lvl>=3)return;
+ // demo：本体升级解锁更多格子 + 高级舱段（费用占位，未扣）
+ lvl++;refresh();
+};
+refresh();
+</script>
+</body>
+</html>

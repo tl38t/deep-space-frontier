@@ -1,0 +1,19 @@
+{
+  "_note": "深空星疆 NPC 肖像池。生成规则见 军团NPC头像_Gemini生图Prompt.md。当前为每原型 1 张基础图（变体 V1），计划补齐到 12 原型 × 4 变体 = 48 张。招募时按 member.origin 偏置到对应原型桶、再 seed 取一张。",
+  "ratio": "3:4",
+  "size": "1024x1536",
+  "archetypes": {
+    "belt_nomad":   ["nsk_npc_belt_nomad_1.webp"],
+    "fleet_brat":   ["nsk_npc_fleet_brat_1.webp"],
+    "orphan_void":  ["nsk_npc_orphan_void_1.webp"],
+    "relic_kid":    ["nsk_npc_relic_kid_1.webp"],
+    "defector":     ["nsk_npc_defector_1.webp"],
+    "corp_heir":    ["nsk_npc_corp_heir_1.webp"],
+    "station_rat":  ["nsk_npc_station_rat_1.webp"],
+    "signal_orphan":["nsk_npc_signal_orphan_1.webp"],
+    "frontier":     ["nsk_npc_frontier_1.webp"],
+    "merc_veteran": ["nsk_npc_merc_veteran_1.webp"],
+    "augmented":    ["nsk_npc_augmented_1.webp"],
+    "pilot":        ["nsk_npc_pilot_1.webp"]
+  }
+}

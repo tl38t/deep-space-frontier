@@ -1,0 +1,337 @@
+/* ================================================================
+   全装备强化 — 纯规则与数值层
+
+   所有装备（普通战斗 / 普通工业 / 势力 / 联盟 / 死亡空间 / 旗舰）均可强化。
+   强化等级保存在装备实例上；本文件不写 gameState、不操作 DOM。
+   严格遵循最终锁定规则：
+     · 失败规则 C：消耗全部材料，等级不变，不回退、不降级
+     · 失败 XP = 0（仅成功给 baseXp·(1+0.2L)）
+     · 成功率 = clamp(0.50 + skillBonus − levelPenalty, 动态下限, 动态上限)
+       skillBonus = 技能溢出递减（最高 +30%）
+       levelPenalty = 强化等级递增惩罚
+     · 每次尝试消耗精炼矿物，倍率 = 0.5 + 0.10·L + 0.5·⌊L/5⌋
+     · 精炼矿物集合仅来自 SMELTING_RECIPES.outputMineral（数据驱动，无手写漂移表）
+     · 普通 / 普通旗舰：任何等级均只耗精炼矿物，不耗同型号装备
+     · 势力 / 联盟 / DED：仅 5 倍数目标等级（里程碑）额外收取同型号 +0 库存装备
+        （DED 普通 +1 核心；DED 监督者成功后 +1 协议）
+   ================================================================ */
+
+/* ---- 精炼矿物集合：仅来自冶炼配方产出（数据驱动，无手写漂移表） ---- */
+function getRefinedMineralSet() {
+  // Fail closed: 如果 SMELTING_RECIPES 不存在或为空，返回空集合。
+  // 脚本顺序保证 production.js 先于 equipment-enhancement.js 加载，
+  // 若数据不存在说明加载顺序错误，审计会捕获并报错。
+  if (typeof SMELTING_RECIPES !== "undefined" && Array.isArray(SMELTING_RECIPES) && SMELTING_RECIPES.length) {
+    return new Set(SMELTING_RECIPES.map(recipe => recipe.outputMineral));
+  }
+  return new Set(); // 空集合 → 强化成本为空 → 审计失败
+}
+const REFINED_MINERALS = getRefinedMineralSet();
+
+/* ---- 装备分类（用于决定里程碑额外消耗） ---- */
+function getEquipmentEnhancementCategory(equipment) {
+  if (!equipment || !equipment.id) return "unknown";
+  if (equipment.sourceDeathspaceId && equipment.deathspaceVariant === "supervisor") return "deathspace-supervisor";
+  if (equipment.sourceDeathspaceId && equipment.deathspaceVariant === "standard") return "deathspace-standard";
+  if (equipment.faction === "alliance") return "alliance";
+  if (equipment.faction === "angel" || equipment.faction === "blood" || equipment.faction === "sansha") return "faction";
+  return "normal";
+}
+
+/* ---- 效果乘区（仅作用于：武器基础伤害、维修量、采矿/采气/工业增益、护盾/装甲/结构容量） ---- */
+function getEquipmentEnhancementEffectMultiplier(level) {
+  const L = Math.max(0, Math.floor(Number(level) || 0));
+  return 1 + 0.005 * L + 0.025 * Math.floor(L / 5);
+}
+
+/* ---- 成功率（委托 enhancement-chance.js 共用边际递减公式） ----
+   2026-07-24：委托共用纯函数层，避免舰船/装备两套公式漂移。
+   旧公式已废止：clamp(0.50 + 0.025×gap − 0.015×L, 0.10, 0.95)
+   ---- */
+function getEquipmentEnhancementSuccessChance(equipmentEngineeringLevel, equipmentLevel, currentLevel) {
+  return getEnhancementChance(equipmentEngineeringLevel, equipmentLevel, currentLevel);
+}
+
+/** 返回 { base:0.50, skillBonus:number, levelPenalty:number, final:number }
+ *  动态下限 5%~15%，动态上限 80%~90%，由制造等级相对门槛决定。 */
+function getEquipmentEnhancementSuccessBreakdown(equipmentEngineeringLevel, equipmentLevel, currentLevel) {
+  return getEnhancementChanceBreakdown(equipmentEngineeringLevel, equipmentLevel, currentLevel);
+}
+
+/* ---- 单次尝试精炼矿物倍率 ---- */
+function getEquipmentEnhancementCostMultiplier(targetLevel) {
+  const L = Math.max(1, Math.floor(Number(targetLevel) || 1));
+  return 0.5 + 0.10 * L + 0.5 * Math.floor(L / 5);
+}
+
+/* ---- XP：成功 = round(baseXp · (1 + 0.2·currentLevel) · 2)；失败 = 0 ---- */
+function getEquipmentEnhancementSuccessXp(equipment, currentLevel) {
+  const L = Math.max(0, Math.floor(Number(currentLevel) || 0));
+  return Math.round((Number(equipment && equipment.xp) || 0) * (1 + 0.2 * L) * 2);
+}
+function getEquipmentEnhancementFailureXp() { return 0; }
+
+/* ---- 单次尝试的精炼矿物消耗（仅精炼矿物，剔除非精炼成本） ---- */
+function getEquipmentEnhancementCost(equipment, targetLevel) {
+  const multiplier = getEquipmentEnhancementCostMultiplier(targetLevel);
+  const out = {};
+  const cost = (equipment && equipment.cost) || {};
+  for (const [material, quantity] of Object.entries(cost)) {
+    if (REFINED_MINERALS.has(material)) out[material] = Math.max(1, Math.ceil(Number(quantity) * multiplier));
+  }
+  return out;
+}
+
+/* ---- DED 核心 / 协议 名称查询（来自 DEATHSPACE_DATABASE） ---- */
+function getDeathspaceMaterials(equipment) {
+  if (typeof DEATHSPACE_DATABASE === "undefined" || !equipment || !equipment.sourceDeathspaceId) return { core:null, protocol:null };
+  const site = DEATHSPACE_DATABASE.find(entry => entry.id === equipment.sourceDeathspaceId);
+  if (!site) return { core:null, protocol:null };
+  return { core: site.coreMaterial || null, protocol: site.protocolMaterial || null };
+}
+
+/* ---- 里程碑额外消耗（方案2：仅 5 倍数目标等级）。
+       普通 / 普通旗舰不耗同型号装备；势力/联盟/DED 额外消耗 1 件同型号 +0 库存装备；
+       DED 普通 +1 核心；DED 监督者 +1 协议。 ---- */
+function getEquipmentEnhancementExtraCost(equipment, targetLevel) {
+  const L = Math.max(1, Math.floor(Number(targetLevel) || 1));
+  if (L % 5 !== 0) return {};
+  const out = {};
+  // 10/10 签名装：材料已不再掉落，里程碑强化只耗同名 +0 装备（从掉落获取），不再要协议/核心。
+  if (equipment && equipment.signature) { out.sameTypeItemId = equipment.id; return out; }
+  const category = getEquipmentEnhancementCategory(equipment);
+  if (category === "faction" || category === "alliance" ||
+      category === "deathspace-standard" || category === "deathspace-supervisor") {
+    out.sameTypeItemId = equipment.id; // 消耗 inventory 中同型号 +0 装备（string）
+  }
+  if (category === "deathspace-standard") {
+    const materials = getDeathspaceMaterials(equipment);
+    if (materials.core) out.core = materials.core;
+  }
+  if (category === "deathspace-supervisor") {
+    const materials = getDeathspaceMaterials(equipment);
+    if (materials.protocol) out.protocol = materials.protocol;
+  }
+  return out;
+}
+
+/* ---- 统一装备引用解析层（双池：inventory string 或 instanceId 均可解析） ---- */
+function isEquipmentInstanceId(state, ref) {
+  // 防御性兼容：浏览器 data-* 属性会将数字转为字符串；旧存档可能使用数字 ID。
+  // 统一转为字符串后宽松比较，同时防止 itemId 被误判为 instanceId。
+  if (!state || !state.equipment || !Array.isArray(state.equipment.instances)) return false;
+  const refStr = String(ref);
+  return state.equipment.instances.some(instance => String(instance.instanceId) === refStr);
+}
+
+/* 原实现（逻辑逐字节保留；仅可经 resolveEquipmentReference 到达） */
+function __resolveEquipmentReferenceUncached(state, ref) {
+  const instance = isEquipmentInstanceId(state, ref)
+    ? state.equipment.instances.find(entry => String(entry.instanceId) === String(ref))
+    : null;
+  const itemId = instance ? instance.itemId : ref; // 旧 string 直接当 itemId
+  const definition = EQUIPMENT_DB[itemId];
+  if (!definition) return null;
+  const enhancementLevel = instance ? Math.max(0, Number(instance.enhancementLevel) || 0) : 0;
+  return {
+    itemId,
+    definition,
+    instance,
+    enhancementLevel,
+    multiplier: getEquipmentEnhancementEffectMultiplier(enhancementLevel)
+  };
+}
+
+function resolveEquipmentReference(state, ref) {
+  if (!state || !state.equipment) return null;
+  // 性能优化（2026-09-20）：离线结算仿真期间按 (state, ref) 记忆化。
+  // 宿主 = selectors.js 的会话槽 __offlinePerfCache；槽为 null（在线）⇒ 直走原实现，零影响。
+  // 返回同一对象引用安全：全部调用点均只读（已 grep 证：无 resolved.* 赋值 / 原地修改）。
+  const cache = (typeof getOfflinePerfCache === "function") ? getOfflinePerfCache() : null;
+  if (!cache) return __resolveEquipmentReferenceUncached(state, ref);
+  let perState = cache.refs.get(state);
+  if (!perState) { perState = new Map(); cache.refs.set(state, perState); }
+  const key = String(ref);
+  if (perState.has(key)) { cache.refHit++; return perState.get(key); }
+  cache.refMiss++;
+  const value = __resolveEquipmentReferenceUncached(state, ref);
+  perState.set(key, value);
+  return value;
+}
+
+/* ---- 强化预览展示态 ---- */
+function getEquipmentEnhancementDisplayState(equipment, level, equipmentEngineeringLevel) {
+  const L = Math.max(0, Math.floor(Number(level) || 0));
+  const threshold = Number(equipment && equipment.level) || 1;
+  const targetLevel = L + 1;
+  const milestone = targetLevel % 5 === 0;
+  const breakdown = getEquipmentEnhancementSuccessBreakdown(equipmentEngineeringLevel, threshold, L);
+  return {
+    currentLevel: L,
+    previewLevel: targetLevel,
+    multiplier: getEquipmentEnhancementEffectMultiplier(L),
+    previewMultiplier: getEquipmentEnhancementEffectMultiplier(targetLevel),
+    success: breakdown.final,
+    successBreakdown: breakdown,
+    cost: getEquipmentEnhancementCost(equipment, targetLevel),
+    extra: getEquipmentEnhancementExtraCost(equipment, targetLevel),
+    isMilestone: milestone,
+    category: getEquipmentEnhancementCategory(equipment),
+    successXp: getEquipmentEnhancementSuccessXp(equipment, L),
+    failureXp: 0
+  };
+}
+
+/* ---- 双池计数与查询辅助（只读 state） ---- */
+function getEquipmentInventoryCount(state, itemId) {
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  return inventory.filter(id => id === itemId).length;
+}
+
+/* ---- donor（同型号 +0 装备）可用计数：双池合并，排除目标自身实例 ----
+   inventory 字符串池中的 +0 字符串 + instances 池中 enhancementLevel=0 且未安装的实例。
+   旧 getEquipmentInventoryCount 仅统计 inventory 字符串，导致已实例化的 +0 装备无法作为 donor，
+   里程碑强化被误判「缺少同型号 +0 装备」。 */
+function getEquipmentDonorCount(state, itemId, excludeInstanceId) {
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  let count = inventory.filter(id => id === itemId).length;
+  const excludeStr = String(excludeInstanceId || "");
+  const instances = getEquipmentInstanceList(state).filter(inst =>
+    inst.itemId === itemId &&
+    !inst.installedOn &&
+    Math.max(0, Math.floor(Number(inst.enhancementLevel) || 0)) === 0 &&
+    String(inst.instanceId) !== excludeStr
+  );
+  return count + instances.length;
+}
+
+/* ---- donor 查找：优先 inventory 字符串，其次 instances 池中的 +0 未安装实例 ----
+   返回 { kind:"inventory", index } 或 { kind:"instance", instanceId } 或 null。 */
+function findDonorReference(state, itemId, excludeInstanceId) {
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  for (let index = 0; index < inventory.length; index++) {
+    if (inventory[index] === itemId) return { kind: "inventory", index };
+  }
+  const excludeStr = String(excludeInstanceId || "");
+  const instance = getEquipmentInstanceList(state).find(inst =>
+    inst.itemId === itemId &&
+    !inst.installedOn &&
+    Math.max(0, Math.floor(Number(inst.enhancementLevel) || 0)) === 0 &&
+    String(inst.instanceId) !== excludeStr
+  );
+  if (instance) return { kind: "instance", instanceId: instance.instanceId };
+  return null;
+}
+
+function getEquipmentInstanceList(state) {
+  return state && state.equipment && Array.isArray(state.equipment.instances) ? state.equipment.instances : [];
+}
+
+function getEquipmentInstanceById(state, instanceId) {
+  const idStr = String(instanceId);
+  return getEquipmentInstanceList(state).find(instance => String(instance.instanceId) === idStr) || null;
+}
+
+function getUninstalledEquipmentInstances(state, itemId) {
+  return getEquipmentInstanceList(state).filter(instance =>
+    (!itemId || instance.itemId === itemId) && !instance.installedOn);
+}
+
+function getEquipmentOwnedCount(state, itemId) {
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  const instances = getEquipmentInstanceList(state).filter(instance => !itemId || instance.itemId === itemId);
+  return inventory.filter(id => id === itemId).length + instances.length;
+}
+
+function findDonorInventoryIndex(state, itemId, excludeIndex) {
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  for (let index = 0; index < inventory.length; index++) {
+    if (index === excludeIndex) continue;
+    if (inventory[index] === itemId) return index;
+  }
+  return -1;
+}
+
+/* ---- 拆解报价辅助：按「只算成功」反推累计消耗（失败尝试不计入）。
+       强化等级仅在成功时 +1，故 total = 逐级 L=1..level 之和：
+       · minerals：每次精炼矿物消耗（仅精炼，剔除非精炼）
+       · wholeItems：每个 5 倍数里程碑的同型装备 / DED 核心 / 协议（逐件列表，供拆解时按冶炼回收率独立掷骰） ---- */
+function getEquipmentEnhancementSuccessCostSummary(equipment, level) {
+  const L = Math.max(0, Math.floor(Number(level) || 0));
+  const minerals = {};
+  const wholeItems = [];
+  for (let lvl = 1; lvl <= L; lvl++) {
+    const cost = getEquipmentEnhancementCost(equipment, lvl); // 精炼矿物
+    for (const [mat, qty] of Object.entries(cost)) minerals[mat] = (minerals[mat] || 0) + Number(qty);
+    if (lvl % 5 === 0) {
+      const extra = getEquipmentEnhancementExtraCost(equipment, lvl);
+      if (extra.sameTypeItemId) wholeItems.push({ type:"sameType", id:extra.sameTypeItemId });
+      if (extra.core) wholeItems.push({ type:"core", id:extra.core });
+      if (extra.protocol) wholeItems.push({ type:"protocol", id:extra.protocol });
+    }
+  }
+  return { minerals, wholeItems };
+}
+
+/* ---- 制造输入装备分组候选（双池合并，排除已安装） ----
+   返回 { [enhancementLevel]: 可用数量 }：
+     · +0 来自 inventory 字符串池
+     · ≥1 来自 instances 按 enhancementLevel 分桶
+   所有消耗 / 展示 / UI 的单一真相源。 */
+function getGroupedInputEquipmentCandidates(state, itemId) {
+  const out = {};
+  const inventory = state && state.equipment && Array.isArray(state.equipment.inventory) ? state.equipment.inventory : [];
+  const base = inventory.filter(id => id === itemId).length;
+  if (base > 0) out[0] = (out[0] || 0) + base;
+  const instances = getEquipmentInstanceList(state).filter(instance =>
+    instance.itemId === itemId && !instance.installedOn);
+  for (const inst of instances) {
+    const lvl = Math.max(0, Math.floor(Number(inst.enhancementLevel) || 0));
+    out[lvl] = (out[lvl] || 0) + 1;
+  }
+  return out;
+}
+
+/* ---- 读取当前装备工程 action 选定的输入强化等级（默认 0） ---- */
+function getEquipEngInputLevelFromState(state, recipe) {
+  if (!recipe || !recipe.inputEquipment) return 0;
+  const ca = state && state.currentAction;
+  const lv = ca && ca.equipEngInputLevel;
+  if (lv === undefined || lv === null || !Number.isFinite(Number(lv))) return 0;
+  return Math.max(0, Math.floor(Number(lv)));
+}
+
+/* ---- 输入强化继承：floor(L/3)（L<3 继承为 0） ---- */
+function getEquipEngInputInheritance(level) {
+  return Math.max(0, Math.floor(Number(level) / 3));
+}
+
+window.EquipmentEnhancement = Object.freeze({
+  REFINED_MINERALS,
+  getRefinedMineralSet,
+  getEquipmentEnhancementCategory,
+  getEquipmentEnhancementEffectMultiplier,
+  getEquipmentEnhancementSuccessChance,
+  getEquipmentEnhancementSuccessBreakdown,
+  getEquipmentEnhancementCostMultiplier,
+  getEquipmentEnhancementSuccessXp,
+  getEquipmentEnhancementFailureXp,
+  getEquipmentEnhancementCost,
+  getDeathspaceMaterials,
+  getEquipmentEnhancementExtraCost,
+  getEquipmentEnhancementSuccessCostSummary,
+  isEquipmentInstanceId,
+  resolveEquipmentReference,
+  getEquipmentEnhancementDisplayState,
+  getEquipmentInventoryCount,
+  getEquipmentDonorCount,
+  getEquipmentInstanceList,
+  getEquipmentInstanceById,
+  getUninstalledEquipmentInstances,
+  getEquipmentOwnedCount,
+  findDonorInventoryIndex,
+  findDonorReference,
+  getGroupedInputEquipmentCandidates,
+  getEquipEngInputLevelFromState,
+  getEquipEngInputInheritance
+});

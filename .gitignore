@@ -1,0 +1,19 @@
+# WorkBuddy 项目记忆 / 个人数据 —— 绝不入库
+.workbuddy/
+
+# 操作系统垃圾文件
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 编辑器
+*.swp
+*~
+.vscode/
+
+# 依赖 / 构建产物（本游戏为纯前端无构建，留作防御）
+node_modules/
+
+# 日志
+*.log

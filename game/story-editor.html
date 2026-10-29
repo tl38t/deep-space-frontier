@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>深空星疆 · 剧情编辑器</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#ffffff; --ink:#1f2933; --muted:#67737e; --line:#e2e8f0;
+    --accent:#2f7fd1; --accent2:#0f9d8a; --danger:#d9534f; --warn:#e0a800; --chip:#eef3f8;
+    --ok:#1f9d55;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  header{background:linear-gradient(90deg,#11324f,#1b4a73);color:#fff;padding:12px 18px;display:flex;
+    align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:20}
+  header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.4px}
+  header .stat{font-size:12px;opacity:.85}
+  header .spacer{flex:1}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 12px;cursor:pointer;
+    font-size:13px;font-weight:600;white-space:nowrap}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.35)}
+  .btn.sm{padding:4px 9px;font-size:12px}
+  .btn.mini{padding:2px 6px;font-size:11px;font-weight:500}
+  .btn.danger{background:var(--danger)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .wrap{padding:14px 18px 40px;max-width:1680px;margin:0 auto}
+  .grid3{display:grid;grid-template-columns:240px minmax(0,1fr) 330px;gap:14px;align-items:start}
+  @media (max-width:1180px){ .grid3{grid-template-columns:minmax(0,1fr)} .col-right{position:static!important} }
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+  .card h2{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .card h2 .spacer{flex:1}
+  .hint{color:var(--muted);font-size:12px;line-height:1.55}
+  label.fl{display:block;font-size:12px;color:var(--muted);margin:7px 0 3px;font-weight:600}
+  input,select,textarea{width:100%;border:1px solid var(--line);border-radius:5px;padding:5px 7px;
+    font-family:inherit;font-size:13px;color:var(--ink);background:#fff}
+  textarea{resize:vertical;min-height:56px;line-height:1.6}
+  input:focus,select:focus,textarea:focus{outline:2px solid #b6d7f2;border-color:var(--accent)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  /* ---- 左：场景列表 ---- */
+  .scene-item{border:1px solid var(--line);border-radius:7px;padding:7px 8px;margin-bottom:6px;cursor:pointer;
+    background:#fff;transition:border-color .12s,background .12s}
+  .scene-item:hover{border-color:#c3d7ea}
+  .scene-item.on{border-color:var(--accent);background:#f2f8fe;box-shadow:0 0 0 1px var(--accent) inset}
+  .scene-item .t{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+  .scene-item .m{font-size:11px;color:var(--muted);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap}
+  .pill{display:inline-block;border-radius:9px;padding:0 6px;font-size:10px;border:1px solid var(--line);background:var(--chip);color:var(--muted)}
+  .pill.auto{background:#fff3d6;border-color:#f0d089;color:#a9721a}
+  .pill.hid{background:#eef2f7;border-color:#cfd8e3;color:#5a6773}
+  .pill.bad{background:#fdecea;border-color:#f3c2bd;color:#b3392f}
+  /* ---- 中：台词卡 ---- */
+  .line-card{border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:10px;background:#fcfdfe}
+  .line-card.has-choice{border-color:#e6c98a;background:#fffdf6}
+  .lc-head{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap}
+  .lc-idx{font-size:11px;font-weight:700;color:#fff;background:#8aa0b4;border-radius:4px;padding:1px 6px}
+  .lc-head .spacer{flex:1}
+  .av-row{display:flex;gap:8px;align-items:flex-start}
+  .av-thumb{width:56px;height:56px;flex:0 0 auto;border:1px solid var(--line);border-radius:5px;background:#eef2f7;
+    overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+  .av-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .av-thumb .ph{display:none;font-size:20px;font-weight:700;color:#8aa0b4}
+  .av-thumb.miss img{display:none}
+  .av-thumb.miss .ph{display:block}
+  .av-thumb.miss{border-color:#e8b4ae;background:#fdf2f1}
+  .av-thumb.none{border-style:dashed}
+  .av-thumb.none .ph{display:block;color:#c3ccd6}
+  .av-meta{font-size:11px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
+  .av-meta.miss{color:#b3392f}
+  .choice-box{border:1px dashed #e0c68b;border-radius:7px;padding:8px;margin-top:8px;background:#fffef9}
+  .choice-box .ch-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .choice-box .ch-head b{font-size:12px}
+  .choice-box .ch-head .spacer{flex:1}
+  /* ---- 右：预览 ---- */
+  .col-right{position:sticky;top:74px}
+  .pv{background:#071018;border:1px solid #294653;border-radius:9px;padding:12px;color:#dcebef}
+  .pv .dlg{background:#101c28;border:1px solid #294653;border-radius:6px;padding:12px}
+  .pv .dlg.fx-holo{border-color:rgba(98,213,175,.42);box-shadow:inset 0 0 26px rgba(98,213,175,.075)}
+  .pv .dlg-head{display:flex;gap:11px;align-items:flex-start}
+  .pv .dlg-av{position:relative;flex:0 0 auto;width:60px;height:60px;border-radius:5px;border:1px solid #294653;
+    background:#0b1721;overflow:hidden}
+  .pv .dlg-av img{width:100%;height:100%;object-fit:cover;display:block}
+  .pv .dlg-av .av-ph{display:none;position:absolute;inset:0;align-items:center;justify-content:center;
+    font-size:22px;font-weight:700;color:#4fc4d3;background:#0d1b26}
+  .pv .dlg-av.miss img{display:none}
+  .pv .dlg-av.miss .av-ph{display:flex}
+  .pv .dlg-body{flex:1;min-width:0}
+  .pv .dlg-name{font-size:12px;font-weight:700;margin-bottom:4px;letter-spacing:.02em}
+  .pv .dlg-text{font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word}
+  .pv .dlg-text.narr{color:#b6c9cf;font-style:italic}
+  .pv .dlg-bar{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .pv .dlg-prog{font-size:11px;color:#8ca6ae;letter-spacing:.05em}
+  .pv .pvbtn{background:#236d7e;border:1px solid #3b8997;color:#e9fbfc;border-radius:4px;padding:4px 10px;
+    font-size:12px;cursor:default}
+  .pv .dlg-choices{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+  .pv .dlg-choice{display:block;width:100%;text-align:left;background:#16313d;border:1px solid #2f5a6b;
+    color:#dcebef;border-radius:4px;padding:6px 9px;font-size:12px;line-height:1.5;cursor:default}
+  .pv .ch-gain{display:block;margin-top:2px;font-size:11px;color:#62d5af}
+  .pv-scenes{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+  .pv-scenes .spacer{flex:1}
+  /* ---- 校验 ---- */
+  .issue{font-size:12px;padding:5px 8px;border-radius:5px;margin-bottom:5px;line-height:1.5}
+  .issue.err{background:#fdecea;border:1px solid #f3c2bd;color:#a4342b}
+  .issue.warn{background:#fff8e1;border:1px solid #f0dfa8;color:#8a6d16}
+  .issue.okk{background:#eaf7ef;border:1px solid #bfe3cd;color:#1f7a47}
+  /* ---- 弹层（导出文本） ---- */
+  .modal{position:fixed;inset:0;background:rgba(15,25,35,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal.show{display:flex}
+  .modal .box{background:#fff;border-radius:10px;max-width:900px;width:100%;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal .box h3{margin:0;padding:12px 14px;font-size:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+  .modal .box .spacer{flex:1}
+  .modal .box textarea{flex:1;border:none;border-radius:0;font-family:ui-monospace,Consolas,monospace;font-size:12px;
+    min-height:52vh;resize:none;background:#fbfcfd}
+  .modal .foot{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#1f2933;color:#fff;
+    padding:9px 16px;border-radius:7px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60}
+  .toast.show{opacity:1}
+  .sep{height:1px;background:var(--line);margin:9px 0}
+  .sm-hint{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.45}
+  .draft-banner{background:#3a2f12;color:#f0d9a0;border:1px solid #6b561f;border-radius:6px;
+    padding:8px 12px;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 12px 0}
+  .draft-banner .btn{margin:0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>剧情编辑器</h1>
+  <span class="stat" id="hdStat">—</span>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="btnValidate">校验</button>
+  <button class="btn ghost" id="btnPreviewJs">预览 story.js</button>
+  <button class="btn" id="btnWrite" title="首次点会要求选 game 目录（本会话记住），之后一键覆盖 js/narrative/story.js">📂 写入 story.js</button>
+  <button class="btn ghost" id="btnCopy">📋 复制 story.js</button>
+  <button class="btn ghost" id="btnLoad">载入 story.js</button>
+  <input type="file" id="fileIn" accept=".js,.json,text/javascript" hidden />
+</header>
+
+<div id="draftBanner" class="draft-banner" hidden>
+  <span>检测到本地草稿与 story.js 不一致（可能是上次未导出的编辑）。</span>
+  <button class="btn sm" id="btnRestoreDraft">恢复草稿</button>
+  <button class="btn sm ghost" id="btnKeepFile">采用 story.js</button>
+</div>
+
+<div class="wrap">
+<div class="grid3">
+
+  <!-- ============ 左：场景 + 说话人 ============ -->
+  <aside class="col-left">
+    <div class="card">
+      <h2>场景 <span class="spacer"></span>
+        <button class="btn sm" id="btnAddScene">+ 新建</button>
+      </h2>
+      <div class="hint" style="margin-bottom:8px">点选切换；隐藏场景只作分支落点，不出现在游戏章节列表。</div>
+      <div id="sceneList"></div>
+    </div>
+
+    <div class="card">
+      <h2>说话人 <span class="spacer"></span>
+        <button class="btn sm ghost" id="btnAddSpeaker">+ 新增</button>
+      </h2>
+      <div class="hint" style="margin-bottom:8px">台词里选「说话人」就是从这张表取的；留空 = 旁白。</div>
+      <div id="speakerList"></div>
+    </div>
+  </aside>
+
+  <!-- ============ 中：台词编辑 ============ -->
+  <main class="col-mid">
+    <div class="card" id="sceneCard">
+      <h2>场景设置</h2>
+      <div id="sceneForm"></div>
+    </div>
+    <div class="card">
+      <h2>台词 <span class="spacer"></span>
+        <button class="btn sm" id="btnAddLine">+ 加一句</button>
+      </h2>
+      <div class="hint" style="margin-bottom:8px">
+        头像留空 = 跟随说话人预设；也可直接写 <code>assets/portraits/...</code>、<code>guide:flora/bust</code>、<code>npc:corp_heir/reveal</code>、<code>fac:settlers</code>。
+      </div>
+      <div id="lineList"></div>
+    </div>
+  </main>
+
+  <!-- ============ 右：预览 + 校验 ============ -->
+  <aside class="col-right">
+    <div class="card">
+      <h2>游戏内预览</h2>
+      <div class="pv-scenes">
+        <span class="hint" id="pvLabel">—</span>
+        <span class="spacer"></span>
+        <button class="btn sm mini" id="pvPrev">‹</button>
+        <span class="hint" id="pvIdx">1/1</span>
+        <button class="btn sm mini" id="pvNext">›</button>
+      </div>
+      <div class="pv" id="pvBox"></div>
+    </div>
+    <div class="card">
+      <h2>校验结果</h2>
+      <div id="issueBox"><div class="hint">点顶部「校验」检查空台词、悬空跳转、缺图。</div></div>
+    </div>
+  </aside>
+
+</div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <h3><span id="modalTitle">story.js</span><span class="spacer"></span>
+      <button class="btn sm" id="modalCopy">复制</button></h3>
+    <textarea id="modalText" spellcheck="false"></textarea>
+    <div class="foot">
+      <span class="hint" id="modalHint" style="margin-right:auto"></span>
+      <button class="btn ghost" id="modalClose" style="background:#fff;color:#2f7fd1;border:1px solid #2f7fd1">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/data/factions.js"></script>
+<script src="js/engine/state.js"></script>
+<script src="js/data/names.js"></script>
+<script src="js/data/asset-prompts.js?v=2"></script>
+<script src="js/narrative/story.js?v=1"></script>
+<script src="js/narrative/story-runtime.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+  const N = window.NSK || {};
+  const AP = (N.Data && N.Data.AssetPrompts) || null;
+  const Story = (N.Narrative && N.Narrative.Story) || null;
+  const DRAFT_KEY = "nsk_story_editor_draft_v1";
+
+  // 常用资源键（写选项效果时的下拉候选；也可直接手输别的键）
+  const RES_KEYS = [
+    ["credits", "星币"], ["fuel", "燃料"], ["rep", "声望"], ["bp", "图纸"],
+    ["fe_ore", "铁矿石"], ["ni_ore", "镍矿石"], ["he_gas", "氦气"], ["crude_fullerene", "粗富勒烯"],
+    ["fe_alloy", "铁合金"], ["struct", "结构件"], ["prop", "推进器"], ["crew", "人口"],
+  ];
+
+  let doc = null;         // { version, speakers{}, scenes[] }
+  let curScene = 0;       // 当前场景下标
+  let pvLine = 0;         // 预览到第几句
+  let pendingDraft = null; // 与 story.js 不一致的本地草稿（待用户显式恢复）
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  // ---------------- 初始数据 ----------------
+  function blankLine() { return { who: "", text: "" }; }
+  function blankScene(id) {
+    return {
+      id: id || ("scene_" + Date.now().toString(36)),
+      title: "新场景", trigger: null, hidden: false, note: "",
+      lines: [blankLine()],
+    };
+  }
+  function normalizeDoc(d) {
+    const out = { version: 1, speakers: {}, scenes: [] };
+    if (!d || typeof d !== "object") return out;
+    out.version = Number(d.version) || 1;
+    const sp = d.speakers || {};
+    for (const k in sp) {
+      const v = sp[k] || {};
+      out.speakers[k] = { name: v.name || "", avatar: v.avatar || "", color: v.color || "" };
+      if (v.fx) out.speakers[k].fx = v.fx;
+    }
+    const scenes = Array.isArray(d.scenes) ? d.scenes : [];
+    out.scenes = scenes.map((sc) => {
+      const s = {
+        id: String(sc.id || ("scene_" + Math.random().toString(36).slice(2, 8))),
+        title: sc.title || sc.id || "未命名",
+        trigger: sc.trigger || null,
+        hidden: !!sc.hidden,
+        note: sc.note || "",
+        lines: [],
+      };
+      const lines = Array.isArray(sc.lines) ? sc.lines : [];
+      s.lines = lines.map((l) => {
+        const ln = { who: l.who || "", text: l.text || "" };
+        if (l.avatar) ln.avatar = l.avatar;
+        if (l.fx) ln.fx = l.fx;
+        if (Array.isArray(l.choices) && l.choices.length) {
+          ln.choices = l.choices.map((c) => {
+            const ch = { label: c.label || "选项" };
+            if (c.next) ch.next = c.next;
+            if (c.effect && Object.keys(c.effect).length) ch.effect = clone(c.effect);
+            if (c.note) ch.note = c.note;
+            return ch;
+          });
+        }
+        return ln;
+      });
+      if (!s.lines.length) s.lines.push(blankLine());
+      return s;
+    });
+    if (!out.scenes.length) out.scenes.push(blankScene());
+    if (!Object.keys(out.speakers).length) out.speakers = { narrator: { name: "", avatar: "", color: "" } };
+    return out;
+  }
+
+  function loadInitial() {
+    const fromFile = (N.Narrative && N.Narrative.StoryData) || window.NSK_STORY || null;
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (e) { raw = null; }
+
+    const fileOk = !!(fromFile && Array.isArray(fromFile.scenes) && fromFile.scenes.length);
+    const draftOk = !!(raw && Array.isArray(raw.scenes) && raw.scenes.length);
+
+    // story.js 是权威提交源：手工改、编辑器导出都会写它，游戏也只读它。
+    // 草稿仅代表「上次未导出的编辑」，不再在启动时自动覆盖 story.js，
+    // 否则会出现「直接改了 story.js，编辑器却显示旧草稿」的错位。
+    if (fileOk) {
+      doc = normalizeDoc(fromFile);
+      curScene = 0; pvLine = 0;
+      // 存在与 story.js 不一致的本地草稿 → 给一次显式恢复机会，不静默丢失
+      const draftNorm = draftOk ? normalizeDoc(raw) : null;
+      if (draftNorm && JSON.stringify(draftNorm) !== JSON.stringify(doc)) {
+        pendingDraft = draftNorm;
+        showDraftBanner();
+      }
+    } else if (draftOk) {
+      doc = normalizeDoc(raw);
+      curScene = 0; pvLine = 0;
+      toast("已从本地草稿恢复（未检测到 story.js 数据）");
+    } else {
+      doc = normalizeDoc({ speakers: {}, scenes: [] });
+      curScene = 0; pvLine = 0;
+    }
+  }
+
+  function showDraftBanner() {
+    const b = $("draftBanner");
+    if (b) b.hidden = false;
+  }
+  function hideDraftBanner() {
+    const b = $("draftBanner");
+    if (b) b.hidden = true;
+    pendingDraft = null;
+  }
+
+  function saveDraft() {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(doc)); } catch (e) { /* 容量满就忽略 */ }
+  }
+
+  // ---------------- 工具 ----------------
+  const sceneById = (id) => doc.scenes.find((s) => s.id === id) || null;
+  function cur() { return doc.scenes[curScene] || doc.scenes[0]; }
+  function avPath(spec) {
+    if (Story && Story.resolveAvatar) return Story.resolveAvatar(spec);
+    return spec ? ("assets/portraits/" + String(spec).replace(/^\/+/, "")) : "";
+  }
+  function effText(ef) {
+    if (!ef) return "";
+    const parts = [];
+    if (ef.delta) for (const k in ef.delta) {
+      const v = Number(ef.delta[k]) || 0;
+      if (v) parts.push((v > 0 ? "+" : "") + v + " " + resName(k));
+    }
+    if (ef.flag) parts.push("记录关键选择");
+    if (ef.special && ef.special.length) parts.push("特殊效果×" + ef.special.length);
+    return parts.join(" · ");
+  }
+  function resName(k) {
+    for (const p of RES_KEYS) if (p[0] === k) return p[1];
+    return k;
+  }
+  // 清掉空壳：delta 空了就删 delta，effect 空了就删 effect，避免导出里出现一堆空对象
+  function pruneEffect(ch) {
+    if (!ch || !ch.effect) return;
+    if (ch.effect.delta && !Object.keys(ch.effect.delta).length) delete ch.effect.delta;
+    if (!Object.keys(ch.effect).length) delete ch.effect;
+  }
+
+  // ---------------- 左：场景列表 ----------------
+  function renderScenes() {
+    const h = doc.scenes.map((sc, i) => {
+      const missCount = countMissing(sc);
+      const cls = (i === curScene ? "scene-item on" : "scene-item");
+      const pills = [];
+      pills.push('<span class="pill">' + sc.lines.length + " 句</span>");
+      if (sc.trigger === "firstBoot") pills.push('<span class="pill auto">开局自动</span>');
+      if (sc.hidden) pills.push('<span class="pill hid">隐藏</span>');
+      if (missCount) pills.push('<span class="pill bad">缺图 ' + missCount + "</span>");
+      return '<div class="' + cls + '" data-scene="' + i + '">'
+        + '<div class="t">' + esc(sc.title || sc.id) + "</div>"
+        + '<div class="m">' + pills.join("") + "</div></div>";
+    }).join("");
+    $("sceneList").innerHTML = h || '<div class="hint">还没有场景。</div>';
+
+    const totalLines = doc.scenes.reduce((a, s) => a + s.lines.length, 0);
+    const totalChoice = doc.scenes.reduce((a, s) => a + s.lines.filter(l => l.choices && l.choices.length).length, 0);
+    const totalMiss = doc.scenes.reduce((a, s) => a + countMissing(s), 0);
+    $("hdStat").textContent = doc.scenes.length + " 场景 · " + totalLines + " 台词 · "
+      + totalChoice + " 选项句 · 缺图 " + totalMiss;
+  }
+
+  // 缺图数：头像 spec 解出来的路径能否加载，靠 <img> 的加载结果反推。
+  // 这里只统计「声明了头像但图不存在」的粗略数量，用缓存结果避免重复探测。
+  const probeCache = {};   // path -> true/false
+  const probing = {};      // path -> [cb]
+  function probe(path, cb) {
+    if (!path) return cb(false);
+    if (probeCache[path] !== undefined) return cb(probeCache[path]);
+    if (probing[path]) { probing[path].push(cb); return; }
+    probing[path] = [cb];
+    const img = new Image();
+    img.onload = () => { probeCache[path] = true; probing[path].forEach(f => f(true)); delete probing[path]; };
+    img.onerror = () => { probeCache[path] = false; probing[path].forEach(f => f(false)); delete probing[path]; };
+    img.src = path;
+  }
+  function countMissing(sc) {
+    let n = 0;
+    for (const l of sc.lines) {
+      const sp = doc.speakers[l.who] || {};
+      const spec = l.avatar || sp.avatar || "";
+      if (!spec) continue;
+      const p = avPath(spec);
+      if (probeCache[p] === false) n++;
+    }
+    return n;
+  }
+  // 预热探测缓存，然后重绘（缺图标记才有数据）
+  function warmProbes(done) {
+    const paths = new Set();
+    for (const sc of doc.scenes) for (const l of sc.lines) {
+      const sp = doc.speakers[l.who] || {};
+      const spec = l.avatar || sp.avatar || "";
+      if (spec) paths.add(avPath(spec));
+    }
+    for (const k in doc.speakers) if (doc.speakers[k].avatar) paths.add(avPath(doc.speakers[k].avatar));
+    let left = paths.size;
+    if (!left) return done();
+    paths.forEach((p) => probe(p, () => { if (--left === 0) done(); }));
+  }
+
+  // ---------------- 左：说话人 ----------------
+  function renderSpeakers() {
+    const rows = Object.keys(doc.speakers).map((k) => {
+      const s = doc.speakers[k];
+      return '<div style="border:1px solid var(--line);border-radius:6px;padding:6px;margin-bottom:6px">'
+        + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">'
+        + '<code style="font-size:11px;color:#3c6f9c">' + esc(k) + "</code>"
+        + '<span class="spacer" style="flex:1"></span>'
+        + '<button class="btn mini danger" data-del-sp="' + esc(k) + '">删</button></div>'
+        + '<input data-sp-name="' + esc(k) + '" value="' + esc(s.name || "") + '" placeholder="显示名（空=旁白）" />'
+        + '<input data-sp-av="' + esc(k) + '" value="' + esc(s.avatar || "") + '" placeholder="头像 spec（如 guide:flora/bust）" style="margin-top:4px" />'
+        + '<input data-sp-color="' + esc(k) + '" value="' + esc(s.color || "") + '" placeholder="名字颜色 #hex" style="margin-top:4px" />'
+        + "</div>";
+    }).join("");
+    $("speakerList").innerHTML = rows || '<div class="hint">没有说话人。</div>';
+  }
+
+  // ---------------- 中：场景表单 ----------------
+  function renderSceneForm() {
+    const sc = cur();
+    const opts = doc.scenes.map((s) => '<option value="' + esc(s.id) + '"' + (s.id === sc.id ? " selected" : "") + ">"
+      + esc(s.title || s.id) + "（" + s.lines.length + " 句）</option>").join("");
+    $("sceneForm").innerHTML =
+      '<div class="row2">'
+      + '<div><label class="fl">场景 ID（唯一，分支跳转靠它）</label>'
+      + '<input id="scId" value="' + esc(sc.id) + '" /></div>'
+      + '<div><label class="fl">标题</label><input id="scTitle" value="' + esc(sc.title) + '" /></div>'
+      + "</div>"
+      + '<div class="row2">'
+      + '<div><label class="fl">触发</label><select id="scTrigger">'
+      + '<option value=""' + (!sc.trigger ? " selected" : "") + ">不自动（只在章节列表点播）</option>"
+      + '<option value="firstBoot"' + (sc.trigger === "firstBoot" ? " selected" : "") + ">开局自动播（没看过时）</option>"
+      + "</select></div>"
+      + '<div><label class="fl">隐藏（只作分支落点）</label><select id="scHidden">'
+      + '<option value="0"' + (!sc.hidden ? " selected" : "") + ">否 · 出现在章节列表</option>"
+      + '<option value="1"' + (sc.hidden ? " selected" : "") + ">是 · 只在分支里进入</option>"
+      + "</select></div>"
+      + "</div>"
+      + '<label class="fl">备注（给自己看，不会进游戏）</label>'
+      + '<input id="scNote" value="' + esc(sc.note || "") + '" />'
+      + '<div class="sep"></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      + '<button class="btn sm ghost" id="scUp" style="background:#fff;color:#2f7fd1;border:1px solid #cfe0ef">↑ 上移</button>'
+      + '<button class="btn sm ghost" id="scDown" style="background:#fff;color:#2f7fd1;border:1px solid #cfe0ef">↓ 下移</button>'
+      + '<button class="btn sm ghost" id="scDup" style="background:#fff;color:#2f7fd1;border:1px solid #cfe0ef">复制场景</button>'
+      + '<span style="flex:1"></span>'
+      + '<button class="btn sm danger" id="scDel">删除场景</button>'
+      + "</div>";
+
+    // 用 change（失焦/回车才触发）：改 ID 要同步所有分支跳转，必须重绘，放 input 上会边打字边失焦
+    $("scId").addEventListener("change", (e) => {
+      const v = e.target.value.trim().replace(/[^\w\-]/g, "_");
+      if (!v) return;
+      if (doc.scenes.some((s, i) => i !== curScene && s.id === v)) { toast("场景 ID 重复"); return; }
+      const old = sc.id;
+      // 同步所有指向旧 id 的分支跳转，避免改个 ID 就断链
+      for (const s of doc.scenes) for (const l of s.lines) for (const c of (l.choices || [])) {
+        if (c.next === old) c.next = v;
+      }
+      sc.id = v;
+      renderAll(true);
+    });
+    $("scTitle").addEventListener("input", (e) => { sc.title = e.target.value; renderScenes(); renderPreview(); saveDraft(); });
+    $("scTrigger").addEventListener("change", (e) => {
+      sc.trigger = e.target.value || null; renderScenes(); saveDraft();
+    });
+    $("scHidden").addEventListener("change", (e) => { sc.hidden = e.target.value === "1"; renderScenes(); saveDraft(); });
+    $("scNote").addEventListener("input", (e) => { sc.note = e.target.value; saveDraft(); });
+    $("scUp").onclick = () => moveScene(-1);
+    $("scDown").onclick = () => moveScene(1);
+    $("scDup").onclick = () => {
+      const c = clone(sc);
+      c.id = sc.id + "_copy";
+      c.title = sc.title + " 副本";
+      c.trigger = null;
+      let n = 2; while (sceneById(c.id)) { c.id = sc.id + "_copy" + (n++); }
+      doc.scenes.splice(curScene + 1, 0, c);
+      curScene++; renderAll(false); saveDraft(); toast("已复制场景");
+    };
+    $("scDel").onclick = () => {
+      if (doc.scenes.length <= 1) { toast("至少保留一个场景"); return; }
+      const used = doc.scenes.some(s => s.id !== sc.id && s.lines.some(l => (l.choices || []).some(c => c.next === sc.id)));
+      if (used && !confirm("还有别的场景跳到「" + sc.title + "」，删掉会留下悬空跳转。仍要删除？")) return;
+      doc.scenes.splice(curScene, 1);
+      curScene = Math.max(0, curScene - 1);
+      renderAll(false); saveDraft();
+    };
+  }
+  function moveScene(d) {
+    const j = curScene + d;
+    if (j < 0 || j >= doc.scenes.length) return;
+    const t = doc.scenes[curScene]; doc.scenes[curScene] = doc.scenes[j]; doc.scenes[j] = t;
+    curScene = j; renderAll(false); saveDraft();
+  }
+
+  // ---------------- 中：台词卡 ----------------
+  function speakerSelect(sc, line, i) {
+    const keys = Object.keys(doc.speakers);
+    let h = '<select data-who="' + i + '"><option value="">（旁白 · 无名字无头像）</option>';
+    for (const k of keys) {
+      h += '<option value="' + esc(k) + '"' + (line.who === k ? " selected" : "") + ">"
+        + esc(k) + (doc.speakers[k].name ? "（" + esc(doc.speakers[k].name) + "）" : "") + "</option>";
+    }
+    // 数据里引用了但说话人表里没有 → 也列出来，避免静默丢失
+    if (line.who && keys.indexOf(line.who) < 0) {
+      h += '<option value="' + esc(line.who) + '" selected>⚠ ' + esc(line.who) + "（未定义）</option>";
+    }
+    return h + "</select>";
+  }
+
+  function renderLines() {
+    const sc = cur();
+    $("lineList").innerHTML = sc.lines.map((l, i) => {
+      const sp = doc.speakers[l.who] || {};
+      const spec = l.avatar || "";
+      const path = avPath(spec || sp.avatar || "");
+      const initial = (sp.name || "旁").trim().charAt(0) || "旁";
+      const hasChoice = !!(l.choices && l.choices.length);
+
+      let h = '<div class="line-card' + (hasChoice ? " has-choice" : "") + '">';
+      h += '<div class="lc-head"><span class="lc-idx">#' + (i + 1) + "</span>"
+        + '<span class="hint">' + (hasChoice ? "选项句（玩家必须先选）" : "") + "</span>"
+        + '<span class="spacer"></span>'
+        + '<button class="btn mini" data-up="' + i + '">↑</button>'
+        + '<button class="btn mini" data-down="' + i + '">↓</button>'
+        + '<button class="btn mini" data-ins="' + i + '">+</button>'
+        + '<button class="btn mini danger" data-del="' + i + '">删</button>'
+        + "</div>";
+
+      h += '<div class="av-row">';
+      h += '<div class="av-thumb' + (path ? "" : " none") + '" data-thumb="' + i + '">'
+        + (path ? '<img src="' + esc(path) + '" onerror="this.parentNode.classList.add(\'miss\')">' : "")
+        + '<span class="ph">' + esc(initial) + "</span></div>";
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div class="row2"><div><label class="fl">说话人</label>' + speakerSelect(sc, l, i) + "</div>"
+        + '<div><label class="fl">特效</label><select data-fx="' + i + '">'
+        + '<option value=""' + (!l.fx ? " selected" : "") + ">无</option>"
+        + '<option value="holo"' + (l.fx === "holo" ? " selected" : "") + ">全息（青绿描边）</option>"
+        + "</select></div></div>";
+      h += '<label class="fl">头像文件名（留空 = 跟随说话人）</label>'
+        + '<input data-avatar="' + i + '" value="' + esc(spec) + '" list="avlist" placeholder="留空跟随说话人 / guide:flora/bust" />'
+        + '<div class="av-meta' + (path && probeCache[path] === false ? " miss" : "") + '" id="avmeta_' + i + '">'
+        + (path ? ("→ " + esc(path) + (probeCache[path] === false ? "（缺图，游戏内显示首字母牌）" : "")) : "（无头像）")
+        + "</div>";
+      h += '<label class="fl">正文</label>'
+        + '<textarea data-text="' + i + '" rows="2">' + esc(l.text) + "</textarea>";
+      h += "</div></div>";
+
+      // 选项
+      if (hasChoice) {
+        h += l.choices.map((c, ci) => choiceHtml(sc, i, ci, c)).join("");
+        h += '<button class="btn sm ghost" data-add-choice="' + i + '" style="margin-top:6px;background:#fff;color:#a9721a;border:1px solid #e6c98a">+ 加一个选项</button>';
+      } else {
+        h += '<button class="btn sm ghost" data-mk-choice="' + i + '" style="margin-top:6px;background:#fff;color:#2f7fd1;border:1px solid #cfe0ef">把这句变成「选项句」</button>';
+      }
+      h += "</div>";
+      return h;
+    }).join("");
+    refreshThumbs();
+  }
+
+  function choiceHtml(sc, i, ci, c) {
+    const sceneOpts = '<option value="">（结束本章）</option>' + doc.scenes.map((s) =>
+      '<option value="' + esc(s.id) + '"' + (c.next === s.id ? " selected" : "") + ">" + esc(s.title || s.id) + "</option>").join("");
+    const ef = c.effect || {};
+    const dkeys = (ef.delta && typeof ef.delta === "object") ? Object.keys(ef.delta) : [];
+
+    let h = '<div class="choice-box">';
+    h += '<div class="ch-head"><b>选项 ' + (ci + 1) + "</b>"
+      + (effText(ef) ? '<span class="pill">' + esc(effText(ef)) + "</span>" : "")
+      + '<span class="spacer"></span>'
+      + '<button class="btn mini danger" data-del-choice="' + i + ":" + ci + '">删</button></div>';
+    h += '<input data-ch-label="' + i + ":" + ci + '" value="' + esc(c.label) + '" placeholder="按钮文字" />';
+    h += '<div class="row2" style="margin-top:5px">'
+      + '<div><label class="fl">跳转到</label><select data-ch-next="' + i + ":" + ci + '">' + sceneOpts + "</select></div>"
+      + '<div><label class="fl">Flag（可选，记关键选择）</label><input data-ch-flag="' + i + ":" + ci + '" value="'
+      + esc(ef.flag || "") + '" placeholder="如 prologue_done" /></div>'
+      + "</div>";
+
+    // 资源增减：一行一个键，支持多键（现有数据里就有 credits+fuel 双键的选项）
+    h += '<label class="fl">资源增减（可多行）</label>';
+    if (!dkeys.length) {
+      h += '<div class="sm-hint">（这个选项不加资源）</div>';
+    } else {
+      dkeys.forEach((k, di) => {
+        h += '<div class="row3" style="margin-bottom:4px">'
+          + '<div><select data-ch-res="' + i + ":" + ci + ":" + di + '">'
+          + '<option value="">（删掉这行）</option>'
+          + RES_KEYS.map(p => '<option value="' + p[0] + '"' + (k === p[0] ? " selected" : "") + ">" + p[1] + "（" + p[0] + "）</option>").join("")
+          + (!RES_KEYS.some(p => p[0] === k) ? '<option value="' + esc(k) + '" selected>' + esc(k) + "（自定义）</option>" : "")
+          + "</select></div>"
+          + '<div><input type="number" data-ch-qty="' + i + ":" + ci + ":" + di + '" value="' + esc(ef.delta[k]) + '" placeholder="±n" /></div>'
+          + '<div><button class="btn mini danger" data-del-res="' + i + ":" + ci + ":" + di + '" style="width:100%">删这行</button></div>'
+          + "</div>";
+      });
+    }
+    h += '<button class="btn sm ghost" data-add-res="' + i + ":" + ci + '" style="margin-top:2px;background:#fff;color:#2f7fd1;border:1px solid #cfe0ef">+ 加一行资源</button>';
+    h += '<div><label class="fl">备注</label><input data-ch-note="' + i + ":" + ci + '" value="' + esc(c.note || "") + '" /></div>';
+    h += "</div>";
+    return h;
+  }
+
+  function refreshThumbs() {
+    // 缩略图是 <img onerror> 驱动的：加载失败会给自己容器加 .miss，把首字母露出来
+    document.querySelectorAll("[data-thumb]").forEach((el) => {
+      const i = +el.dataset.thumb;
+      const l = cur().lines[i]; if (!l) return;
+      const sp = doc.speakers[l.who] || {};
+      const path = avPath(l.avatar || sp.avatar || "");
+      if (path) probe(path, (exists) => {
+        const meta = $("avmeta_" + i);
+        if (meta && path === avPath((l.avatar || (doc.speakers[l.who] || {}).avatar || ""))) {
+          meta.textContent = "→ " + path + (exists ? "" : "（缺图，游戏内显示首字母牌）");
+          meta.classList.toggle("miss", !exists);
+        }
+      });
+    });
+  }
+
+  // 只更新单张卡的缩略图（打头像文件名时不重绘整列，否则输入框每敲一个字就失焦）
+  function updateThumb(i) {
+    const el = document.querySelector('[data-thumb="' + i + '"]');
+    const l = cur().lines[i];
+    if (!el || !l) return;
+    const sp = doc.speakers[l.who] || {};
+    const path = avPath(l.avatar || sp.avatar || "");
+    const initial = (sp.name || "旁").trim().charAt(0) || "旁";
+    el.classList.remove("miss");
+    if (path) {
+      el.classList.remove("none");
+      el.innerHTML = '<img src="' + esc(path) + '" onerror="this.parentNode.classList.add(\'miss\')">'
+        + '<span class="ph">' + esc(initial) + "</span>";
+      probe(path, (exists) => {
+        const meta = $("avmeta_" + i);
+        if (!meta) return;
+        meta.textContent = "→ " + path + (exists ? "" : "（缺图，游戏内显示首字母牌）");
+        meta.classList.toggle("miss", !exists);
+      });
+    } else {
+      el.classList.add("none");
+      el.innerHTML = '<span class="ph">' + esc(initial) + "</span>";
+      const meta = $("avmeta_" + i);
+      if (meta) { meta.textContent = "（无头像）"; meta.classList.remove("miss"); }
+    }
+  }
+
+  // ---------------- 右：预览 ----------------
+  function renderPreview() {
+    const sc = cur();
+    if (!sc || !sc.lines.length) { $("pvBox").innerHTML = '<div style="color:#8ca6ae;font-size:12px">没有台词。</div>'; return; }
+    if (pvLine >= sc.lines.length) pvLine = sc.lines.length - 1;
+    if (pvLine < 0) pvLine = 0;
+    const l = sc.lines[pvLine];
+    const sp = doc.speakers[l.who] || {};
+    const path = avPath(l.avatar || sp.avatar || "");
+    const isNarr = !l.who || (!sp.name && !path);
+    const initial = (sp.name || "旁").trim().charAt(0) || "旁";
+    const holo = (l.fx === "holo") || (!l.fx && sp.fx === "holo");
+
+    let h = '<div class="dlg' + (holo ? " fx-holo" : "") + '"><div class="dlg-head">';
+    if (path) {
+      h += '<div class="dlg-av"><img src="' + esc(path) + '" onerror="this.parentNode.classList.add(\'miss\')">'
+        + '<span class="av-ph">' + esc(initial) + "</span></div>";
+    }
+    h += '<div class="dlg-body">';
+    if (!isNarr && sp.name) {
+      h += '<div class="dlg-name"' + (sp.color ? ' style="color:' + esc(sp.color) + '"' : "") + ">" + esc(sp.name) + "</div>";
+    }
+    h += '<div class="dlg-text' + (isNarr ? " narr" : "") + '">' + esc(l.text || "（这一句还没写正文）") + "</div>";
+    const chs = l.choices || [];
+    if (chs.length) {
+      h += '<div class="dlg-choices">';
+      chs.forEach((c) => {
+        const g = effText(c.effect);
+        h += '<span class="dlg-choice">' + esc(c.label || "选项") + (g ? '<span class="ch-gain">' + esc(g) + "</span>" : "") + "</span>";
+      });
+      h += "</div>";
+    } else {
+      const last = pvLine + 1 >= sc.lines.length;
+      h += '<div class="dlg-bar"><span class="pvbtn">' + (last ? "结束 ›" : "下一句 ›") + "</span>"
+        + '<span class="dlg-prog">' + (pvLine + 1) + " / " + sc.lines.length + "</span></div>";
+    }
+    h += "</div></div></div>";
+    $("pvBox").innerHTML = h;
+    $("pvLabel").textContent = sc.title || sc.id;
+    $("pvIdx").textContent = (pvLine + 1) + "/" + sc.lines.length;
+    refreshPreviewProbe();
+  }
+  function refreshPreviewProbe() { /* 缺图由 <img onerror> 处理，无需额外动作 */ }
+
+  // ---------------- 结构操作（会重绘） ----------------
+  function addLine(after) {
+    const sc = cur();
+    const at = (after == null) ? sc.lines.length : after + 1;
+    sc.lines.splice(at, 0, blankLine());
+    renderAll(false); saveDraft();
+  }
+  function delLine(i) {
+    const sc = cur();
+    if (sc.lines.length <= 1) { toast("至少保留一句"); return; }
+    sc.lines.splice(i, 1);
+    if (pvLine >= sc.lines.length) pvLine = sc.lines.length - 1;
+    renderAll(false); saveDraft();
+  }
+  function moveLine(i, d) {
+    const sc = cur(), j = i + d;
+    if (j < 0 || j >= sc.lines.length) return;
+    const t = sc.lines[i]; sc.lines[i] = sc.lines[j]; sc.lines[j] = t;
+    renderAll(false); saveDraft();
+  }
+
+  // ---------------- 全量重绘 ----------------
+  function renderAll(keepScroll) {
+    const y = window.scrollY;
+    renderScenes(); renderSpeakers(); renderSceneForm(); renderLines(); renderPreview();
+    warmProbes(() => { renderScenes(); renderLines(); });
+    if (keepScroll) window.scrollTo(0, y);
+  }
+
+  // ---------------- 生成 story.js ----------------
+  function cleanDoc() {
+    const out = { version: 1, speakers: {}, scenes: [] };
+    for (const k in doc.speakers) {
+      const s = doc.speakers[k];
+      const o = { name: s.name || "", avatar: s.avatar || "", color: s.color || "" };
+      if (s.fx) o.fx = s.fx;
+      out.speakers[k] = o;
+    }
+    out.scenes = doc.scenes.map((sc) => {
+      const o = { id: sc.id, title: sc.title || sc.id };
+      if (sc.trigger) o.trigger = sc.trigger;
+      if (sc.hidden) o.hidden = true;
+      if (sc.note) o.note = sc.note;
+      o.lines = sc.lines.map((l) => {
+        const ln = {};
+        if (l.who) ln.who = l.who;
+        if (l.avatar) ln.avatar = l.avatar;
+        if (l.fx) ln.fx = l.fx;
+        ln.text = l.text || "";
+        if (l.choices && l.choices.length) {
+          ln.choices = l.choices.map((c) => {
+            const ch = { label: c.label || "" };
+            if (c.next) ch.next = c.next;
+            if (c.effect) {
+              const ef = {};
+              if (c.effect.delta && Object.keys(c.effect.delta).length) {
+                const d = {};
+                for (const k in c.effect.delta) { const v = Number(c.effect.delta[k]) || 0; if (v) d[k] = v; }
+                if (Object.keys(d).length) ef.delta = d;
+              }
+              if (c.effect.flag) ef.flag = c.effect.flag;
+              // ⚠ 保留 special（引擎级特殊效果）：编辑器不提供 UI，但导出不得静默冲掉
+              if (Array.isArray(c.effect.special) && c.effect.special.length) ef.special = clone(c.effect.special);
+              if (Object.keys(ef).length) ch.effect = ef;
+            }
+            if (c.note) ch.note = c.note;
+            return ch;
+          });
+        }
+        return ln;
+      });
+      return o;
+    });
+    return out;
+  }
+
+  const HEADER = [
+    "// ================================================================",
+    "// 深空星疆 —— Narrative.StoryData：剧情数据（单一真相源）",
+    "// ----------------------------------------------------------------",
+    "// ⚠ 本文件由可视化编辑器 game/story-editor.html 生成/维护；",
+    "//   手改也能跑，但改完请回编辑器里点一次「校验」以防字段写错。",
+    "//",
+    "// 为什么是 .js 而不是 .json：",
+    "//   file:// 下浏览器禁止 fetch 本地 JSON（CORS），但 <script src> 仍可直读 →",
+    "//   数据挂 window.NSK_STORY，零构建、双击 index.html 就能跑。",
+    "//",
+    "// schema：",
+    "//   speakers: { <speakerId>: { name, avatar, color, fx? } }",
+    "//     · name   显示名（空串 = 旁白，不显示名字）",
+    "//     · avatar 头像写法见下",
+    "//     · color  名字与边框强调色（十六进制）",
+    "//   scenes: [ scene ]",
+    "//   scene:",
+    "//     { id, title, trigger?: \"firstBoot\"|null, hidden?: bool, note?: string, lines: [ line ] }",
+    "//     · trigger:\"firstBoot\" → 新开局/未看过时自动播放一次",
+    "//     · hidden:true         → 只作为分支落点，不出现在「剧情」页签列表里",
+    "//   line:",
+    "//     { who, text, avatar?: 覆盖说话人默认头像, fx?: \"holo\"|\"\",",
+    "//       choices?: [ { label, next?: sceneId|null, effect?: eff, note?: string } ] }",
+    "//     · 带 choices 的台词：必须先选，不能「下一句」跳过",
+    "//     · next 为空 = 选完即结束；next 为场景 id = 跳到那个场景继续",
+    "//   eff:",
+    "//     { delta?: { <resKey>: ±n }, flag?: \"flagId\", special?: [ { type, ... } ] }",
+    "//     · delta 普通资源增减（credits/fuel/rep…）；flag 记关键选择；special 引擎级特殊效果",
+    "//     · special 由游戏运行时分发，编辑器不提供 UI 但导出时原样保留：",
+    "//         { type:\"factionRep\", faction:\"federation\", amount:500 }  势力关系 +n（封顶100）",
+    "//         { type:\"addMembers\", count:2 }                           随机招募 n 名团员",
+    "//         { type:\"learnTech\", tech:\"harvest3\" }                    暂记 flag（待科技树）",
+    "//",
+    "// 头像写法（Story.resolveAvatar 解析）：",
+    "//   \"guide:flora/bust\"        → assets/portraits/guides/nsk_guide_flora_bust.webp",
+    "//   \"guide:registrar\"         → assets/portraits/guides/nsk_guide_registrar.webp",
+    "//   \"npc:corp_heir/reveal\"    → 走 Portraits 多张随机（reveal / v1..v4）",
+    "//   \"fac:settlers\"            → assets/portraits/factions/nsk_fac_settlers_contact.webp",
+    "//   \"assets/portraits/xx.webp\"→ 原样使用",
+    "//   \"\"                        → 无头像，纯旁白条",
+    "// ================================================================",
+  ].join("\n");
+
+  function genStoryJs() {
+    const body = JSON.stringify(cleanDoc(), null, 2);
+    return HEADER + "\n"
+      + "(function (root, factory) {\n"
+      + "  const mod = factory();\n"
+      + "  if (typeof window !== \"undefined\") {\n"
+      + "    window.NSK = window.NSK || {};\n"
+      + "    window.NSK.Narrative = window.NSK.Narrative || {};\n"
+      + "    window.NSK.Narrative.StoryData = mod;   // 命名空间子键（不做 flat assign）\n"
+      + "    window.NSK_STORY = mod;                  // 编辑器/外部工具也读这个全局\n"
+      + "  }\n"
+      + "  if (typeof module !== \"undefined\" && module.exports) module.exports = mod;\n"
+      + "})(typeof self !== \"undefined\" ? self : this, function () {\n"
+      + "  \"use strict\";\n\n"
+      + "  return " + body.replace(/\n/g, "\n  ") + ";\n"
+      + "});\n";
+  }
+
+  // ---------------- 校验 ----------------
+  function validate() {
+    const issues = [];
+    const ids = {};
+    for (const sc of doc.scenes) {
+      if (!sc.id) issues.push(["err", "有场景缺 ID"]);
+      if (ids[sc.id]) issues.push(["err", "场景 ID 重复：" + sc.id]);
+      ids[sc.id] = 1;
+      if (!sc.title) issues.push(["warn", "场景 " + sc.id + " 没有标题"]);
+      if (!sc.lines.length) issues.push(["err", "场景 " + sc.id + " 没有台词"]);
+      sc.lines.forEach((l, i) => {
+        const tag = sc.id + " #" + (i + 1);
+        if (!l.text && !(l.choices && l.choices.length)) issues.push(["err", tag + " 既没正文也没选项（游戏里会显示空卡）"]);
+        if (l.who && !doc.speakers[l.who]) issues.push(["warn", tag + " 用的说话人「" + l.who + "」未定义（会没名字）"]);
+        const sp = doc.speakers[l.who] || {};
+        const spec = l.avatar || sp.avatar || "";
+        if (spec) {
+          const p = avPath(spec);
+          if (probeCache[p] === false) issues.push(["warn", tag + " 头像缺图：" + p]);
+        }
+        if (l.choices && l.choices.length) {
+          if (i !== sc.lines.length - 1) {
+            issues.push(["warn", tag + " 选项句不在最后一句（它后面的台词永远不会被看到）"]);
+          }
+          l.choices.forEach((c, ci) => {
+            if (!c.label) issues.push(["err", tag + " 选项 " + (ci + 1) + " 没有文字"]);
+            if (c.next && !sceneById(c.next)) issues.push(["err", tag + " 选项 " + (ci + 1) + " 跳转到不存在的场景：" + c.next]);
+          });
+        }
+      });
+    }
+    const boot = doc.scenes.filter(s => s.trigger === "firstBoot");
+    if (boot.length > 1) issues.push(["warn", "有 " + boot.length + " 个「开局自动」场景，只会播第一个未看过的"]);
+    if (!boot.length) issues.push(["warn", "没有「开局自动」场景 → 新玩家开局不会自动看到任何剧情"]);
+    return issues;
+  }
+
+  function renderIssues() {
+    const iss = validate();
+    const errs = iss.filter(i => i[0] === "err");
+    const warns = iss.filter(i => i[0] === "warn");
+    let h = "";
+    if (!iss.length) {
+      h = '<div class="issue okk">✓ 没有发现问题：' + doc.scenes.length + " 场景 / "
+        + doc.scenes.reduce((a, s) => a + s.lines.length, 0) + " 台词，可以写入。</div>";
+    } else {
+      h += '<div class="issue ' + (errs.length ? "err" : "warn") + '">'
+        + errs.length + " 个错误 · " + warns.length + " 个警告</div>";
+      errs.concat(warns).forEach(([k, m]) => { h += '<div class="issue ' + k + '">' + esc(m) + "</div>"; });
+    }
+    $("issueBox").innerHTML = h;
+  }
+
+  // ---------------- 写盘 / 复制 / 载入 ----------------
+  // 优先：选一次 game 根目录（本会话记住）→ 之后一键直接覆盖 js/narrative/story.js
+  // 兜底：退化成「另存为」让用户自己挑位置
+  let gameDir = null;
+  async function ensureGameDir() {
+    if (gameDir) return gameDir;
+    if (!window.showDirectoryPicker) return null;
+    const d = await window.showDirectoryPicker();
+    let looksGame = true;
+    try { await d.getFileHandle("index.html"); } catch (e) { looksGame = false; }
+    if (!looksGame) {
+      if (!confirm("这个目录里没有 index.html，可能不是 game 目录。\n仍要写入「所选目录/js/narrative/story.js」吗？")) return null;
+    }
+    gameDir = d;
+    return d;
+  }
+  async function writeViaSavePicker(js) {
+    if (!window.showSaveFilePicker) throw new Error("此浏览器不支持文件写入，请用 Chrome / Edge 打开");
+    const fh = await window.showSaveFilePicker({
+      suggestedName: "story.js",
+      types: [{ description: "剧情数据 JS", accept: { "text/javascript": [".js"] } }],
+    });
+    const w = await fh.createWritable();
+    await w.write(js); await w.close();
+    toast("已另存为 " + fh.name + "（请放回 game/js/narrative/）");
+  }
+  async function writeStoryJs() {
+    const js = genStoryJs();
+    const errs = validate().filter(i => i[0] === "err");
+    if (errs.length) {
+      if (!confirm("还有 " + errs.length + " 个错误（如空台词、悬空跳转）。仍要写入？")) return;
+    }
+    try {
+      const root = await ensureGameDir();
+      if (!root) return writeViaSavePicker(js);
+      let d = root;
+      for (const p of ["js", "narrative"]) d = await d.getDirectoryHandle(p, { create: true });
+      const fh = await d.getFileHandle("story.js", { create: true });
+      const w = await fh.createWritable();
+      await w.write(js); await w.close();
+      toast("已写入 game/js/narrative/story.js —— 刷新游戏即生效");
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+      toast("写入失败：" + (e.message || e));
+    }
+  }
+  async function copyStoryJs() {
+    const js = genStoryJs();
+    try {
+      await navigator.clipboard.writeText(js);
+      toast("story.js 已复制到剪贴板，粘贴覆盖 game/js/narrative/story.js");
+    } catch (e) {
+      showModal("story.js（手动复制）", js, "自动复制被浏览器拒绝，请全选复制。");
+    }
+  }
+  function showModal(title, text, hint) {
+    $("modalTitle").textContent = title;
+    $("modalText").value = text;
+    $("modalHint").textContent = hint || "";
+    $("modal").classList.add("show");
+  }
+
+  function loadFromText(text) {
+    // 支持两种输入：① 完整 story.js（含 UMD 包裹）② 纯 JSON
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) { /* 不是纯 JSON */ }
+    if (!data) {
+      const m = text.match(/return\s*(\{[\s\S]*\})\s*;\s*\}\s*\)\s*;?\s*$/);
+      const m2 = text.match(/window\.NSK_STORY\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+      const src = (m && m[1]) || (m2 && m2[1]);
+      if (src) { try { data = JSON.parse(src); } catch (e2) { data = null; } }
+    }
+    if (!data) {
+      // 最后兜底：在沙箱里求值（这是本机后台，输入源就是自己的 story.js）
+      // ⚠ module 必须是同一个对象引用：UMD 里是 module.exports = mod，读回来得从 moduleObj 取
+      try {
+        const moduleObj = { exports: {} };
+        new Function("window", "module", "self", text)({ NSK: {} }, moduleObj, {});
+        data = moduleObj.exports;
+      } catch (e3) { data = null; }
+    }
+    if (!data || !Array.isArray(data.scenes)) { toast("解析失败：没识别出 scenes 数组"); return false; }
+    doc = normalizeDoc(data);
+    curScene = 0; pvLine = 0;
+    renderAll(false); saveDraft();
+    toast("已载入 " + doc.scenes.length + " 个场景");
+    return true;
+  }
+
+  // ---------------- 头像候选 datalist ----------------
+  function buildAvList() {
+    const items = [];
+    if (AP && Array.isArray(AP.GUIDE_CHARACTERS)) {
+      for (const g of AP.GUIDE_CHARACTERS) {
+        for (const v of (g.variants || [])) {
+          items.push("guide:" + g.id + (v.key ? "/" + v.key : ""));
+        }
+      }
+    }
+    if (AP && Array.isArray(AP.NPC_ARCHETYPES)) {
+      for (const a of AP.NPC_ARCHETYPES.slice(0, 21)) {
+        items.push("npc:" + a.id + "/v1");
+        items.push("npc:" + a.id + "/reveal");
+      }
+    }
+    if (N.Data && N.Data.Factions && Array.isArray(N.Data.Factions.FACTIONS)) {
+      for (const f of N.Data.Factions.FACTIONS) items.push("fac:" + f.id);
+    }
+    $("avlist").innerHTML = items.map(s => '<option value="' + esc(s) + '"></option>').join("");
+  }
+
+  // ---------------- 事件（集中委托） ----------------
+  function bindEvents() {
+    document.body.addEventListener("click", (e) => {
+      const t = e.target;
+      const sc = cur();
+
+      // 场景切换
+      const si = t.closest("[data-scene]");
+      if (si) { curScene = +si.dataset.scene; pvLine = 0; renderAll(false); return; }
+
+      // 台词结构
+      if (t.dataset.up !== undefined) { moveLine(+t.dataset.up, -1); return; }
+      if (t.dataset.down !== undefined) { moveLine(+t.dataset.down, 1); return; }
+      if (t.dataset.ins !== undefined) { addLine(+t.dataset.ins); return; }
+      if (t.dataset.del !== undefined) { delLine(+t.dataset.del); return; }
+      if (t.dataset.mkChoice !== undefined) {
+        const i = +t.dataset.mkChoice;
+        sc.lines[i].choices = [{ label: "选项 A", next: "" }];
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.addChoice !== undefined) {
+        const i = +t.dataset.addChoice;
+        const arr = sc.lines[i].choices || (sc.lines[i].choices = []);
+        arr.push({ label: "选项 " + String.fromCharCode(65 + arr.length), next: "" });
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.delChoice !== undefined) {
+        const [i, ci] = t.dataset.delChoice.split(":").map(Number);
+        const arr = sc.lines[i].choices || [];
+        arr.splice(ci, 1);
+        if (!arr.length) delete sc.lines[i].choices;
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.addRes !== undefined) {
+        const [i, ci] = t.dataset.addRes.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        if (!ch.effect) ch.effect = {};
+        if (!ch.effect.delta) ch.effect.delta = {};
+        const used = Object.keys(ch.effect.delta);
+        const pick = RES_KEYS.find(p => used.indexOf(p[0]) < 0);
+        ch.effect.delta[pick ? pick[0] : ("res" + used.length)] = 0;
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.delRes !== undefined) {
+        const [i, ci, di] = t.dataset.delRes.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        const keys = Object.keys((ch.effect && ch.effect.delta) || {});
+        const k = keys[di];
+        if (k && ch.effect && ch.effect.delta) { delete ch.effect.delta[k]; pruneEffect(ch); }
+        renderAll(false); saveDraft(); return;
+      }
+      // 说话人增删
+      if (t.dataset.delSp !== undefined) {
+        const k = t.dataset.delSp;
+        const used = doc.scenes.some(s => s.lines.some(l => l.who === k));
+        if (used && !confirm("有台词在用「" + k + "」，删掉后这些台词会变成「未定义」。仍要删除？")) return;
+        delete doc.speakers[k];
+        renderAll(false); saveDraft(); return;
+      }
+      // 预览翻句
+      if (t.id === "pvPrev") { pvLine = Math.max(0, pvLine - 1); renderPreview(); return; }
+      if (t.id === "pvNext") {
+        const s = cur();
+        pvLine = Math.min(s.lines.length - 1, pvLine + 1);
+        renderPreview(); return;
+      }
+    });
+
+    // 输入类：改数据但不重绘整页（否则输入框会失焦）
+    document.body.addEventListener("input", (e) => {
+      const t = e.target, sc = cur();
+      if (t.dataset.text !== undefined) {
+        const i = +t.dataset.text;
+        sc.lines[i].text = t.value;
+        renderPreview(); saveDraft(); return;
+      }
+      if (t.dataset.avatar !== undefined) {
+        const i = +t.dataset.avatar;
+        const v = t.value.trim();
+        if (v) sc.lines[i].avatar = v; else delete sc.lines[i].avatar;
+        updateThumb(i);            // 只刷这一张卡的缩略图，保住输入焦点
+        renderScenes(); renderPreview(); saveDraft(); return;
+      }
+      if (t.dataset.spName !== undefined) { doc.speakers[t.dataset.spName].name = t.value; renderPreview(); saveDraft(); return; }
+      if (t.dataset.spAv !== undefined) {
+        doc.speakers[t.dataset.spAv].avatar = t.value.trim();
+        renderPreview(); warmProbes(() => { renderScenes(); }); saveDraft(); return;
+      }
+      if (t.dataset.spColor !== undefined) { doc.speakers[t.dataset.spColor].color = t.value.trim(); renderPreview(); saveDraft(); return; }
+      if (t.dataset.chLabel !== undefined) {
+        const [i, ci] = t.dataset.chLabel.split(":").map(Number);
+        sc.lines[i].choices[ci].label = t.value;
+        renderPreview(); saveDraft(); return;
+      }
+      if (t.dataset.chQty !== undefined) {
+        const [i, ci, di] = t.dataset.chQty.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        const keys = Object.keys((ch.effect && ch.effect.delta) || {});
+        const k = keys[di];
+        if (!k) return;
+        // 这里不删 0 值（一删行就消失、用户没法继续输入）；导出时 cleanDoc 会把 0 剔掉
+        if (!ch.effect) ch.effect = {};
+        if (!ch.effect.delta) ch.effect.delta = {};
+        ch.effect.delta[k] = Number(t.value) || 0;
+        renderPreview(); saveDraft(); return;
+      }
+      if (t.dataset.chFlag !== undefined) {
+        const [i, ci] = t.dataset.chFlag.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        ch.effect = ch.effect || {};
+        if (t.value.trim()) ch.effect.flag = t.value.trim(); else delete ch.effect.flag;
+        if (!Object.keys(ch.effect).length) delete ch.effect;
+        saveDraft(); return;
+      }
+      if (t.dataset.chNote !== undefined) {
+        const [i, ci] = t.dataset.chNote.split(":").map(Number);
+        sc.lines[i].choices[ci].note = t.value; saveDraft(); return;
+      }
+    });
+
+    // 下拉
+    document.body.addEventListener("change", (e) => {
+      const t = e.target, sc = cur();
+      if (t.dataset.who !== undefined) {
+        const i = +t.dataset.who;
+        if (t.value) sc.lines[i].who = t.value; else delete sc.lines[i].who;
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.fx !== undefined) {
+        const i = +t.dataset.fx;
+        if (t.value) sc.lines[i].fx = t.value; else delete sc.lines[i].fx;
+        renderAll(false); saveDraft(); return;
+      }
+      if (t.dataset.chNext !== undefined) {
+        const [i, ci] = t.dataset.chNext.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        if (t.value) ch.next = t.value; else delete ch.next;
+        saveDraft(); return;
+      }
+      if (t.dataset.chRes !== undefined) {
+        const [i, ci, di] = t.dataset.chRes.split(":").map(Number);
+        const ch = sc.lines[i].choices[ci];
+        const delta = (ch.effect && ch.effect.delta) || {};
+        const keys = Object.keys(delta);
+        const oldK = keys[di];
+        if (!oldK) return;
+        const nv = t.value;
+        if (!nv) {                       // 选了「删掉这行」
+          delete delta[oldK];
+          pruneEffect(ch);
+          renderAll(false); saveDraft(); return;
+        }
+        const val = delta[oldK];
+        const nd = {};
+        // 原位替换键名，保持行的顺序；同名的别的行会被合并（不静默丢数量）
+        keys.forEach((k, idx) => { const kk = (idx === di) ? nv : k; if (!(kk in nd)) nd[kk] = (idx === di) ? val : delta[k]; });
+        ch.effect = ch.effect || {};
+        ch.effect.delta = nd;
+        renderAll(false); saveDraft(); return;
+      }
+    });
+
+    $("btnAddScene").onclick = () => {
+      const sc = blankScene();
+      let n = 2; while (sceneById(sc.id)) sc.id = "scene_" + (Date.now().toString(36) + n++);
+      doc.scenes.push(sc);
+      curScene = doc.scenes.length - 1; pvLine = 0;
+      renderAll(false); saveDraft();
+    };
+    $("btnAddLine").onclick = () => {
+      addLine(null);
+      const s = cur(); pvLine = s.lines.length - 1; renderPreview();
+    };
+    $("btnAddSpeaker").onclick = () => {
+      let k = "speaker", n = 2;
+      while (doc.speakers[k]) k = "speaker" + (n++);
+      doc.speakers[k] = { name: "新角色", avatar: "", color: "#4fc4d3" };
+      renderAll(false); saveDraft();
+    };
+    $("btnValidate").onclick = () => { renderIssues(); toast("校验完成"); };
+    $("btnPreviewJs").onclick = () => showModal("story.js 预览", genStoryJs(), "共 " + genStoryJs().length + " 字符");
+    $("btnWrite").onclick = writeStoryJs;
+    $("btnCopy").onclick = copyStoryJs;
+    $("btnLoad").onclick = () => $("fileIn").click();
+    $("fileIn").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { loadFromText(String(r.result || "")); e.target.value = ""; };
+      r.onerror = () => toast("读取文件失败");
+      r.readAsText(f, "utf-8");
+    });
+    $("btnRestoreDraft").onclick = () => {
+      if (pendingDraft) { doc = pendingDraft; curScene = 0; pvLine = 0; renderAll(false); saveDraft(); }
+      hideDraftBanner();
+      toast("已恢复本地草稿");
+    };
+    $("btnKeepFile").onclick = () => { hideDraftBanner(); toast("已采用 story.js"); };
+    $("modalClose").onclick = () => $("modal").classList.remove("show");
+    $("modalCopy").onclick = async () => {
+      try { await navigator.clipboard.writeText($("modalText").value); toast("已复制"); }
+      catch (e) { $("modalText").select(); toast("请按 Ctrl+C 复制"); }
+    };
+    $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").classList.remove("show"); });
+
+    // 有未保存改动时提示
+    window.addEventListener("beforeunload", (e) => { saveDraft(); });
+  }
+
+  // ---------------- 启动 ----------------
+  function boot() {
+    // 头像候选 datalist 容器
+    const dl = document.createElement("datalist");
+    dl.id = "avlist";
+    document.body.appendChild(dl);
+    buildAvList();
+    loadInitial();
+    bindEvents();
+    renderAll(false);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>
+</body>
+</html>

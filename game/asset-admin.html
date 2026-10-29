@@ -1,0 +1,1512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>深空星疆 · 资产后台管理</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#ffffff; --ink:#1f2933; --muted:#67737e; --line:#e2e8f0;
+    --accent:#2f7fd1; --accent2:#0f9d8a; --danger:#d9534f; --warn:#e0a800;
+    --chip:#eef3f8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  header{background:linear-gradient(90deg,#11324f,#1b4a73);color:#fff;padding:14px 20px;display:flex;
+    align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.5px}
+  header .sub{opacity:.8;font-size:12px}
+  header .spacer{flex:1}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 13px;cursor:pointer;
+    font-size:13px;font-weight:600}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+  .btn.warn{background:var(--warn);color:#3a2c00}
+  .btn.danger{background:var(--danger)}
+  .btn.sm{padding:4px 9px;font-size:12px}
+  .tabbar{display:flex;gap:4px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line);
+    flex-wrap:wrap;position:sticky;top:0;z-index:5}
+  .tabbar button{background:none;border:none;border-bottom:3px solid transparent;padding:11px 14px;
+    cursor:pointer;font-size:13px;color:var(--muted);font-weight:600}
+  .tabbar button.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .wrap{padding:16px 20px;max-width:1280px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .card h2{margin:0 0 4px;font-size:15px}
+  .card .hint{color:var(--muted);font-size:12px;margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left}
+  /* 表头吸顶必须 top:0：表格都在 div[overflow:auto] 里，那个 div 才是 sticky 的滚动容器，
+     top:54px 会把表头整体往下推 54px、盖住第一行内容（旧 bug）。 */
+  th{background:var(--chip);font-weight:600;position:sticky;top:0;z-index:3}
+  /* 表格滚动容器：只为窄屏时横向滚动用。注意它同时是 sticky 的滚动容器且本身不竖向滚动，
+     所以 th 必须 top:0（写 top:54px 会被向下推 54px、把第一行盖住，旧 bug）。 */
+  .tablewrap{overflow:auto}
+  /* NPC 表：固定列宽，避免「变体/义体叠加」被长路径挤成一条缝 */
+  .npctable{table-layout:fixed;min-width:1120px}
+  .npctable td{overflow-wrap:anywhere}
+  .npctable .pathline{font-size:11px;overflow-wrap:anywhere;word-break:break-all;line-height:1.4}
+  .npctable td .btn.sm{margin-top:3px}
+  .combotable{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px}
+  .combotable th,.combotable td{border:1px solid #e3e8ef;padding:5px 8px;text-align:left;overflow-wrap:anywhere;vertical-align:top}
+  .combotable th{background:#eef2f7;font-weight:600}
+  .combo-arch{margin:10px 0}
+  .combo-arch-h{margin-bottom:2px}
+  .tag-new{display:inline-block;background:#fff3d6;color:#a9721a;border:1px solid #f0d089;padding:0 6px;border-radius:10px;font-size:11px;margin-left:4px}
+  .combotable .ok{color:#1f9d55;font-weight:600}
+  .combotable .todo{color:#c0392b;font-weight:600}
+  .combotable .pathline{font-size:11px;color:#6b7785}
+  .btn.sm.active{background:#2d6cdf;color:#fff;border-color:#2d6cdf}
+  input[type=text],input[type=number],textarea,select{width:100%;border:1px solid var(--line);border-radius:5px;
+    padding:5px 7px;font:inherit;background:#fff;color:var(--ink)}
+  textarea{resize:vertical;min-height:48px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
+  input[type=color]{width:38px;height:30px;padding:0;border:1px solid var(--line);border-radius:5px;background:#fff}
+  .row-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:var(--chip);color:var(--muted)}
+  .pill.major{background:#fde7e7;color:#b3261e}
+  .pill.minor{background:#e7f3ff;color:#1769c7}
+  .pill.quest{background:#f3e7ff;color:#7a2ec7}
+  .pill.vis{background:#fff4d6;color:#8a6500}
+  .err{color:var(--danger);font-size:11px;margin-top:3px}
+  .ok{color:var(--accent2);font-size:11px}
+  .imgcell{width:74px}
+  .imgcell img{width:64px;height:85px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#eee}
+  .imgcell .miss{width:64px;height:85px;border-radius:6px;background:#f3f4f6;display:flex;align-items:center;
+    justify-content:center;font-size:10px;color:#9aa5b1;border:1px dashed var(--line)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}.wrap{padding:10px}}
+  .counts{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:120px}
+  .stat .n{font-size:22px;font-weight:800;color:var(--accent)}
+  .stat .l{font-size:12px;color:var(--muted)}
+  .copybox{position:relative}
+  .copybox textarea{width:100%;min-height:120px;background:#0f1720;color:#d6e2f0}
+  .toast{position:fixed;right:18px;bottom:18px;background:#1f2933;color:#fff;padding:10px 16px;border-radius:8px;
+    font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+  .modal-bg{position:fixed;inset:0;background:rgba(15,23,32,.5);display:none;align-items:flex-start;
+    justify-content:center;z-index:40;overflow:auto;padding:40px 16px}
+  .modal-bg.show{display:flex}
+  .modal{background:#fff;border-radius:12px;width:min(960px,96vw);padding:18px;max-height:88vh;overflow:auto}
+  .modal h3{margin:0 0 10px}
+  .modal .tabs2{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .modal .tabs2 button{background:var(--chip);border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600}
+  .modal .tabs2 button.active{background:var(--accent);color:#fff}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .legend{font-size:12px;color:var(--muted);margin:6px 0}
+  .syncbar{background:#e9f6ee;border:1px solid #b7e0c4;color:#1d6b3a;border-radius:10px;
+    padding:9px 14px;font-size:12.5px;margin-bottom:12px;line-height:1.7}
+  .syncbar b{color:#155c31}
+  .syncbar .gn{color:#5b7a68}
+  .syncbar .x{float:right;cursor:pointer;color:#5b7a68;font-weight:700;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>深空星疆 · 资产后台</h1>
+  <span class="sub">可视化编辑 势力 / 人物词条 / 出身 / 性格 / 生图 Prompt</span>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="btnReset">重置草稿（读回代码原值）</button>
+  <button class="btn" id="btnExport">导出 / 回写代码</button>
+</header>
+
+<div class="tabbar" id="tabbar">
+  <button data-tab="overview" class="active">资产总览</button>
+  <button data-tab="factions">势力设定</button>
+  <button data-tab="traits">人物·经历词条</button>
+  <button data-tab="backstory">出身设定</button>
+  <button data-tab="personality">性格语音</button>
+  <button data-tab="art">美术生图 Prompt</button>
+</div>
+
+<div class="wrap">
+  <div id="tab-overview" class="tabpane"></div>
+  <div id="tab-factions" class="tabpane" style="display:none"></div>
+  <div id="tab-traits"  class="tabpane" style="display:none"></div>
+  <div id="tab-backstory" class="tabpane" style="display:none"></div>
+  <div id="tab-personality" class="tabpane" style="display:none"></div>
+  <div id="tab-art" class="tabpane" style="display:none"></div>
+</div>
+
+<!-- 导出弹窗 -->
+<div class="modal-bg" id="exportModal">
+  <div class="modal">
+    <h3>导出 / 回写游戏代码</h3>
+    <p class="legend">本地草稿只存在浏览器；要写回游戏代码，请复制下方对应片段，替换游戏文件中的同名数组。replace 目标已标注在每段注释里。</p>
+    <div class="tabs2" id="expTabs"></div>
+    <div class="copybox" id="expBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 真实数据模块（保持单一真相源，后台只读加载，编辑在内存草稿） -->
+<script src="js/data/factions.js"></script>
+<script src="js/engine/state.js"></script>
+<script src="js/data/names.js"></script>
+<script src="js/data/asset-prompts.js?v=2"></script>
+<script src="assets/portraits/npc/manifest.js?v=2"></script>
+<script>
+(function(){
+  "use strict";
+  const N = window.NSK;
+  const LS_KEY = "nsk_asset_admin_v1";
+  const clone = x => JSON.parse(JSON.stringify(x));
+
+  // ---------- 载入模型（代码原值）----------
+  function loadCodeModel(){
+    const F = N.Data.Factions.FACTIONS.map(clone);
+    const B = N.Engine.State.BACKSTORY_DEFS.map(clone);
+    const T = N.Engine.State.TRAIT_DEFS.map(clone);
+    const P = N.Data.Names.PERSONALITIES.map(clone);
+    const FC = (N.Data.AssetPrompts.FACTION_CONTACTS||[]).map(clone);
+    const AR = (N.Data.AssetPrompts.NPC_ARCHETYPES||[]).map(clone);
+    const AG = (N.Data.AssetPrompts.AUGMENT_PROMPTS||[]).map(clone);
+    const GD = (N.Data.AssetPrompts.GUIDE_CHARACTERS||[]).map(clone);
+    return { factions:F, backstories:B, traits:T, personalities:P,
+             prompts:{ factionContacts:FC, npcArchetypes:AR, augments:AG, guides:GD } };
+  }
+  let model = loadCodeModel();
+
+  function persist(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(model)); }catch(e){} }
+  function loadDraft(){
+    try{ const s=localStorage.getItem(LS_KEY); if(s){ model=JSON.parse(s); return true; } }catch(e){}
+    return false;
+  }
+
+  // ---------- 草稿与代码对齐 ----------
+  // 代码（state.js / factions.js / asset-prompts.js）是单一真相源；浏览器草稿只保存「你的编辑」，
+  // 不能因为草稿旧就看不到代码后来新增的出身/词条/势力。旧版是 model=草稿 整份替换，
+  // 结果后台「出身设定」缺新增项，导出的 BACKSTORY_DEFS 还会把它们抹掉（2026-10-25 修）。
+  function keyOf(x){ return (x && (x.id || x.factionId || x.archetypeId || x.key)) || null; }
+  function syncDraftWithCode(){
+    const code = loadCodeModel();
+    const report = [];
+    const mergeArr = (label, draftArr, codeArr) => {
+      if(!Array.isArray(codeArr) || !Array.isArray(draftArr)) return;
+      const seen = new Set(draftArr.map(keyOf).filter(Boolean));
+      let added = 0;
+      for(const c of codeArr){
+        const k = keyOf(c);
+        if(k && !seen.has(k)){ draftArr.push(clone(c)); seen.add(k); added++; }
+      }
+      if(added) report.push({ label, n: added });
+    };
+    mergeArr("势力", model.factions, code.factions);
+    mergeArr("出身", model.backstories, code.backstories);
+    mergeArr("词条", model.traits, code.traits);
+    mergeArr("性格", model.personalities, code.personalities);
+    if(!model.prompts) model.prompts = clone(code.prompts);
+    else {
+      mergeArr("联络人 Prompt", model.prompts.factionContacts, code.prompts.factionContacts);
+      mergeArr("NPC 原型 Prompt", model.prompts.npcArchetypes, code.prompts.npcArchetypes);
+      mergeArr("义体 Prompt", model.prompts.augments, code.prompts.augments);
+      // 旧草稿没有 guides 字段 → 直接整份补（否则新增的引导角色永远不出现在后台）
+      if(!Array.isArray(model.prompts.guides)) model.prompts.guides = clone(code.prompts.guides);
+      else mergeArr("引导角色 Prompt", model.prompts.guides, code.prompts.guides);
+    }
+    return report;
+  }
+
+  const hadDraft = loadDraft();
+  let syncReport = [];
+  if(hadDraft){ syncReport = syncDraftWithCode(); if(syncReport.length) persist(); }
+
+  // ---------- 工具 ----------
+  function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
+    clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1800); }
+  function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+  function uniqId(arr,base){ let i=1,id=base; while(arr.some(x=>x.id===id)) id=base+(i++); return id; }
+
+  // JSON 字段校验/解析（返回 {ok,val,err}）
+  function parseJson(str){
+    try{ return {ok:true, val:JSON.parse(str)}; }catch(e){ return {ok:false, err:e.message}; }
+  }
+  // 给输入加 data 属性
+  function bindTbody(tbody){
+    const handle=(el)=>{
+      if(el.dataset.special) return;                 // 特殊子字段由专用监听处理
+      const idx=+el.dataset.idx, key=el.dataset.key, collKey=el.dataset.coll, kind=el.dataset.kind;
+      if(idx==null||!key||!collKey) return;
+      const row = model[collKey][idx];
+      if(kind==="json"){
+        const r=parseJson(el.value);
+        if(r.ok){ row[key]=r.val; el.classList.remove("bad"); const er=el.parentNode.querySelector(".err"); if(er) er.textContent=""; }
+        else { el.classList.add("bad"); let er=el.parentNode.querySelector(".err"); if(!er){er=document.createElement("div");er.className="err";el.parentNode.appendChild(er);} er.textContent="JSON 错误: "+r.err; }
+      } else if(kind==="num"){
+        row[key]= el.value===""?null:Number(el.value);
+      } else if(kind==="bool"){
+        row[key]= el.value==="false"?false:true;
+      } else {
+        row[key]= el.value;
+      }
+      persist();
+      if(paneRenderedOnce[currentPane]) refreshCounts();
+    };
+    tbody.addEventListener("input", e=>handle(e.target));
+    tbody.addEventListener("change", e=>handle(e.target));
+  }
+
+  let currentPane="overview";
+  const collByPane={ overview:null, factions:"factions", traits:"traits", backstory:"backstories", personality:"personalities" };
+  const paneRenderedOnce={};
+
+  // ---------- 总览 ----------
+  const statDefs=[
+    ["势力设定", ()=>model.factions.length, "factions.js FACTIONS"],
+    ["其中派任务势力", ()=>model.factions.filter(f=>f.questGiver!==false && f.tier!=="minor" || (f.tier==="minor")).length, "major+minor"],
+    ["人物·经历词条", ()=>model.traits.length, "state.js TRAIT_DEFS"],
+    ["出身设定", ()=>model.backstories.length, "state.js BACKSTORY_DEFS"],
+    ["性格语音", ()=>model.personalities.length, "names.js PERSONALITIES"],
+    ["势力联络人图标", ()=>model.prompts.factionContacts.length, "asset-prompts.js"],
+    ["NPC 原型", ()=>model.prompts.npcArchetypes.length, "asset-prompts.js"],
+    ["义体生图需求", ()=>model.prompts.augments.length, "asset-prompts.js"],
+    ["新手引导角色", ()=>(model.prompts.guides||[]).length, "asset-prompts.js"],
+  ];
+  function renderOverview(){
+    const p=document.getElementById("tab-overview");
+    let h='<div class="counts">';
+    for(const [l,fn,note] of statDefs) h+=`<div class="stat"><div class="n">${fn()}</div><div class="l">${esc(l)}<br><span style="font-size:10px;opacity:.7">${esc(note)}</span></div></div>`;
+    h+='</div>';
+    h+=`<div class="card"><h2>资产清单明细</h2><div class="hint">当前已设计资产按类别列出（基于代码与文档，实时统计）。</div>`;
+    // 势力表
+    h+=`<h3 style="margin:12px 0 6px">① 势力设定（${model.factions.length}）</h3><table><thead><tr><th>id</th><th>名称</th><th>主色</th><th>tier</th><th>派任务</th><th>联络人</th><th>偏向/派遣</th></tr></thead><tbody>`;
+    for(const f of model.factions){
+      const tags = (f.tier==="major"?(f.questGiver===false?'<span class="pill quest">野怪</span>':'<span class="pill major">巨头</span>'):'<span class="pill minor">中小</span>');
+      const bias = f.bias?Object.entries(f.bias).map(([k,v])=>`${k}:${v}`).join(" "):"—";
+      h+=`<tr><td class="mono">${esc(f.id)}</td><td>${esc(f.name)}</td><td><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${esc(f.color)};vertical-align:-2px"></span> ${esc(f.color)}</td><td>${esc(f.tier)}</td><td>${tags}</td><td>${esc(f.contact&&f.contact.name||"—")} / ${esc(f.contact&&f.contact.title||"—")}</td><td class="mono">${esc(bias)} ${f.dispatchChance!=null?"· 派遣"+f.dispatchChance:""}</td></tr>`;
+    }
+    h+='</tbody></table>';
+    // 词条
+    h+=`<h3 style="margin:14px 0 6px">② 人物·经历词条（${model.traits.length}）</h3><table><thead><tr><th>id</th><th>经历标题</th><th>词条名</th><th>效果</th></tr></thead><tbody>`;
+    for(const t of model.traits){
+      const e=t.trait&&t.trait.effects&&Object.keys(t.trait.effects).length?JSON.stringify(t.trait.effects):"{}";
+      const tag = t.tbd?'<span class="pill vis">待定</span>':"";
+      h+=`<tr><td class="mono">${esc(t.id)}</td><td>${esc(t.title)} ${tag}</td><td>${esc(t.trait&&t.trait.name||"—")}</td><td class="mono">${esc(e)}</td></tr>`;
+    }
+    h+='</tbody></table>';
+    // 出身
+    h+=`<h3 style="margin:14px 0 6px">③ 出身设定（${model.backstories.length}）</h3><table><thead><tr><th>id</th><th>出身</th><th>强制专精</th><th>势力亲和</th><th>描述</th></tr></thead><tbody>`;
+    for(const b of model.backstories){
+      h+=`<tr><td class="mono">${esc(b.id)}</td><td>${esc(b.title)}</td><td class="mono">${esc(b.forcePassion||"—")}</td><td class="mono">${esc(b.factionAffinity||"—")}</td><td>${esc(b.desc)}</td></tr>`;
+    }
+    h+='</tbody></table>';
+    // 性格
+    h+=`<h3 style="margin:14px 0 6px">④ 性格语音（${model.personalities.length}）</h3><table><thead><tr><th>id</th><th>性格</th><th>语音</th></tr></thead><tbody>`;
+    for(const p of model.personalities) h+=`<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.name)}</td><td>${esc(p.line)}</td></tr>`;
+    h+='</tbody></table>';
+    // 美术 prompt
+    h+=`<h3 style="margin:14px 0 6px">⑤ 美术生图 Prompt（联络人 ${model.prompts.factionContacts.length} · NPC 原型 ${model.prompts.npcArchetypes.length} · 义体 ${model.prompts.augments.length} · 引导角色 ${(model.prompts.guides||[]).length}）</h3>`;
+    h+=`<div class="legend">联络人 Prompt 包：${model.prompts.factionContacts.map(f=>esc(f.factionId)).join("、")}</div>`;
+    h+=`<div class="legend">NPC 原型 Prompt 包：${model.prompts.npcArchetypes.map(a=>esc(a.id)).join("、")}</div>`;
+    h+=`<div class="legend">义体生图需求：${model.prompts.augments.map(a=>esc(a.id)).join("、")}</div>`;
+    h+=`<div class="legend">新手引导角色：${(model.prompts.guides||[]).map(g=>esc(g.id)).join("、")}</div>`;
+    h+='</div>';
+    p.innerHTML=h;
+  }
+
+  // ---------- 通用编辑表 ----------
+  function editTable(container, collKey, cols, makeNew){
+    const arr=model[collKey];
+    let h=`<div class="card"><div class="row-actions" style="margin-bottom:8px"><button class="btn sm" data-act="add">＋ 新增一行</button><span class="hint" style="margin:0">改动自动存草稿；导出时生成回写片段。</span></div>`;
+    h+='<div style="overflow:auto"><table><thead><tr>';
+    for(const c of cols) h+=`<th>${esc(c.label)}${c.kind==="json"?'<br><span style="font-weight:400;color:#9aa5b1">JSON</span>':''}</th>`;
+    h+='<th>操作</th></tr></thead><tbody>';
+    arr.forEach((row,idx)=>{
+      h+='<tr>';
+      for(const c of cols){
+        const sp = c.special ? ` data-special="${c.special}"` : "";
+        if(c.type==="bool") h+=`<td><select data-coll="${collKey}" data-idx="${idx}" data-key="${c.key}" data-kind="bool"><option value="true" ${row[c.key]!==false?"selected":""}>派任务</option><option value="false" ${row[c.key]===false?"selected":""}>不派(false)</option></select></td>`;
+        else if(c.kind==="color") h+=`<td><input type="color" data-coll="${collKey}" data-idx="${idx}" data-key="${c.key}" data-kind="color"${sp} value="${esc(row[c.key]||"#000000")}"></td>`;
+        else if(c.kind==="num") h+=`<td><input type="number" data-coll="${collKey}" data-idx="${idx}" data-key="${c.key}" data-kind="num"${sp} value="${row[c.key]==null?"":esc(row[c.key])}"></td>`;
+        else if(c.kind==="json") h+=`<td><textarea data-coll="${collKey}" data-idx="${idx}" data-key="${c.key}" data-kind="json"${sp} rows="2">${esc(JSON.stringify(row[c.key],null,0))}</textarea></td>`;
+        else h+=`<td><input type="text" data-coll="${collKey}" data-idx="${idx}" data-key="${c.key}" data-kind="text"${sp} value="${esc(row[c.key]==null?"":row[c.key])}"></td>`;
+      }
+      h+=`<td class="row-actions"><button class="btn sm danger" data-act="del" data-idx="${idx}">删除</button></td></tr>`;
+    });
+    h+='</tbody></table></div></div>';
+    container.innerHTML=h;
+    const tb=container.querySelector("tbody");
+    bindTbody(tb);
+    container.querySelector('[data-act="add"]').addEventListener("click",()=>{
+      arr.push(makeNew());
+      persist(); renderPane(currentPane);
+    });
+    container.querySelectorAll('[data-act="del"]').forEach(b=>b.addEventListener("click",()=>{
+      arr.splice(+b.dataset.idx,1); persist(); renderPane(currentPane);
+    }));
+  }
+
+  function renderFactions(){
+    const p=document.getElementById("tab-factions");
+    editTable(p,"factions",[
+      {label:"id",key:"id"},{label:"名称",key:"name"},{label:"主色",key:"color",kind:"color"},
+      {label:"tier",key:"tier"},{label:"规模",key:"scale"},{label:"派任务",key:"questGiver",type:"bool"},
+      {label:"简介 blurb",key:"blurb"},{label:"联络人代号 contact.name",key:"contact.name",special:"contact"},
+      {label:"联络人职务 contact.title",key:"contact.title",special:"contact"},
+      {label:"头像路径",key:"contact.img",special:"contact"},
+      {label:"任务偏向 bias (JSON)",key:"bias",kind:"json"},
+      {label:"派遣概率",key:"dispatchChance",kind:"num"},
+    ],()=>({id:uniqId(model.factions,"new_fac"),name:"新势力",color:"#888888",tier:"minor",scale:"小型",blurb:"",contact:{name:"",title:"",img:""},bias:{},dispatchChance:0.34}));
+    // 修正 contact 子字段绑定：上面的 generic 绑定不支持 dot key，单独处理
+    p.querySelectorAll('input[data-special="contact"]').forEach(inp=>{
+      inp.addEventListener("input",e=>{
+        const idx=+inp.dataset.idx, sub=inp.dataset.key.split(".")[1];
+        model.factions[idx].contact=model.factions[idx].contact||{};
+        model.factions[idx].contact[sub]=inp.value; persist();
+      });
+    });
+    // questGiver 用文本（false/缺省）
+  }
+
+  function renderTraits(){
+    const p=document.getElementById("tab-traits");
+    editTable(p,"traits",[
+      {label:"id",key:"id"},{label:"经历标题",key:"title"},{label:"描述",key:"desc"},
+      {label:"词条名 trait.name",key:"trait.name",special:"trait"},
+      {label:"词条描述 trait.desc",key:"trait.desc",special:"trait"},
+      {label:"效果 effects (JSON)",key:"trait.effects",kind:"json",special:"trait"},
+    ],()=>({id:uniqId(model.traits,"new_trait"),title:"新经历",desc:"",trait:{id:"new_trait",name:"新词条",desc:"",effects:{}}}));
+    p.querySelectorAll('input[data-special="trait"]').forEach(inp=>{
+      inp.addEventListener("input",e=>{
+        const idx=+inp.dataset.idx, sub=inp.dataset.key.split(".")[1];
+        model.traits[idx].trait=model.traits[idx].trait||{};
+        if(sub==="effects"){ const r=parseJson(inp.value); if(r.ok){model.traits[idx].trait.effects=r.val;} }
+        else model.traits[idx].trait[sub]=inp.value;
+        persist();
+      });
+    });
+  }
+
+  function renderBackstories(){
+    const p=document.getElementById("tab-backstory");
+    editTable(p,"backstories",[
+      {label:"id",key:"id"},{label:"出身",key:"title"},{label:"描述",key:"desc"},
+      {label:"强制专精",key:"forcePassion"},{label:"势力亲和",key:"factionAffinity"},
+      {label:"加成 affinity (JSON)",key:"affinity",kind:"json"},
+    ],()=>({id:uniqId(model.backstories,"new_bg"),title:"新出身",desc:"",forcePassion:"",factionAffinity:null,affinity:{repMult:1,creditMult:1,urgentSuccess:0}}));
+  }
+
+  function renderPersonalities(){
+    const p=document.getElementById("tab-personality");
+    editTable(p,"personalities",[
+      {label:"id",key:"id"},{label:"性格",key:"name"},{label:"语音 line",key:"line"},
+    ],()=>({id:uniqId(model.personalities,"new_per"),name:"新性格",line:""}));
+  }
+
+  // ---------- 美术 Prompt ----------
+  let artSub="contact";
+  let npcRevealState=false;
+  let npcAugState={};
+  let npcVariantState={};
+  let npcOutfitState={};      // 原型 id -> 清凉版当前选中的服装池索引（仅生成期拼 Prompt 用，不影响落盘 combo）
+  let npcHairState={};        // 原型 id -> 当前选中的挑染（发色高光）索引（仅生成期拼 Prompt 用，不影响落盘 combo）
+  let npcMaleState={};        // 原型 id -> 当前选中的男性特征（墨镜/光头）索引（仅男性变体生效，不影响落盘 combo）
+  let npcOpticState={};       // 原型 id -> 当前选中的战术目镜索引（所有变体生效，仅生成期拼 Prompt 用，不影响落盘 combo）
+  let portraitsDir=null;       // FileSystemDirectoryHandle（game/assets/portraits）
+  let armed=null;              // {sub, name} 当前待写入的行（势力/义体，单文件）
+  let armedNpc=null;           // {arch,variant,aug,reveal,savekey} 当前待写入的 NPC 行（多张变体）
+  let bustVer=0;               // 写盘后自增，给缩略图 img src 加 ?v=N 强制刷新缓存
+  let undoSlot={};             // "sub/name" -> {sub,name,blob} 覆盖前的旧图（单步撤销）
+  // 美术页「存档目录」横幅：dir 为 asset-prompts.js 导出的相对路径（相对 game/ 目录）
+  function artDirBanner(dir, note){
+    const fp="game/"+dir+"/";
+    return `<div class="card" style="border-left:4px solid var(--accent2);background:#f3fbf9"><div class="hint" style="margin:0"><b>📁 存档目录：</b><span class="mono">${esc(fp)}</span>${note?(" · "+esc(note)):""}<br>把 Gemini 生成的图按下方每行的文件名存入此目录（同名覆盖即可），后台图标列会自动显示是否就位。</div></div>`;
+  }
+  // 美术页「文件名生成规则」面板：示例文件名由 asset-prompts.js 真实函数实时生成，与落盘/加载一致
+  function artNameRules(){
+    const AP=N.Data.AssetPrompts;
+    const npc=(id,v,o)=>"game/"+AP.npcOutPath(id,v,o);
+    const rows=[
+      ["基础（V1）", npc("belt_nomad",0,{})],
+      ["基础（V3）", npc("belt_nomad",2,{})],
+      ["V1 清凉版（第 1 张）", npc("belt_nomad",0,{revealing:true})],
+      ["V1 清凉版（第 2 张）", npc("belt_nomad",0,{revealing:true,draw:2})],
+      ["义眼（V3）", npc("belt_nomad",2,{augment:"eye"})],
+      ["义肢（V3）", npc("belt_nomad",2,{augment:"limb"})],
+      ["双改造（V3）", npc("belt_nomad",2,{augment:"both"})],
+      ["V1 清凉 + 义眼", npc("belt_nomad",0,{revealing:true,augment:"eye"})],
+      ["V1 清凉 + 双改造", npc("belt_nomad",0,{revealing:true,augment:"both"})],
+    ];
+    const npcRows=rows.map(r=>`<tr><td>${esc(r[0])}</td><td class="mono">${esc(r[1])}</td></tr>`).join("");
+    const facEx=(AP.FACTION_CONTACTS[0]&&AP.FACTION_CONTACTS[0].outName)||"nsk_fac_angel_contact.webp";
+    const augEye=AP.augOutName("aug_eye"), augLimb=AP.augOutName("aug_limb");
+    return `<details class="card" style="background:#f7f9fc"><summary style="cursor:pointer;font-weight:700">📐 文件名生成规则（点击展开）</summary>
+    <div class="hint" style="margin:8px 0 2px">通用格式 <span class="mono">&lt;前缀&gt;_&lt;id&gt;_&lt;变体/标识&gt;.webp</span>：全小写 + 下划线，扩展名固定 <span class="mono">.webp</span>，比例 3:4。下表文件名均由 <span class="mono">asset-prompts.js</span> 的真实函数实时生成，与后台每行落盘名、游戏加载完全一致。</div>
+
+    <h3 style="margin:12px 0 4px">① 势力联络人 → game/assets/portraits/factions/</h3>
+    <div class="mono" style="font-size:13px">nsk_fac_&lt;factionId&gt;_contact.webp</div>
+    <div class="hint" style="margin:2px 0 8px">例：${esc(facEx)}（共 ${AP.FACTION_CONTACTS.length} 个势力，详见下方「势力联络人」页每行的落盘名）</div>
+
+    <h3 style="margin:8px 0 4px">② NPC 原型 → game/assets/portraits/npc/&lt;原型id&gt;/</h3>
+    <div class="mono" style="font-size:13px">每个原型一个文件夹：npc/belt_nomad/ · npc/corp_heir/ · npc/actress/ …（共 ${AP.NPC_ARCHETYPES.length} 个）</div>
+    <div class="mono" style="font-size:13px">文件名：&lt;原型id&gt;_&lt;变体&gt;[_义体][_第几张].webp —— <b>始终带原型前缀</b>；变体 = v1 / v2 / v3 / v4，<b>清凉版固定 reveal</b></div>
+    <div class="mono" style="font-size:13px">义体后缀：_eye（义眼）· _limb（义肢）· _eye_limb（双改造）；清凉与义体可叠加 → corp_heir_reveal_eye_limb.webp</div>
+    <div class="hint" style="margin:4px 0 8px">同一 combo 可存<b>多张变体</b>：第 1 张无后缀（如 <span class="mono">corp_heir_reveal.webp</span>），第 2 张起加 <span class="mono">_2</span>、<span class="mono">_3</span>…（封顶 <span class="mono">NPC_DRAW_MAX=${AP.NPC_DRAW_MAX}</span>）→ <span class="mono">corp_heir_reveal_2.webp</span>。游戏运行时读 <span class="mono">npc/manifest.json</span>（后台存图后自动重建；也可点「重建清单」从磁盘恢复；根目录旧命名的图点「迁移旧图」一次性搬家），在同 combo 若干张里<b>随机抽一张</b>显示。</div>
+    <table style="margin-top:6px"><thead><tr><th>组合场景</th><th>实际文件名</th></tr></thead><tbody>${npcRows}</tbody></table>
+
+    <h3 style="margin:12px 0 4px">③ 义体改造 → game/assets/portraits/augments/</h3>
+    <div class="mono" style="font-size:13px">nsk_aug_&lt;id&gt;.webp</div>
+    <div class="hint" style="margin:2px 0 4px">例：${esc(augEye)}、${esc(augLimb)}</div>
+
+    <h3 style="margin:12px 0 4px">④ 新手引导角色 → game/assets/portraits/guides/</h3>
+    <div class="mono" style="font-size:13px">nsk_guide_&lt;id&gt;[_&lt;key&gt;].webp</div>
+    <div class="hint" style="margin:2px 0 4px">第 1 套（立绘）的 key 为空、不带后缀，其余为 _bust（对话头像）· _point（引导指向）· _stamp（盖章姿态）。例：${esc(AP.guideOutName("flora",0))}、${esc(AP.guideOutName("flora",1))}、${esc(AP.guideOutName("registrar",2))}</div>
+  </details>`;
+  }
+  function renderArt(){
+    armed=null; // 切子页清空待写入行
+    const p=document.getElementById("tab-art");
+    p.innerHTML=`<div class="card"><div class="row-actions">
+      <button class="btn sm ${artSub==="contact"?"":"ghost"}" data-art="contact">势力联络人</button>
+      <button class="btn sm ${artSub==="npc"?"":"ghost"}" data-art="npc">NPC 原型</button>
+      <button class="btn sm ${artSub==="aug"?"":"ghost"}" data-art="aug">义体改造</button>
+      <button class="btn sm ${artSub==="guide"?"":"ghost"}" data-art="guide">引导角色</button>
+      <button class="btn sm" id="pickDirBtn">📁 选择存档根目录</button>
+      <span class="hint" id="dirState" style="margin:0">首次存图需选择 <span class="mono">game/assets/portraits</span> 文件夹（file:// 下每次打开页面需重选一次）。</span>
+      </div></div>
+      ${artNameRules()}
+      <div id="artBody"></div>`;
+    p.querySelectorAll('[data-art]').forEach(b=>b.addEventListener("click",()=>{ artSub=b.dataset.art; renderArt(); }));
+    const pickBtn=p.querySelector("#pickDirBtn");
+    if(pickBtn) pickBtn.addEventListener("click",async()=>{ try{ const d=await ensureDir(); const ds=p.querySelector("#dirState"); if(ds) ds.textContent="已授权根目录："+d.name+"（可直写 factions / npc / augments / guides 子目录）"; }catch(_){} });
+    if(artSub==="contact") renderArtContact(p.querySelector("#artBody"));
+    else if(artSub==="npc") renderArtNpc(p.querySelector("#artBody"));
+    else if(artSub==="aug") renderArtAug(p.querySelector("#artBody"));
+    else renderArtGuide(p.querySelector("#artBody"));
+  }
+  function renderArtContact(body){
+    const fc=model.prompts.factionContacts;
+    const facMap={}; model.factions.forEach(f=>facMap[f.id]=f);
+    let h=artDirBanner(N.Data.AssetPrompts.CONTACT_OUT_DIR,"比例 3:4");
+    h+='<div class="tablewrap"><table><thead><tr><th class="imgcell">图标</th><th>势力</th><th>主色</th><th>accent（可编辑）</th><th>完整 Prompt</th><th>状态</th></tr></thead><tbody>';
+    fc.forEach((f,i)=>{
+      const inFac = facMap[f.factionId];
+      const status = f.visualOnly?'<span class="pill vis">仅美术</span>':(inFac?(inFac.questGiver===false?'<span class="pill quest">野怪</span>':'<span class="pill major">派任务</span>'):'<span class="pill">无势力数据</span>');
+      const imgPath="assets/portraits/factions/"+f.outName+(bustVer?"?v="+bustVer:"");
+      h+=`<tr>
+        <td class="imgcell"><img src="${esc(imgPath)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" onload="this.style.display='block';this.nextElementSibling.style.display='none'"><div class="miss" style="display:none">未生成</div></td>
+        <td><b>${esc(f.name)}</b><br><span class="mono" style="font-size:11px">${esc(f.factionId)}</span></td>
+        <td><input type="color" data-coll="prompts.factionContacts" data-idx="${i}" data-key="color" data-kind="color" value="${esc(f.color||"#000000")}"></td>
+        <td><textarea data-coll="prompts.factionContacts" data-idx="${i}" data-key="accent" data-kind="text" rows="5">${esc(f.accent)}</textarea></td>
+        <td><div class="copybox"><textarea readonly rows="6" data-prompt="contact" data-id="${esc(f.factionId)}">${esc(N.Data.AssetPrompts.buildContactPrompt(f.factionId))}</textarea>
+            <button class="btn sm ghost" data-copy="contact" data-id="${esc(f.factionId)}" style="margin-top:4px">复制完整 Prompt</button>
+            <div class="legend mono" style="margin-top:4px">落盘: game/${esc(N.Data.AssetPrompts.CONTACT_OUT_DIR)}/${esc(f.outName)} · ${esc(f.ratio||"3:4")}</div>
+            ${saveButtonsHtml("factions", f.outName, i)}</td>
+        <td>${status}</td>
+      </tr>`;
+    });
+    h+='</tbody></table></div>';
+    body.innerHTML=h;
+    bindPromptBody(body);
+  }
+  function renderArtNpc(body){
+    const AP=N.Data.AssetPrompts;
+    const ar=model.prompts.npcArchetypes;
+    const optsOf=(a,v,aug)=>({ revealing: npcRevealState && v===0, augment: aug||null, hairHighlight: npcHairState[a.id]||0, maleTrait: npcMaleState[a.id]||0, tacticalOptic: npcOpticState[a.id]||0 });
+    const npcPath=(a,v,aug)=> AP.npcOutPath(a.id, v, optsOf(a,v,aug));
+    const npcPrompt=(a,v,aug)=>AP.buildNpcPrompt(a.id, v, Object.assign(optsOf(a,v,aug), {outfit: npcOutfitState[a.id]||0}));
+    const isMale=(v)=> AP.npcIsMaleVariant(v);
+    const vOf=(i)=> +(body.querySelector(`select[data-variant="${i}"]`).value||0);
+    // 统一刷新某行的 prompt / 落盘名 / 头像就位 / 清凉提示 / 存图按钮参数 / 多张张数徽标
+    function updateNpcRow(i, v, aug){
+      const a=model.prompts.npcArchetypes[i];
+      const ta=body.querySelector(`textarea[data-prompt="npc"][data-id="${a.id}"]`);
+      if(ta){ ta.value=npcPrompt(a,v,aug); ta.dataset.variant=v; ta.dataset.aug=aug; }
+      const btn=body.querySelector(`button[data-copy="npc"][data-id="${a.id}"]`);
+      if(btn){ btn.dataset.variant=v; btn.dataset.aug=aug; }
+      // ⚠ 关键：存图按钮的 data-arch/data-variant/data-reveal/data-aug/data-savekey 必须整块重渲染，
+      //    否则切换变体或勾上「清凉版」后仍按旧参数写盘（曾导致清凉版被存成 _1_2 而不是 reveal_2）。
+      const slot=body.querySelector(`#npc_save_${i}`);
+      if(slot) slot.outerHTML=npcSaveButtonsHtml(i,a,v,aug);
+      const out=body.querySelector(`#npcout_${i}`);
+      if(out) out.textContent="game/"+AP.npcOutPath(a.id,v,optsOf(a,v,aug));
+      const img=body.querySelector(`#npc_img_${i}`); const miss=body.querySelector(`#npc_miss_${i}`);
+      if(img){ img.style.display='block'; if(miss) miss.style.display='none'; img.src=npcPath(a,v,aug)+(bustVer?"?v="+bustVer:""); }
+      const hint=body.querySelector(`#npchint_${i}`); if(hint) hint.style.display=(npcRevealState && v!==0)?'block':'none';
+      const ofwrap=body.querySelector(`#npcoutfit_${i}`);
+      if(ofwrap) ofwrap.style.display=(npcRevealState && v===0 && AP.npcRevealOutfitPool(a.id).length>1)?'block':'none';
+      const malewrap=body.querySelector(`#npcmale_${i}`);
+      if(malewrap) malewrap.style.display=isMale(v)?'block':'none';
+      refreshNpcCounts();
+    }
+    let h=artDirBanner(AP.NPC_OUT_DIR,"按原型分文件夹 · 比例 3:4");
+    h+=`<div class="card" id="npcStatsCard" style="background:#f7f9fc">
+      <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start" id="npcStatsBody">
+        <span class="hint" style="margin:0">点上方「📁 选择存档根目录」后可统计当前列表与整个 npc/ 目录的图片数量。</span>
+      </div></div>`;
+    h+=`<div class="card"><div class="hint">${ar.length} 原型 × ${AP.NPC_VARIANT_COUNT} 变体。每个原型<b>一个文件夹</b>：<span class="mono">npc/&lt;id&gt;/</span>，文件名 <span class="mono">v1..v4</span> / 清凉版 <span class="mono">reveal</span>（+义体 <span class="mono">_eye</span>/<span class="mono">_limb</span>/<span class="mono">_eye_limb</span>），同 combo 第 2 张起加 <span class="mono">_2</span>/<span class="mono">_3</span>…（封顶 ${AP.NPC_DRAW_MAX} 张）。游戏运行时在同 combo 已存张里<b>随机抽一张</b>。最左「头像」列显示「已存 N 张」与最新缩略图。
+      <div class="row-actions" style="margin-top:8px">
+        <button class="btn sm" id="rebuildNpcBtn" title="扫描磁盘实际文件，重建 manifest.json（手工放入的图也会被纳入随机池）">🔄 重建清单</button>
+        <button class="btn sm ghost" id="initNpcDirsBtn" title="一次性创建 14 个原型子文件夹，方便直接把图拖进去">📁 初始化 ${ar.length} 个原型文件夹</button>
+        <button class="btn sm ghost" id="migrateNpcBtn" title="把根目录里旧命名（nsk_npc_*）的图移动进各自原型文件夹并改名">📦 迁移旧图到子文件夹</button>
+      </div>
+      <div style="margin:8px 0 0"><label class="chk"><input type="checkbox" id="npcRevealToggle" ${npcRevealState?"checked":""}> 清凉版（仅 V1 女角色：逐原型专属清凉穿搭，露肩/露腰显身材，硬科幻概念图质感）</label></div></div>
+      <div class="tablewrap"><table class="npctable"><colgroup><col style="width:78px"><col style="width:92px"><col style="width:78px"><col style="width:140px"><col style="width:190px"><col style="width:244px"><col></colgroup><thead><tr><th class="imgcell">头像</th><th>原型</th><th>来源</th><th>外貌关键词</th><th>accent（可编辑）</th><th>变体 / 义体叠加</th><th>完整 Prompt（选变体后复制）</th></tr></thead><tbody>`;
+    ar.forEach((a,i)=>{
+      const vlist=AP.NPC_VARIANT_LABELS||["V1","V2","V3","V4"];
+      const v0=npcVariantState[i]||0;
+      const vopts=vlist.map((v,k)=>`<option value="${k}" ${k===v0?"selected":""}>${esc(v)}</option>`).join("");
+      const aopts=['', 'eye','limb','both'].map(o=>`<option value="${o}" ${(npcAugState[i]||"")===o?"selected":""}>${o===""?"无":o==="eye"?"义眼":o==="limb"?"义肢":"双改造(眼+肢)"}</option>`).join("");
+      const hopts=AP.NPC_HAIR_HIGHLIGHTS.map((o,k)=>`<option value="${k}" ${k===(npcHairState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const mopts=AP.NPC_MALE_FACIALS.map((o,k)=>`<option value="${k}" ${k===(npcMaleState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const otopts=AP.NPC_TACTICAL_OPTICS.map((o,k)=>`<option value="${k}" ${k===(npcOpticState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const aug=npcAugState[i]||"";
+      const pool=AP.npcRevealOutfitPool(a.id);
+      const oopts=pool.map((o,k)=>`<option value="${k}" ${k===(npcOutfitState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const showOutfit=(npcRevealState && v0===0 && pool.length>1);
+      h+=`<tr>
+        <td class="imgcell" id="npc_imgcell_${i}"><img id="npc_img_${i}" src="${esc(npcPath(a,v0,aug))}${bustVer?"?v="+bustVer:""}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" onload="this.style.display='block';this.nextElementSibling.style.display='none'"><div class="miss" id="npc_miss_${i}" style="display:none">未生成</div><div class="cnt-badge" id="npc_count_${i}" style="margin-top:4px;font-size:11px;color:var(--accent2);font-weight:600"></div></td>
+        <td><b>${esc(a.id)}</b></td>
+        <td>${esc(a.source)}</td>
+        <td style="font-size:12px">${esc(a.look)}</td>
+        <td><textarea data-coll="prompts.npcArchetypes" data-idx="${i}" data-key="accent" data-kind="text" rows="4">${esc(a.accent)}</textarea></td>
+        <td><select data-variant="${i}">${vopts}</select>
+            <span class="legend" id="npchint_${i}" style="display:none;color:#9aa5b1">清凉版仅对 V1 生效</span>
+            <span class="legend" style="display:block;margin:3px 0 1px">挑染（发色高光）</span>
+            <select data-hair="${i}">${hopts}</select>
+            <button class="btn sm ghost" data-hair-rand="${i}" title="随机挑一款发色高光">🎲 随机</button>
+            <span id="npcoptic_${i}" style="display:block">
+              <span class="legend" style="display:block;margin:3px 0 1px">战术目镜（所有变体）</span>
+              <select data-optic="${i}">${otopts}</select>
+              <button class="btn sm ghost" data-optic-rand="${i}" title="随机抽一款战术目镜（所有变体通用）">🎲 随机</button>
+            </span>
+            <span id="npcmale_${i}" style="display:${isMale(v0)?'block':'none'}">
+              <span class="legend" style="display:block;margin:3px 0 1px">男性特征（墨镜/光头）</span>
+              <select data-male="${i}">${mopts}</select>
+              <button class="btn sm ghost" data-male-rand="${i}" title="随机抽一款男性特征（仅男性变体）">🎲 随机</button>
+            </span>
+            <span id="npcoutfit_${i}" style="display:${showOutfit?'block':'none'}">
+              <span class="legend" style="display:block;margin:3px 0 1px">清凉版服装风格</span>
+              <select data-outfit="${i}">${oopts}</select>
+              <button class="btn sm ghost" data-outfit-rand="${i}" title="随机抽一套服装（仅清凉版 V1）">🎲 随机</button>
+            </span>
+            <span class="legend" style="display:block;margin:3px 0 1px">义体叠加</span>
+            <select data-aug="${i}">${aopts}</select>
+            <span class="legend mono pathline" id="npcout_${i}" title="game/${esc(AP.npcOutPath(a.id,v0,optsOf(a,v0,aug)))}">npc/${esc(AP.npcOutPath(a.id,v0,optsOf(a,v0,aug)).replace(AP.NPC_OUT_DIR+"/",""))}</span></td>
+        <td><div class="copybox"><textarea readonly rows="5" data-prompt="npc" data-id="${esc(a.id)}" data-variant="${v0}" data-aug="${esc(aug)}">${esc(npcPrompt(a,v0,aug))}</textarea>
+            <button class="btn sm ghost" data-copy="npc" data-id="${esc(a.id)}" data-variant="${v0}" data-aug="${esc(aug)}" style="margin-top:4px">复制完整 Prompt</button>
+            ${npcSaveButtonsHtml(i, a, v0, aug)}</td>
+      </tr>`;
+    });
+    h+='</tbody></table></div>';
+    h+=`<div class="card" style="margin-top:14px" id="npcComboCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <b>📋 逐套生成清单（4 变体 × 服装池）</b>
+        <div class="row-actions" style="margin:0">
+          <button class="btn sm ghost active" data-combo-filter="all">全部</button>
+          <button class="btn sm ghost" data-combo-filter="new">仅新出身(7)</button>
+          <button class="btn sm ghost" data-combo-filter="todo">仅未生成</button>
+        </div>
+      </div>
+      <div class="hint" style="margin:6px 0 2px">每个出身展开 4 个变体（V1 女 / V2 年长男 / V3 中性 / V4 年轻男，各独立服饰）；V1 清凉版再乘服装池多套（同一 stem 的多次生成按已有张数 +1 自动编号）。点「载入」把该组合填入上方对应原型的编辑行（自动开清凉版开关），复制 Prompt → Gemini 生图 → 存到目标文件名。</div>
+      <div id="npcComboList"></div>
+    </div>`;
+    body.innerHTML=h;
+    bindPromptBody(body);
+    const toggle=body.querySelector("#npcRevealToggle");
+    if(toggle) toggle.addEventListener("change",()=>{
+      npcRevealState=toggle.checked;
+      ar.forEach((a,i)=> updateNpcRow(i, vOf(i), npcAugState[i]||""));
+    });
+    const rb=body.querySelector("#rebuildNpcBtn");
+    if(rb) rb.addEventListener("click", async ()=>{ try{ await ensureDir(); await rebuildNpcManifest(); refreshArt(); }catch(err){ toast("重建失败："+err.message); } });
+    const ib=body.querySelector("#initNpcDirsBtn");
+    if(ib) ib.addEventListener("click", async ()=>{ try{ const n=await initNpcDirs(); toast("已确保 "+n+" 个原型文件夹存在"); refreshNpcCounts(); }catch(err){ toast("初始化失败："+err.message); } });
+    const mb=body.querySelector("#migrateNpcBtn");
+    if(mb) mb.addEventListener("click", async ()=>{ try{ await ensureDir(); await migrateLegacyNpc(); }catch(err){ toast("迁移失败："+err.message); } });
+    body.querySelectorAll('select[data-variant]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.variant, v=+sel.value;
+      npcVariantState[i]=v;
+      updateNpcRow(i, v, npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-aug]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.aug, aug=sel.value;
+      npcAugState[i]=aug;
+      updateNpcRow(i, vOf(i), aug);
+    }));
+    body.querySelectorAll('select[data-outfit]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.outfit, a=model.prompts.npcArchetypes[i];
+      npcOutfitState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-outfit-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.outfitRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.npcRevealOutfitPool(a.id);
+      if(p.length<=1) return;
+      const r=Math.floor(Math.random()*p.length);
+      const sel=body.querySelector(`select[data-outfit="${i}"]`);
+      if(sel) sel.value=r;
+      npcOutfitState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-hair]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.hair, a=model.prompts.npcArchetypes[i];
+      npcHairState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-hair-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.hairRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_HAIR_HIGHLIGHTS;
+      if(p.length<=1) return;
+      // 随机抽一款挑染（排除「无」，让随机总是给到一种发色高光）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-hair="${i}"]`);
+      if(sel) sel.value=r;
+      npcHairState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-optic]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.optic, a=model.prompts.npcArchetypes[i];
+      npcOpticState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-optic-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.opticRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_TACTICAL_OPTICS;
+      if(p.length<=1) return;
+      // 随机抽一款战术目镜（排除「无」，让随机总是给到一种目镜）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-optic="${i}"]`);
+      if(sel) sel.value=r;
+      npcOpticState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-male]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.male, a=model.prompts.npcArchetypes[i];
+      npcMaleState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-male-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.maleRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_MALE_FACIALS;
+      if(p.length<=1) return;
+      // 随机抽一款男性特征（排除「无」，让随机总是给到墨镜或光头）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-male="${i}"]`);
+      if(sel) sel.value=r;
+      npcMaleState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    refreshNpcCounts();
+    // —— 逐套生成清单（4 变体 × 服装池）：替代单独清单文件，直接内嵌后台 ——
+    const NEW_SET=["smelter_apprentice","salvage_waif","gas_drifter","abyss_acolyte","bounty_foundling","settler_scion","turret_child"];
+    function comboStatus(id, stem, k){
+      const man=window.NSK_NPC_MANIFEST;
+      if(!man) return {unknown:true};
+      const arr=man[id+"/"+stem];
+      if(!arr||!arr.length) return {done:false};
+      if(stem==="reveal") return {done: arr.length>k}; // 第 k 套清凉版：已有 >k 张即视为已生成
+      return {done: arr.length>=1};
+    }
+    function renderNpcComboList(filter){
+      const vlabels=AP.NPC_VARIANT_LABELS||["V1","V2","V3","V4"];
+      const man=window.NSK_NPC_MANIFEST;
+      let html="";
+      ar.forEach((a,i)=>{
+        const isNew=NEW_SET.indexOf(a.id)>=0;
+        const pool=AP.npcRevealOutfitPool(a.id);
+        const combos=[];
+        for(let v=0; v<4; v++){
+          if(v===0){
+            pool.forEach((o,k)=>{
+              const fileName=AP.npcOutName(a.id,0,{revealing:true,draw:k+1});
+              combos.push({variant:0,outfit:k,label:"V1 女·清凉版",outfitName:k===0?"默认清凉版":o.name,stem:"reveal",fileName:fileName});
+            });
+          } else {
+            const fileName=AP.npcOutName(a.id,v,{revealing:false});
+            combos.push({variant:v,outfit:0,label:vlabels[v]+" (男/中性)",outfitName:"原型自带 look",stem:"v"+(v+1),fileName:fileName});
+          }
+        }
+        const filtered=combos.filter(c=>{
+          if(filter==="new" && !isNew) return false;
+          if(filter==="todo"){ if(comboStatus(a.id,c.stem,c.outfit).done) return false; }
+          return true;
+        });
+        if(!filtered.length) return;
+        let doneCount=0; combos.forEach(c=>{ if(comboStatus(a.id,c.stem,c.outfit).done) doneCount++; });
+        const totalNote = man? `${doneCount}/${combos.length} 已生成` : `${combos.length} 套（manifest 未加载）`;
+        html+=`<div class="combo-arch"><div class="combo-arch-h"><b>${esc(a.source)}</b> <span class="mono">${esc(a.id)}</span>${isNew?'<span class="tag-new">新出身</span>':''} <span class="hint" style="margin-left:6px">${totalNote}</span></div><table class="combotable"><thead><tr><th>变体</th><th>服饰方案</th><th>目标文件名</th><th>状态</th><th>操作</th></tr></thead><tbody>`;
+        filtered.forEach(c=>{
+          const s=comboStatus(a.id,c.stem,c.outfit);
+          const st = s.unknown? '<span class="hint">未知</span>' : (s.done?'<span class="ok">✓ 已生成</span>':'<span class="todo">待生成</span>');
+          html+=`<tr><td>${esc(c.label)}</td><td>${esc(c.outfitName)}</td><td class="mono pathline" title="game/${esc(AP.NPC_OUT_DIR)}/${esc(a.id)}/${esc(c.fileName)}">${esc(a.id)}/${esc(c.fileName)}</td><td>${st}</td><td><button class="btn sm ghost" data-load-combo="${i}" data-variant="${c.variant}" data-outfit="${c.outfit}">载入</button></td></tr>`;
+        });
+        html+=`</tbody></table></div>`;
+      });
+      const box=body.querySelector("#npcComboList");
+      if(box) box.innerHTML = html || '<div class="hint">（当前筛选无匹配组合）</div>';
+    }
+    function loadCombo(i, variant, outfit){
+      const a=ar[i];
+      if(variant===0 && !npcRevealState){
+        npcRevealState=true;
+        const t=body.querySelector("#npcRevealToggle"); if(t) t.checked=true;
+        ar.forEach((aa,ii)=> updateNpcRow(ii, vOf(ii), npcAugState[ii]||""));
+      }
+      npcVariantState[i]=variant;
+      if(variant===0) npcOutfitState[a.id]=outfit;
+      const vsel=body.querySelector(`select[data-variant="${i}"]`); if(vsel) vsel.value=variant;
+      const osel=body.querySelector(`select[data-outfit="${i}"]`); if(osel) osel.value=outfit;
+      updateNpcRow(i, variant, npcAugState[i]||"");
+      const tr=vsel?vsel.closest("tr"):null; if(tr) tr.scrollIntoView({behavior:"smooth",block:"center"});
+      toast(`已载入 ${a.id} · ${variant===0?"V1 清凉版":("V"+(variant+1))} · ${variant===0?(outfit===0?"默认清凉版":((AP.npcRevealOutfitPool(a.id)[outfit]||{}).name||"")):"原型 look"} → 上方复制 Prompt`);
+    }
+    renderNpcComboList("all");
+    body.querySelectorAll('button[data-combo-filter]').forEach(b=>b.addEventListener("click",()=>{
+      body.querySelectorAll('button[data-combo-filter]').forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      renderNpcComboList(b.dataset.comboFilter);
+    }));
+    body.querySelectorAll('button[data-load-combo]').forEach(b=>b.addEventListener("click",()=>{
+      loadCombo(+b.dataset.loadCombo, +b.dataset.variant, +b.dataset.outfit);
+    }));
+  }
+  function renderArtAug(body){
+    const ag=model.prompts.augments;
+    let h=artDirBanner(N.Data.AssetPrompts.AUGMENT_OUT_DIR,"比例 3:4");
+    h+=`<div class="card"><div class="hint">义体改造生图需求（义眼 / 义肢）。图待生成。</div></div>
+      <div class="tablewrap"><table><thead><tr><th>id</th><th>名称</th><th>主色</th><th>accent（可编辑）</th><th>变体</th><th>完整 Prompt（选变体后复制）</th></tr></thead><tbody>`;
+    ag.forEach((a,i)=>{
+      const opts=a.variants.map((v,k)=>`<option value="${k}">V${k+1}: ${esc(v.slice(0,30))}…</option>`).join("");
+      h+=`<tr>
+        <td class="mono">${esc(a.id)}</td>
+        <td><b>${esc(a.name)}</b></td>
+        <td><input type="color" data-coll="prompts.augments" data-idx="${i}" data-key="color" data-kind="color" value="${esc(a.color||"#000000")}"></td>
+        <td><textarea data-coll="prompts.augments" data-idx="${i}" data-key="accent" data-kind="text" rows="4">${esc(a.accent)}</textarea></td>
+        <td><select data-variant="${i}">${opts}</select><br><span class="legend mono" id="augout_${i}">game/${esc(N.Data.AssetPrompts.AUGMENT_OUT_DIR)}/${esc(N.Data.AssetPrompts.augOutName(a.id))}</span></td>
+        <td><div class="copybox"><textarea readonly rows="5" data-prompt="aug" data-id="${esc(a.id)}" data-variant="0">${esc(N.Data.AssetPrompts.buildAugmentPrompt(a.id,0))}</textarea>
+            <button class="btn sm ghost" data-copy="aug" data-id="${esc(a.id)}" data-variant="0" style="margin-top:4px">复制完整 Prompt</button>
+            ${saveButtonsHtml("augments", N.Data.AssetPrompts.augOutName(a.id), i)}</td>
+      </tr>`;
+    });
+    h+='</tbody></table></div>';
+    body.innerHTML=h;
+    bindPromptBody(body);
+    body.querySelectorAll('select[data-variant]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.variant, v=+sel.value, a=model.prompts.augments[i];
+      const ta=body.querySelector(`textarea[data-prompt="aug"][data-id="${a.id}"]`);
+      ta.value=N.Data.AssetPrompts.buildAugmentPrompt(a.id,v);
+      ta.dataset.variant=v;
+      const btn=body.querySelector(`button[data-copy="aug"][data-id="${a.id}"]`); if(btn) btn.dataset.variant=v;
+      const out=body.querySelector(`#augout_${i}`); if(out) out.textContent="game/"+N.Data.AssetPrompts.AUGMENT_OUT_DIR+"/"+N.Data.AssetPrompts.augOutName(a.id);
+      syncPromptSource();
+    }));
+  }
+  // ---------- 新手引导角色（2）：全息 AI Flora + 边疆拓殖民公社本地登记人 ----------
+  // 与义体页同构，但每角色 3 套变体各有独立落盘文件名（立绘 / 对话头像 / 姿态）。
+  // 造型 accent 走标准 data-coll="prompts.guides" → bindPromptBody 输入即重拼 Prompt。
+  function guideSaveHtml(guideId, vIdx){
+    const AP=N.Data.AssetPrompts;
+    const name=AP.guideOutName(guideId, vIdx);
+    const n=esc(name);
+    return `<div class="row-actions" style="margin-top:6px">
+      <button class="btn sm ghost" data-arm="1" data-sub="guides" data-name="${n}" title="点此就绪，再按 Ctrl+V 粘贴（写入 guides/${n}）">📋 粘贴</button>
+      <button class="btn sm ghost" data-file="1" data-sub="guides" data-name="${n}" title="选择本机图片文件直接写入 guides/${n}">📂 文件</button>
+      <span class="legend" data-savestatus="${n}" style="display:block;margin-top:3px"></span>
+    </div>`;
+  }
+  function renderArtGuide(body){
+    const AP=N.Data.AssetPrompts;
+    const gs=model.prompts.guides||[];
+    let h=artDirBanner(AP.GUIDE_OUT_DIR,"比例 3:4");
+    h+=`<div class="card"><div class="hint">新手引导角色（${gs.length}）：全息 AI <b>Flora</b> + 边疆拓殖民公社本地登记人。造型依据旧作新手任务序章「边疆调度员」（光头 / 猩红电子眼 / 浓密胡须 / 促狭笑容 / 油腻合金桌）。每角色 3 套：立绘 · 对话头像 · 姿态，各自独立落盘。</div></div>
+      <div class="tablewrap"><table class="npctable" style="min-width:1180px"><colgroup><col style="width:88px"><col style="width:170px"><col style="width:64px"><col style="width:120px"><col style="width:300px"><col style="width:200px"><col></colgroup><thead><tr><th>id</th><th>角色</th><th>主色</th><th>定位</th><th>造型 accent（可编辑）</th><th>变体 / 落盘</th><th>完整 Prompt（选变体后复制）</th></tr></thead><tbody>`;
+    gs.forEach((g,i)=>{
+      const opts=g.variants.map((v,k)=>`<option value="${k}">${esc(v.name)}</option>`).join("");
+      h+=`<tr>
+        <td class="mono">${esc(g.id)}</td>
+        <td><b>${esc(g.name)}</b><br><span class="mono" style="font-size:11px">${esc(g.role||"")}</span></td>
+        <td><input type="color" data-coll="prompts.guides" data-idx="${i}" data-key="color" data-kind="color" value="${esc(g.color||"#000000")}"></td>
+        <td>${esc(g.affiliation||"")}<br><span class="hint">${esc(g.ratio||"3:4")}</span></td>
+        <td><textarea data-coll="prompts.guides" data-idx="${i}" data-key="accent" data-kind="text" rows="6" style="width:100%">${esc(g.accent)}</textarea>
+            <div class="hint" style="margin-top:4px">${esc(g.designNote||"")}</div></td>
+        <td><select data-guide-variant="${i}">${opts}</select><br>
+            <span class="legend mono pathline" id="guideout_${i}" title="game/${esc(AP.GUIDE_OUT_DIR)}/${esc(AP.guideOutName(g.id,0))}">guides/${esc(AP.guideOutName(g.id,0))}</span></td>
+        <td><div class="copybox"><textarea readonly rows="6" data-guide-prompt="${i}" data-variant="0">${esc(AP.buildGuidePrompt(g.id,0))}</textarea>
+            <button class="btn sm ghost" data-guide-copy="${i}" style="margin-top:4px">复制完整 Prompt</button>
+            <div id="guidesave_${i}">${guideSaveHtml(g.id,0)}</div></div></td>
+      </tr>`;
+    });
+    h+='</tbody></table></div>';
+    body.innerHTML=h;
+    bindPromptBody(body);
+    body.querySelectorAll('select[data-guide-variant]').forEach(sel=>{
+      sel.addEventListener("change",()=>{
+        const i=+sel.dataset.guideVariant, v=+sel.value, g=gs[i];
+        const ta=body.querySelector(`textarea[data-guide-prompt="${i}"]`);
+        if(ta){ ta.value=AP.buildGuidePrompt(g.id,v); ta.dataset.variant=v; }
+        const nm=AP.guideOutName(g.id,v);
+        const out=body.querySelector(`#guideout_${i}`);
+        if(out){ out.textContent="guides/"+nm; out.title="game/"+AP.GUIDE_OUT_DIR+"/"+nm; }
+        const sb=body.querySelector(`#guidesave_${i}`); if(sb) sb.innerHTML=guideSaveHtml(g.id,v);
+      });
+    });
+    body.querySelectorAll('[data-guide-copy]').forEach(b=>b.addEventListener("click",()=>{
+      const i=+b.dataset.guideCopy;
+      const ta=body.querySelector(`textarea[data-guide-prompt="${i}"]`);
+      if(ta){ navigator.clipboard.writeText(ta.value).then(()=>toast("已复制完整 Prompt")).catch(()=>{ta.select();document.execCommand("copy");toast("已复制");}); }
+    }));
+  }
+  // ---------- 剪贴板/文件 直写落盘（file:// 下可用）----------
+  // 每行「📋粘贴 / 📂文件」按钮，按该行真实文件名（来自 npcOutName / augOutName / outName）写盘
+  function cssAttr(s){ return String(s).replace(/["\\]/g,"\\$&"); }
+  function saveButtonsHtml(sub,name,idx){
+    const n=esc(name);
+    return `<div class="row-actions" style="margin-top:6px">
+      <button class="btn sm ghost" data-arm="1" data-saveidx="${idx}" data-sub="${sub}" data-name="${n}" title="点此就绪，再按 Ctrl+V 粘贴 Gemini 复制的图">📋 粘贴</button>
+      <button class="btn sm ghost" data-file="1" data-saveidx="${idx}" data-sub="${sub}" data-name="${n}" title="选择本机图片文件直接写入">📂 文件</button>
+      <span class="legend" data-savestatus="${n}" data-savestatus-row="${idx}" style="display:block;margin-top:3px"></span>
+    </div>`;
+  }
+  // NPC 多张变体专用按钮：携带 combo 描述（原型/变体/清凉/义体），存图时按「已有+1」自动编号，绝不覆盖
+  // ⚠ 每次 v / aug / 清凉版变化都必须重渲染本块（见 updateNpcRow），否则 data-* 会停留在旧状态
+  function npcSaveButtonsHtml(i, a, v, aug){
+    const AP=N.Data.AssetPrompts;
+    const rv=(npcRevealState && v===0)?1:0;
+    const sk="npc:"+a.id+":"+v+":"+rv+":"+(aug||"");
+    const dir="game/"+AP.NPC_OUT_DIR+"/"+AP.npcSubDir(a.id)+"/";
+    return `<div class="row-actions" id="npc_save_${i}" style="margin-top:6px">
+      <button class="btn sm ghost" data-arm-npc="1" data-arch="${esc(a.id)}" data-variant="${v}" data-aug="${esc(aug)}" data-reveal="${rv}" data-savekey="${esc(sk)}" title="点此就绪，再按 Ctrl+V 粘贴（写入 ${esc(dir)}，同 combo 可存多张，自动编号不覆盖）">📋 粘贴</button>
+      <button class="btn sm ghost" data-file-npc="1" data-arch="${esc(a.id)}" data-variant="${v}" data-aug="${esc(aug)}" data-reveal="${rv}" data-savekey="${esc(sk)}" title="选择本机图片文件直接写入 ${esc(dir)}（同一 combo 可存多张）">📂 文件</button>
+      <span class="legend" data-savekey="${esc(sk)}" data-savestatus-npc="1" style="display:block;margin-top:3px"></span>
+    </div>`;
+  }
+  async function ensureDir(){
+    if(portraitsDir) return portraitsDir;
+    if(!window.showDirectoryPicker) throw new Error("此浏览器不支持目录选择，请用 Chrome/Edge 打开");
+    portraitsDir = await window.showDirectoryPicker();
+    toast("已选择存档根目录："+portraitsDir.name);
+    return portraitsDir;
+  }
+  // 逐级取（可按需创建）子目录；sub 支持 "npc/corp_heir" 这类多级路径
+  async function dirFor(sub, create){
+    const root = await ensureDir();
+    const parts = String(sub||"").split("/").filter(Boolean);
+    let d = root;
+    for(const p of parts) d = await d.getDirectoryHandle(p, {create:create!==false});
+    return d;
+  }
+  // ---------- NPC 多张变体：按原型分文件夹 + manifest.json ----------
+  // 目录：npc/<archId>/<variantToken>[_aug][_draw].webp（V1 清凉版固定 reveal）
+  // manifest.json：{ "<archId>/<comboStem>": ["<archId>/<file>.webp", …] }，供游戏运行时随机抽。
+  const NPC_MANIFEST_FILE = "manifest.json";
+  async function npcRootDir(create){
+    const root = await ensureDir();
+    return await root.getDirectoryHandle("npc", {create:create!==false});
+  }
+  async function npcArchDir(archId, create){
+    const npc = await npcRootDir(create);
+    return await npc.getDirectoryHandle(N.Data.AssetPrompts.npcSubDir(archId), {create:create!==false});
+  }
+  async function readNpcManifest(){
+    const dir = await npcRootDir(true);
+    try{
+      const fh = await dir.getFileHandle(NPC_MANIFEST_FILE);
+      const f = await fh.getFile();
+      const j = JSON.parse(await f.text());
+      return (j && typeof j==="object") ? j : {};
+    }catch(_){ return {}; }
+  }
+  async function writeNpcManifest(obj){
+    const dir = await npcRootDir(true);
+    const json = JSON.stringify(obj,null,2);
+    const fh = await dir.getFileHandle(NPC_MANIFEST_FILE, {create:true});
+    const w = await fh.createWritable();
+    await w.write(json);
+    await w.close();
+    // 同步落一份 manifest.js：file:// 下 fetch 被禁，<script> 却能读，
+    // 这样未授权目录时后台也能显示只读统计、游戏运行时也能直接抽图。
+    const fj = await dir.getFileHandle("manifest.js", {create:true});
+    const wj = await fj.createWritable();
+    await wj.write("window.NSK_NPC_MANIFEST = " + json + ";\n");
+    await wj.close();
+  }
+  // 只读加载 manifest.js 快照（无需目录授权；可能落后于磁盘真实状态）
+  let manifestJsTried=false;
+  function loadManifestJs(){
+    if(window.NSK_NPC_MANIFEST) return Promise.resolve(window.NSK_NPC_MANIFEST);
+    if(manifestJsTried) return Promise.resolve(null);
+    manifestJsTried = true;
+    return new Promise(res=>{
+      const s=document.createElement("script");
+      s.src = N.Data.AssetPrompts.NPC_OUT_DIR + "/manifest.js?_=" + Date.now();
+      s.onload = ()=>res(window.NSK_NPC_MANIFEST||null);
+      s.onerror = ()=>res(null);
+      document.head.appendChild(s);
+    });
+  }
+  // 扫描整个 npc/ 目录（真实磁盘状态）：返回按 combo 归组的清单 + 总量 + 未归类旧图
+  async function npcScanDisk(){
+    const AP = N.Data.AssetPrompts;
+    const npc = await npcRootDir(true);
+    const combos = {}, dirs = [], stray = [];
+    let totalFiles = 0, totalBytes = 0;
+    for await (const [n, h] of npc.entries()){
+      if(h.kind !== "directory"){
+        if(h.kind === "file" && /^nsk_npc_.*\.webp$/i.test(n)) stray.push(n);
+        continue;
+      }
+      dirs.push(n);
+      for await (const [fn, fh] of h.entries()){
+        if(fh.kind !== "file" || !/\.webp$/i.test(fn)) continue;
+        const p = AP.npcParseName(fn, n);
+        if(!p) continue;
+        let size = 0;
+        try{ size = (await fh.getFile()).size; }catch(_){}
+        const key = AP.npcComboKey(n, p.variantIdx, { revealing: p.revealing, augment: p.augment });
+        (combos[key] = combos[key] || []).push({name:fn, path:n+"/"+fn, draw:p.draw, size});
+        totalFiles++; totalBytes += size;
+      }
+    }
+    Object.values(combos).forEach(a=>a.sort((x,y)=>x.draw-y.draw));
+    return {combos, dirs, stray, totalFiles, totalBytes};
+  }
+  // 枚举某 combo 已存在的 draw（子目录内存在性检查；允许中间缺号）
+  async function npcExistingDraws(archId, variantIdx, opts){
+    const AP = N.Data.AssetPrompts;
+    const names = [];
+    let dir = null;
+    try{ dir = await npcArchDir(archId, false); }catch(_){ return names; }
+    for(let d=1; d<=AP.NPC_DRAW_MAX; d++){
+      const name = AP.npcOutName(archId, variantIdx, Object.assign({}, opts, {draw:d}));
+      try{ const f = await (await dir.getFileHandle(name)).getFile(); if(f && f.size>0) names.push({name,draw:d}); }catch(_){}
+    }
+    return names;
+  }
+  // 计算下一次该存的文件名：取第一个空号（不覆盖、也不因中间缺号而重名）
+  async function npcNextDraw(archId, variantIdx, opts){
+    const AP = N.Data.AssetPrompts;
+    let existing = [];
+    try{ existing = await npcExistingDraws(archId, variantIdx, opts); }catch(_){}
+    const used = new Set(existing.map(x=>x.draw));
+    let draw = 1;
+    while(used.has(draw) && draw <= AP.NPC_DRAW_MAX) draw++;
+    const name = AP.npcOutName(archId, variantIdx, Object.assign({}, opts, {draw}));
+    return {name, draw, existing: existing.map(x=>x.name)};
+  }
+  // 一次性建齐 14 个原型文件夹（方便手动拖图进去）
+  async function initNpcDirs(){
+    const AP = N.Data.AssetPrompts;
+    const npc = await npcRootDir(true);
+    for(const a of AP.NPC_ARCHETYPES) await npc.getDirectoryHandle(AP.npcSubDir(a.id), {create:true});
+    return AP.NPC_ARCHETYPES.length;
+  }
+  // 从磁盘真实文件重建 manifest.json（顺带把手工放入的图纳入随机池）
+  async function rebuildNpcManifest(quiet){
+    const scan = await npcScanDisk();
+    const out = {};
+    Object.keys(scan.combos).sort().forEach(k=>{ out[k] = scan.combos[k].map(x=>x.path); });
+    await writeNpcManifest(out);
+    const total = Object.values(out).reduce((s,x)=>s+x.length,0);
+    if(!quiet){
+      toast("已重建清单：共 "+Object.keys(out).length+" 个 combo、累计 "+total+" 张"
+        + (scan.stray.length ? "；根目录仍有 "+scan.stray.length+" 张未归类旧图 → 点「📦 迁移旧图到子文件夹」" : ""));
+    }
+    return out;
+  }
+  // 旧扁平命名 → 新「按原型分文件夹」结构；先写新再删旧，目标已存在则跳过
+  async function migrateLegacyNpc(){
+    const AP = N.Data.AssetPrompts;
+    const npc = await npcRootDir(true);
+    const map = new Map();
+    for(const a of AP.NPC_ARCHETYPES){
+      for(let v=0; v<AP.NPC_VARIANT_COUNT; v++){
+        for(const rev of (v===0 ? [false,true] : [false])){
+          for(const aug of ["","eye","limb","both"]){
+            for(let d=1; d<=AP.NPC_DRAW_MAX; d++){
+              const o = {revealing:rev, augment:aug||null, draw:d};
+              map.set(AP.npcLegacyOutName(a.id,v,o), {arch:a.id, v, opts:{revealing:rev, augment:aug||null}, d});
+            }
+          }
+        }
+      }
+    }
+    const moves = [];
+    for await (const [n, h] of npc.entries()){
+      if(h.kind !== "file") continue;
+      const hit = map.get(n);
+      if(!hit) continue;
+      moves.push({from:n, to:AP.npcOutPath(hit.arch, hit.v, Object.assign({}, hit.opts, {draw:hit.d})).replace(AP.NPC_OUT_DIR+"/","")});
+    }
+    if(!moves.length){ toast("没有需要迁移的旧图（npc/ 根目录已无 nsk_npc_* 命名的 webp）"); return; }
+    const show = moves.slice(0,10).map(m=>`<li class="mono" style="font-size:12px;margin:2px 0">${esc(m.from)} → <span style="color:var(--accent2)">${esc(m.to)}</span></li>`).join("");
+    const ok = await askDialog({
+      title:"把 "+moves.length+" 张旧图移入原型文件夹？",
+      html:`<div style="margin-bottom:8px">先复制到新路径，成功后再删根目录旧文件；随后自动重建 manifest.json。</div>
+        <ul style="margin:0;padding-left:18px">${show}</ul>
+        ${moves.length>10?`<div class="hint" style="margin-top:4px">…另有 ${moves.length-10} 张</div>`:""}`,
+      okText:"开始迁移", cancelText:"取消",
+    });
+    if(!ok) return;
+    let done=0, skip=0, fail=0;
+    for(const mv of moves){
+      try{
+        const parts = mv.to.split("/");
+        const dir = await npc.getDirectoryHandle(parts[0], {create:true});
+        let exists = false;
+        try{ await dir.getFileHandle(parts[1]); exists = true; }catch(_){}
+        if(exists){ skip++; continue; }
+        const file = await (await npc.getFileHandle(mv.from)).getFile();
+        const fh = await dir.getFileHandle(parts[1], {create:true});
+        const w = await fh.createWritable(); await w.write(file); await w.close();
+        await npc.removeEntry(mv.from);
+        done++;
+      }catch(_){ fail++; }
+    }
+    await rebuildNpcManifest(true);
+    bustVer++;
+    toast(`迁移完成：${done} 张已移动${skip?("，" + skip + " 张目标已存在跳过"):""}${fail?("，" + fail + " 张失败"):""}`);
+    refreshArt();
+  }
+  // 刷新 NPC 表徽标/缩略图 +「当前列表 / 全库」统计卡
+  // 两条数据通道：① 已授权目录 → 扫描磁盘（精确，含体积/未归类旧图）；② 未授权 → 读 manifest.js 快照（只读计数）
+  async function refreshNpcCounts(){
+    const body = document.querySelector("#artBody"); if(!body || artSub!=="npc") return;
+    const AP = N.Data.AssetPrompts;
+    const statBox = body.querySelector("#npcStatsBody");
+    let combos = null, totalFiles = 0, totalBytes = null, dirCount = null, strayN = null, readonly = false;
+    if(portraitsDir){
+      let scan;
+      try{ scan = await npcScanDisk(); }
+      catch(err){
+        if(statBox) statBox.innerHTML = `<span class="hint" style="margin:0;color:var(--danger)">统计失败：${esc(err.message)}</span>`;
+        return;
+      }
+      combos = scan.combos; totalFiles = scan.totalFiles; totalBytes = scan.totalBytes;
+      dirCount = scan.dirs.length; strayN = scan.stray.length;
+    } else {
+      const snap = await loadManifestJs();
+      if(!snap){
+        if(statBox) statBox.innerHTML = `<span class="hint" style="margin:0">尚未生成 manifest.js 快照 · 点上方「📁 选择存档根目录」后可统计张数（file:// 下页面必须先获得目录授权才能列出文件）。</span>`;
+        return;
+      }
+      readonly = true;
+      combos = {};
+      Object.keys(snap).forEach(k=>{
+        combos[k] = (snap[k]||[]).map(p=>{
+          const seg = String(p).split("/");
+          const nm = seg.pop();
+          const pr = AP.npcParseName(nm, seg.length ? seg[seg.length - 1] : null);
+          return {name:nm, path:p, draw:(pr?pr.draw:1), size:0};
+        }).sort((a,b)=>a.draw-b.draw);
+        totalFiles += combos[k].length;
+      });
+    }
+    // —— 逐行：张数徽标 + 最新缩略图 + 落盘路径 ——
+    const n = model.prompts.npcArchetypes.length;
+    let curSavedCombos = 0, curSavedFiles = 0;
+    for(let i=0;i<n;i++){
+      const a = model.prompts.npcArchetypes[i];
+      const v = npcVariantState[i]||0;
+      const aug = npcAugState[i]||"";
+      const o = { revealing: npcRevealState && v===0, augment: aug||null };
+      const key = AP.npcComboKey(a.id, v, o);
+      const list = combos[key] || [];
+      const badge = body.querySelector(`#npc_count_${i}`);
+      const img = body.querySelector(`#npc_img_${i}`);
+      const miss = body.querySelector(`#npc_miss_${i}`);
+      const out = body.querySelector(`#npcout_${i}`);
+      if(list.length){
+        curSavedCombos++; curSavedFiles += list.length;
+        if(badge) badge.textContent = "已存 "+list.length+" 张";
+        const last = list[list.length-1];
+        if(img){ if(miss) miss.style.display='none'; img.style.display='block'; img.src = AP.NPC_OUT_DIR+"/"+last.path+(bustVer?"?v="+bustVer:""); }
+        if(out){
+          out.textContent = "npc/"+last.path+(list.length>1 ? " · 共 "+list.length+" 张" : "");
+          out.title = "game/"+AP.NPC_OUT_DIR+"/"+last.path+"（"+list.map(x=>x.name).join("、")+"）";
+        }
+      } else {
+        if(badge) badge.textContent = "未生成";
+        if(img) img.style.display='none';
+        if(miss) miss.style.display='flex';
+        const want = AP.npcOutPath(a.id, v, o).replace(AP.NPC_OUT_DIR+"/","");
+        if(out){ out.textContent = "npc/"+want+" · 尚未存"; out.title = "game/"+AP.NPC_OUT_DIR+"/"+want; }
+      }
+    }
+    // —— 全库统计 ——
+    const allKeys = Object.keys(combos);
+    let baseN=0, revealN=0, cybN=0;
+    allKeys.forEach(k=>{
+      const stem = k.slice(k.indexOf("/")+1);
+      const cnt = combos[k].length;
+      if(/_eye|_limb/.test(stem)) cybN += cnt;
+      else if(stem === "reveal") revealN += cnt;
+      else baseN += cnt;
+    });
+    const emptyDirs = AP.NPC_ARCHETYPES.filter(a=>!allKeys.some(k=>k.indexOf(a.id+"/")===0)).length;
+    const chip=(num,label,tone)=>`<div style="min-width:98px"><div style="font-size:21px;font-weight:800;line-height:1.15;color:${tone||"var(--accent)"}">${num}</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${label}</div></div>`;
+    const sep='<div style="width:1px;align-self:stretch;background:var(--line)"></div>';
+    if(statBox){
+      statBox.innerHTML = `<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end">
+          ${chip(curSavedFiles, `当前视图已存图片（${curSavedCombos}/${n} 组合有图）`, "var(--accent2)")}
+          ${chip(n-curSavedCombos, "当前视图缺图组合")}
+          ${sep}
+          ${chip(totalFiles, "npc/ 全库图片")}
+          ${chip(totalBytes==null ? "—" : fmtSize(totalBytes), "全库占用")}
+          ${sep}
+          ${chip(baseN, "基础 v1–v4")}
+          ${chip(revealN, "清凉版 reveal")}
+          ${chip(cybN, "义体叠加")}
+        </div>
+        <div class="hint" style="margin:8px 0 0;width:100%">
+          ${allKeys.length} 个组合有图 · 14 个原型中 ${emptyDirs} 个还没有任何图
+          ${readonly
+            ? ` · <b style="color:var(--accent)">只读统计（读 manifest.js 快照，可能落后于磁盘）；点「📁 选择存档根目录」可精确扫描体积与未归类旧图</b>`
+            : ` · ${dirCount} 个原型文件夹已建${strayN ? ` · <b style="color:var(--danger)">根目录仍有 ${strayN} 张旧命名图未归类 → 点「📦 迁移旧图到子文件夹」</b>` : ""}`}
+        </div>`;
+    }
+  }
+  // ---------- 通用小工具：格式 / 页内对话框 / 状态条 ----------
+  function fmtSize(n){
+    if(n<1024) return n+" B";
+    if(n<1048576) return Math.round(n/1024)+" KB";
+    return (n/1048576).toFixed(2)+" MB";
+  }
+  function fmtTime(t){
+    const d=new Date(t), p=x=>String(x).padStart(2,"0");
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+  }
+  // 页内确认框（替代原生 confirm，可携带对比信息；Esc 取消，Enter 确认）
+  function askDialog(opts){
+    return new Promise(resolve=>{
+      const bg=document.createElement("div");
+      bg.className="modal-bg show";
+      bg.innerHTML=`<div class="modal" style="width:min(560px,94vw);max-height:none">
+        <h3 style="margin:0 0 10px">${esc(opts.title||"请确认")}</h3>
+        <div style="font-size:13px;line-height:1.7;color:var(--ink)">${opts.html||""}</div>
+        <div class="row-actions" style="margin-top:16px;justify-content:flex-end">
+          <button class="btn ghost" data-ans="0">${esc(opts.cancelText||"取消")}</button>
+          <button class="btn ${opts.danger?"danger":""}" data-ans="1">${esc(opts.okText||"确定")}</button>
+        </div></div>`;
+      const done=v=>{ document.removeEventListener("keydown",onKey,true); bg.remove(); resolve(v); };
+      const onKey=ev=>{
+        if(ev.key==="Escape"){ ev.preventDefault(); ev.stopPropagation(); done(false); }
+        else if(ev.key==="Enter"){ ev.preventDefault(); ev.stopPropagation(); done(true); }
+      };
+      bg.querySelectorAll("[data-ans]").forEach(b=>b.addEventListener("click",()=>done(b.dataset.ans==="1")));
+      bg.addEventListener("click",ev=>{ if(ev.target===bg) done(false); });
+      document.addEventListener("keydown",onKey,true);
+      document.body.appendChild(bg);
+      const ok=bg.querySelector('[data-ans="1"]'); if(ok) ok.focus();
+    });
+  }
+  // 写结果状态条（可带一步「撤销」按钮）
+  function setStatus(el,text,sub,name){
+    if(!el) return;
+    el.textContent=text;
+    el.style.color = /失败|取消/.test(text) ? "var(--danger)" : "var(--accent2)";
+    const rec=undoSlot[sub+"/"+name];
+    if(rec){
+      const b=document.createElement("button");
+      b.className="btn sm ghost"; b.style.marginLeft="6px"; b.style.padding="1px 7px";
+      b.textContent="↩ 撤销覆盖"; b.title="把覆盖前的旧图写回（仅本次会话有效，单步）";
+      b.addEventListener("click",async(ev)=>{
+        ev.stopPropagation();
+        try{
+          const dir=await dirFor(rec.sub);
+          const fh=await dir.getFileHandle(rec.name,{create:true});
+          const w=await fh.createWritable(); await w.write(rec.blob); await w.close();
+          delete undoSlot[sub+"/"+name];
+          bustVer++;
+          toast("已撤销：旧图已写回 "+rec.name);
+          refreshArt();
+        }catch(err){ toast("撤销失败："+err.message); }
+      });
+      el.appendChild(b);
+    }
+  }
+  // 写盘：同名已存在时弹「旧图 vs 新图」对比确认，并把旧图留在内存里可一步撤销
+  async function writeImage(sub,name,blob,meta){
+    const dir=await dirFor(sub);
+    let oldFile=null;
+    try{ oldFile=await (await dir.getFileHandle(name)).getFile(); }catch(_){}
+    if(oldFile){
+      const shrink = oldFile.size>0 && blob.size < oldFile.size*0.6;
+      const rows=[
+        ["旧图（将被覆盖）", fmtSize(oldFile.size)+" · "+fmtTime(oldFile.lastModified)],
+        ["新图（即将写入）", (meta&&meta.width?meta.width+"×"+meta.height+" · ":"")+fmtSize(blob.size)],
+      ];
+      const oldUrl=URL.createObjectURL(oldFile), newUrl=URL.createObjectURL(blob);
+      const thumb=(u,cap)=>`<figure style="margin:0;text-align:center"><img src="${u}" style="width:118px;height:157px;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#eee;display:block"><figcaption style="font-size:11px;color:var(--muted);margin-top:4px">${cap}</figcaption></figure>`;
+      const html = `<div class="mono" style="margin-bottom:10px;font-size:12.5px;color:var(--accent)">${esc(name)}</div>`
+        + `<div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:10px">${thumb(oldUrl,"旧图（磁盘上现有）")}<div style="padding-top:60px;color:var(--muted)">→</div>${thumb(newUrl,"新图（刚粘贴的）")}</div>`
+        + `<table style="width:100%;border-collapse:collapse;font-size:12.5px"><tbody>`
+        + rows.map(([k,v])=>`<tr><td style="padding:4px 10px 4px 0;color:var(--muted);white-space:nowrap">${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join("")
+        + `</tbody></table>`
+        + (shrink?`<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:#fff4d6;color:#8a6500;font-size:12px">⚠ 新图比旧图小 <b>${Math.round((1-blob.size/oldFile.size)*100)}%</b>，可能是 Gemini 的预览缩略图。建议先「取消」，改用下载原图再「📂 文件」写入。</div>`:"")
+        + `<div style="margin-top:10px;font-size:12px;color:var(--muted)">覆盖后本行会出现「↩ 撤销覆盖」，可把旧图写回（单步，仅本次会话）。</div>`;
+      const ok=await askDialog({title:"该文件名已存在，是否覆盖？", html, okText:"覆盖写入", cancelText:"取消（保留旧图）", danger:true});
+      URL.revokeObjectURL(oldUrl); URL.revokeObjectURL(newUrl);
+      if(!ok) return {ok:false, overwritten:false};
+      undoSlot[sub+"/"+name]={sub,name,blob:oldFile};
+    }
+    const fh=await dir.getFileHandle(name,{create:true});
+    const w=await fh.createWritable();
+    await w.write(blob); await w.close();
+    bustVer++;
+    return {ok:true, overwritten:!!oldFile};
+  }
+  async function imageToWebp(src){
+    const bmp=await createImageBitmap(src);
+    const cv=document.createElement("canvas"); cv.width=bmp.width; cv.height=bmp.height;
+    cv.getContext("2d").drawImage(bmp,0,0);
+    const blob=await new Promise(res=>cv.toBlob(res,"image/webp",0.9));
+    if(bmp.close) bmp.close();
+    return {blob,width:bmp.width,height:bmp.height};
+  }
+  function refreshArt(){
+    const p=document.getElementById("tab-art"); if(!p) return;
+    const body=p.querySelector("#artBody"); if(!body) return;
+    if(artSub==="contact") renderArtContact(body);
+    else if(artSub==="npc") renderArtNpc(body);
+    else if(artSub==="aug") renderArtAug(body);
+    else renderArtGuide(body);
+  }
+  async function doReceive(sub,name,fileOrBlob){
+    try{
+      const {blob,width,height}=await imageToWebp(fileOrBlob);
+      const warn = width<768 ? " ⚠ 宽 "+width+"px 疑似缩略图" : "";
+      const res=await writeImage(sub,name,blob,{width,height});
+      refreshArt(); // 重建以刷新图标「就位」列（bustVer 已自增，缩略图不会吃缓存）
+      const st2=document.querySelector(`[data-savestatus="${cssAttr(name)}"]`);
+      if(res.ok){
+        setStatus(st2, (res.overwritten?"已覆盖 ":"已存 ")+name+" ("+width+"×"+height+", "+fmtSize(blob.size)+")"+warn, sub, name);
+        if(res.overwritten) toast("已覆盖 "+name+"（可点「↩ 撤销覆盖」还原）");
+      }else if(st2){
+        setStatus(st2, "已取消：旧图保留，未写入 "+name, sub, name);
+      }
+    }catch(err){
+      refreshArt();
+      const st2=document.querySelector(`[data-savestatus="${cssAttr(name)}"]`);
+      if(st2) setStatus(st2, "失败: "+err.message, sub, name);
+    }
+  }
+  function openFilePicker(sub,name){
+    const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
+    inp.addEventListener("change",()=>{ if(inp.files&&inp.files[0]) doReceive(sub,name,inp.files[0]); });
+    inp.click();
+  }
+  function openFilePickerNpc(arch, variant, aug, reveal, savekey){
+    const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
+    inp.addEventListener("change",()=>{ if(inp.files&&inp.files[0]) doReceiveNpc(arch, variant, {revealing:reveal, augment:aug||null}, savekey, inp.files[0]); });
+    inp.click();
+  }
+  // NPC 多张变体写入：按「已有+1」自动编号，绝不覆盖；写盘后更新 manifest.json
+  async function doReceiveNpc(archId, variantIdx, opts, savekey, fileOrBlob){
+    const AP = N.Data.AssetPrompts;
+    try{
+      const {blob,width,height}=await imageToWebp(fileOrBlob);
+      const warn = width<768 ? " ⚠ 宽 "+width+"px 疑似缩略图" : "";
+      const {name,draw} = await npcNextDraw(archId, variantIdx, opts);
+      const sub = "npc/"+AP.npcSubDir(archId);
+      const res=await writeImage(sub, name, blob, {width,height}); // 名字唯一（draw 递增），不会触发覆盖对比
+      if(res.ok) await rebuildNpcManifest(true);                   // 写盘后按磁盘实际情况重建清单
+      refreshArt();
+      const st=document.querySelector(`[data-savekey="${cssAttr(savekey)}"]`);
+      if(res.ok){
+        setStatus(st, "已存 "+AP.NPC_OUT_DIR+"/"+sub.replace(/^npc\//,"")+"/"+name+"（第 "+draw+" 张，"+width+"×"+height+"，"+fmtSize(blob.size)+"）"+warn, sub, name);
+        toast("已存第 "+draw+" 张："+AP.npcSubDir(archId)+"/"+name+(draw>1?"（同 combo 已 "+draw+" 张，游戏将随机抽）":""));
+      }else if(st){
+        setStatus(st, "已取消：未写入 "+name, sub, name);
+      }
+    }catch(err){
+      refreshArt();
+      const st=document.querySelector(`[data-savekey="${cssAttr(savekey)}"]`);
+      if(st) setStatus(st, "失败: "+err.message, "npc/"+archId, "npc:"+archId);
+    }
+  }
+  // 全局委托：📋粘贴按钮 → 就绪等待 Ctrl+V；📂文件按钮 → 选文件直写
+  document.addEventListener("click", async (e)=>{
+    const armBtn=e.target.closest("[data-arm]");
+    const fileBtn=e.target.closest("[data-file]");
+    if(armBtn){
+      const sub=armBtn.dataset.sub, name=armBtn.dataset.name;
+      try{ await ensureDir(); }catch(_){ return; }
+      armed={sub,name};
+      const st=document.querySelector(`[data-savestatus="${cssAttr(name)}"]`);
+      if(st) st.textContent="已就绪，按 Ctrl+V 粘贴 Gemini 复制的图";
+      toast("已就绪：去 Gemini 复制图片，回来按 Ctrl+V 粘贴");
+      return;
+    }
+    if(fileBtn){
+      const sub=fileBtn.dataset.sub, name=fileBtn.dataset.name;
+      try{ await ensureDir(); }catch(_){ return; }
+      openFilePicker(sub,name);
+      return;
+    }
+    const armNpc=e.target.closest("[data-arm-npc]");
+    const fileNpc=e.target.closest("[data-file-npc]");
+    if(armNpc){
+      const d=armNpc.dataset;
+      try{ await ensureDir(); }catch(_){ return; }
+      armedNpc={ arch:d.arch, variant:+d.variant, aug:d.aug||"", reveal:d.reveal==="1", savekey:d.savekey };
+      const st=document.querySelector(`[data-savekey="${cssAttr(d.savekey)}"]`);
+      if(st) st.textContent="已就绪，按 Ctrl+V 粘贴 Gemini 复制的图（同 combo 多张，自动编号）";
+      toast("已就绪：去 Gemini 复制图片，回来按 Ctrl+V 粘贴");
+      return;
+    }
+    if(fileNpc){
+      const d=fileNpc.dataset;
+      try{ await ensureDir(); }catch(_){ return; }
+      openFilePickerNpc(d.arch, +d.variant, d.aug||"", d.reveal==="1", d.savekey);
+      return;
+    }
+  });
+  // 全局粘贴：若已就绪，则按当前行真实文件名写盘
+  document.addEventListener("paste", async (e)=>{
+    const cd=e.clipboardData; if(!cd||!cd.items) return;
+    for(const it of cd.items){
+      if(it.kind==="file" && it.type.indexOf("image/")===0){
+        const f=it.getAsFile(); if(!f) continue;
+        e.preventDefault();
+        if(armedNpc){
+          const {arch,variant,aug,reveal,savekey}=armedNpc; armedNpc=null;
+          await doReceiveNpc(arch, variant, {revealing:reveal, augment:aug||null}, savekey, f);
+          break;
+        }
+        if(!armed) return;
+        const sub=armed.sub, name=armed.name; armed=null;
+        await doReceive(sub,name,f);
+        break;
+      }
+    }
+  });
+  // 把后台编辑的 accent 写回 AssetPrompts 构建源，使 buildXxx 反映编辑
+  function syncPromptSource(){
+    const fp=N.Data.AssetPrompts;
+    model.prompts.factionContacts.forEach((f,i)=>{ const t=fp.FACTION_CONTACTS.find(x=>x.factionId===f.factionId); if(t) t.accent=f.accent; });
+    model.prompts.npcArchetypes.forEach((a,i)=>{ const t=fp.NPC_ARCHETYPES.find(x=>x.id===a.id); if(t) t.accent=a.accent; });
+    model.prompts.augments.forEach((a)=>{ const t=fp.AUGMENT_PROMPTS.find(x=>x.id===a.id); if(t) t.accent=a.accent; });
+    (model.prompts.guides||[]).forEach((g)=>{ const t=fp.GUIDE_CHARACTERS.find(x=>x.id===g.id); if(t) t.accent=g.accent; });
+  }
+  function bindPromptBody(body){
+    body.querySelectorAll('textarea[data-kind],input[data-kind]').forEach(el=>{
+      el.addEventListener("input",()=>{
+        const coll=el.dataset.coll, idx=+el.dataset.idx, key=el.dataset.key;
+        let target;
+        if(coll==="prompts.factionContacts") target=model.prompts.factionContacts;
+        else if(coll==="prompts.npcArchetypes") target=model.prompts.npcArchetypes;
+        else if(coll==="prompts.guides") target=model.prompts.guides;
+        else target=model.prompts.augments;
+        target[idx][key]=el.value;
+        syncPromptSource();
+        if(artSub==="contact"){
+          const fid=model.prompts.factionContacts[idx].factionId;
+          const ta=body.querySelector(`textarea[data-prompt="contact"][data-id="${fid}"]`);
+          if(ta) ta.value=N.Data.AssetPrompts.buildContactPrompt(fid);
+        } else if(artSub==="npc"){
+          const aid=model.prompts.npcArchetypes[idx].id;
+          const ta=body.querySelector(`textarea[data-prompt="npc"][data-id="${aid}"]`);
+          const v=+(ta?ta.dataset.variant:0)||0;
+          const aug=npcAugState[idx]||"";
+          if(ta) ta.value=N.Data.AssetPrompts.buildNpcPrompt(aid, v, {revealing:npcRevealState && v===0, augment:aug||null});
+        } else if(artSub==="guide"){
+          const gid=model.prompts.guides[idx].id;
+          const ta=body.querySelector(`textarea[data-guide-prompt="${idx}"]`);
+          if(ta) ta.value=N.Data.AssetPrompts.buildGuidePrompt(gid, +ta.dataset.variant||0);
+        } else {
+          const aid=model.prompts.augments[idx].id;
+          const ta=body.querySelector(`textarea[data-prompt="aug"][data-id="${aid}"]`);
+          if(ta) ta.value=N.Data.AssetPrompts.buildAugmentPrompt(aid, +ta.dataset.variant||0);
+        }
+        persist();
+      });
+    });
+    body.querySelectorAll('[data-copy]').forEach(b=>b.addEventListener("click",()=>{
+      const id=b.dataset.id, type=b.dataset.copy, v=b.dataset.variant?+b.dataset.variant:0;
+      const ta=body.querySelector(`textarea[data-prompt="${type}"][data-id="${id}"]${type==="npc"?`[data-variant="${v}"]`:""}`);
+      if(ta){ navigator.clipboard.writeText(ta.value).then(()=>toast("已复制完整 Prompt")).catch(()=>{ta.select();document.execCommand("copy");toast("已复制");}); }
+    }));
+  }
+
+  // ---------- 计数刷新 ----------
+  function refreshCounts(){
+    if(currentPane==="overview") renderOverview();
+  }
+
+  // ---------- 导出 ----------
+  function jsLiteral(arr){ return "const X = " + JSON.stringify(arr,null,2) + ";"; }
+  function exportPanel(){
+    const tabs=[
+      ["势力 FACTIONS","// 替换 game/js/data/factions.js 中的 const FACTIONS = [...]（保留其下方 TEMPLATES / generateQuest 等函数）\nconst FACTIONS = "+JSON.stringify(model.factions,null,2)+";"],
+      ["出身 BACKSTORY_DEFS","// 替换 game/js/engine/state.js 中的 const BACKSTORY_DEFS = [...]（注意 A_NEUTRAL/A_BONDED 常量仍引用，保持结构）\nconst BACKSTORY_DEFS = "+JSON.stringify(model.backstories,null,2)+";"],
+      ["词条 TRAIT_DEFS","// 替换 game/js/engine/state.js 中的 const TRAIT_DEFS = [...]\nconst TRAIT_DEFS = "+JSON.stringify(model.traits,null,2)+";"],
+      ["性格 PERSONALITIES","// 替换 game/js/data/names.js 中的 const PERSONALITIES = [...]\nconst PERSONALITIES = "+JSON.stringify(model.personalities,null,2)+";"],
+      ["联络人 Prompt","// 替换 game/js/data/asset-prompts.js 中的 const FACTION_CONTACTS = [...]\nconst FACTION_CONTACTS = "+JSON.stringify(model.prompts.factionContacts,null,2)+";"],
+      ["NPC 原型 Prompt","// 替换 game/js/data/asset-prompts.js 中的 const NPC_ARCHETYPES = [...]\nconst NPC_ARCHETYPES = "+JSON.stringify(model.prompts.npcArchetypes,null,2)+";"],
+      ["义体生图 Prompt","// 替换 game/js/data/asset-prompts.js 中的 const AUGMENT_PROMPTS = [...]\nconst AUGMENT_PROMPTS = "+JSON.stringify(model.prompts.augments,null,2)+";"],
+      ["引导角色 Prompt","// 替换 game/js/data/asset-prompts.js 中的 const GUIDE_CHARACTERS = [...]\nconst GUIDE_CHARACTERS = "+JSON.stringify(model.prompts.guides,null,2)+";"],
+      ["生图文档(整合)","// 由 asset-prompts.js 单一真相源生成的整合 Markdown（可直接存为 .md 交给 Gemini 流程）\n// 运行 node game/export-prompts.cjs 也可在仓库根生成同名文件。\n"+N.Data.AssetPrompts.buildPromptDoc()],
+      ["全部 JSON","// 整份草稿（存档/备份用）\n"+JSON.stringify(model,null,2)],
+    ];
+    const expTabs=document.getElementById("expTabs"), expBody=document.getElementById("expBody");
+    expTabs.innerHTML=""; expBody.innerHTML="";
+    tabs.forEach((t,i)=>{
+      const b=document.createElement("button"); b.textContent=t[0]; if(i===0)b.classList.add("active");
+      b.addEventListener("click",()=>{
+        expTabs.querySelectorAll("button").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+        expBody.innerHTML=`<div class="copybox"><textarea readonly>${esc(t[1])}</textarea><button class="btn sm" id="cpNow" style="margin-top:6px">复制</button></div>`;
+        document.getElementById("cpNow").addEventListener("click",()=>{ const ta=expBody.querySelector("textarea"); navigator.clipboard.writeText(ta.value).then(()=>toast("已复制片段")).catch(()=>{ta.select();document.execCommand("copy");toast("已复制");}); });
+      });
+      expTabs.appendChild(b);
+      if(i===0) b.click();
+    });
+    document.getElementById("exportModal").classList.add("show");
+  }
+  document.getElementById("exportModal").addEventListener("click",e=>{ if(e.target.id==="exportModal") e.target.classList.remove("show"); });
+
+  // ---------- 切换 ----------
+  function renderPane(name){
+    currentPane=name;
+    document.querySelectorAll("#tabbar button").forEach(b=>b.classList.toggle("active",b.dataset.tab===name));
+    document.querySelectorAll(".tabpane").forEach(p=>p.style.display="none");
+    document.getElementById("tab-"+name).style.display="block";
+    if(name==="overview") renderOverview();
+    else if(name==="factions") renderFactions();
+    else if(name==="traits") renderTraits();
+    else if(name==="backstory") renderBackstories();
+    else if(name==="personality") renderPersonalities();
+    else if(name==="art") renderArt();
+    paneRenderedOnce[name]=true;
+  }
+  document.querySelectorAll("#tabbar button").forEach(b=>b.addEventListener("click",()=>{
+    renderPane(b.dataset.tab);
+    if(history.replaceState) history.replaceState(null,"","#"+b.dataset.tab);
+  }));
+
+  document.getElementById("btnExport").addEventListener("click",exportPanel);
+  document.getElementById("btnReset").addEventListener("click",async ()=>{
+    const ok=await askDialog({
+      title:"重置草稿？",
+      html:`<div style="font-size:13px">将丢弃当前浏览器里所有未导出的编辑，读回 <span class="mono">asset-prompts.js / state.js / factions.js</span> 的代码原值。</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--danger)">此操作不可撤销（若还没导出过，编辑会丢失）。</div>`,
+      okText:"确认重置", cancelText:"取消", danger:true
+    });
+    if(ok){ model=loadCodeModel(); persist(); renderPane(currentPane); toast("已重置为代码原值"); }
+  });
+
+  const _h=(location.hash||"").replace("#","");
+  let _startPane="overview", _startArt=null;
+  if(_h.indexOf("art:")===0){ _startPane="art"; _startArt=_h.slice(4); }
+  else if(["overview","factions","traits","backstory","personality","art"].includes(_h)) _startPane=_h;
+  if(_startArt && ["contact","npc","aug","guide"].includes(_startArt)) artSub=_startArt;
+
+  // 同步提示条：明确告诉用户「后台条数比代码少」是被自动补回来的
+  if(syncReport.length){
+    const bar=document.createElement("div");
+    bar.className="syncbar";
+    bar.innerHTML='<span class="x" title="关闭">✕</span>代码里有新增项，已自动并入后台草稿：<b>'
+      + syncReport.map(r=>esc(r.label)+' +'+r.n).join(' · ')
+      + '</b>　<span class="gn">（同 id 条目仍以你在后台的编辑为准；想完全回到代码值 → 右上角「重置草稿」）</span>';
+    bar.querySelector(".x").addEventListener("click",()=>bar.remove());
+    const w=document.querySelector(".wrap");
+    w.insertBefore(bar, w.firstChild);
+  }
+
+  renderPane(_startPane);
+})();
+</script>
+</body>
+</html>

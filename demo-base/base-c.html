@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>舰基方案 C · 节点树式</title>
+<style>
+:root{--bg:#0b1020;--panel:#131a30;--panel2:#1a2340;--line:#2a3558;--fg:#dce4f5;--dim:#8b96b8;--good:#5ad1a0;--warn:#e8b45a;--acc:#5a8de8;--bad:#e879a8;--card-a:#16203a;--card-b:#0f1629}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;padding:16px;max-width:780px;margin:0 auto}
+h1{font-size:18px;color:#fff;margin-bottom:2px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+.hud{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.res{background:rgba(90,141,232,.1);border:1px solid var(--line);padding:4px 10px;border-radius:999px;font-size:13px}
+.res b{color:#fff}
+.panel{background:linear-gradient(160deg,#151d35,#101728);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+button{background:var(--acc);color:#fff;border:none;padding:9px 16px;border-radius:8px;cursor:pointer;font-size:14px;min-height:38px}
+button:disabled{background:#3a4468;color:#7c86a8;cursor:not-allowed}
+.tag{display:inline-block;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:4px;padding:1px 7px;font-size:12px}
+.tag.good{color:var(--good)}.tag.warn{color:var(--warn)}
+svg{display:block;width:100%;height:auto;background:radial-gradient(circle at 70% 50%,#16203a,#0b1020);border-radius:12px;border:1px solid var(--line)}
+.hint{font-size:12px;color:var(--warn);margin-top:8px;min-height:18px}
+.stat{font-size:13px;color:var(--acc);margin-top:6px}
+</style>
+</head>
+<body>
+<h1>舰基建设 · 方案 C</h1>
+<div class="sub">节点树式 —— 基地功能做成可点解锁的科技树节点，连线表依赖；高级节点受本体等级门禁</div>
+<div class="hud">
+ <span class="res">⛁ <b id="credits">9000</b></span>
+ <span class="tag" id="bodyLv">本体 Lv.1</span>
+ <button id="upBtn">升级本体</button>
+</div>
+<div class="panel">
+ <svg id="svg" viewBox="0 0 620 450" aria-label="舰基节点树"></svg>
+ <div class="stat" id="stat"></div>
+ <div class="hint" id="hint">点击灰色未解锁节点消耗星币解锁（需上级已解锁）；船坞等高级节点需本体等级达标。</div>
+</div>
+<script>
+let lvl=0;
+const BODY_NAMES=["空间站","星堡","星城","深空要塞"];
+const NODES=[
+ {id:'core',x:540,y:240,ic:'🛰️',nm:'指挥核心',parent:null,need:0,cost:0,root:true},
+ {id:'r',x:380,y:75,ic:'⚗️',nm:'精炼枢纽',parent:'core',need:0,cost:500},
+ {id:'m',x:380,y:205,ic:'🔧',nm:'制造枢纽',parent:'core',need:0,cost:700},
+ {id:'i',x:380,y:310,ic:'💡',nm:'发明枢纽',parent:'core',need:1,cost:1500},
+ {id:'h',x:380,y:400,ic:'🛏️',nm:'居住枢纽',parent:'core',need:0,cost:300},
+ {id:'r1',x:160,y:40,ic:'⚗️',nm:'标准精炼',parent:'r',need:0,cost:300},
+ {id:'r2',x:160,y:110,ic:'⚗️',nm:'高效精炼',parent:'r',need:2,cost:1200},
+ {id:'m1',x:160,y:170,ic:'🔧',nm:'部件厂',parent:'m',need:0,cost:500},
+ {id:'m2',x:160,y:240,ic:'🚀',nm:'船坞',parent:'m',need:2,cost:2000},
+ {id:'i1',x:160,y:310,ic:'💡',nm:'图纸工坊',parent:'i',need:1,cost:800},
+ {id:'h1',x:160,y:400,ic:'🛡️',nm:'兵营',parent:'h',need:0,cost:250},
+];
+const byId={};NODES.forEach(n=>byId[n.id]=n);
+const unlocked=new Set(['core']);
+const svg=document.getElementById('svg');
+function draw(){
+ let s='';
+ for(const n of NODES){if(!n.parent)continue;const p=byId[n.parent];
+  const on=unlocked.has(n.id)&&unlocked.has(n.parent);
+  s+=`<line x1="${p.x}" y1="${p.y}" x2="${n.x}" y2="${n.y}" stroke="${on?'#5ad1a0':'#2a3558'}" stroke-width="${on?2.5:1.5}" opacity="${on?0.85:0.5}"/>`;}
+ for(const n of NODES){const on=unlocked.has(n.id);const need=lvl<n.need;
+  const fill=on?'#16203a':'#0d1329';const stroke=on?(need?'#e8b45a':'#5a8de8'):'#1c2745';
+  const cur=on?'default':'pointer';
+  s+=`<g class="node" data-id="${n.id}" style="cursor:${cur}"><circle cx="${n.x}" cy="${n.y}" r="22" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
+  s+=`<text x="${n.x}" y="${n.y+7}" text-anchor="middle" font-size="20">${n.ic}</text>`;
+  s+=`<text x="${n.x}" y="${n.y+40}" text-anchor="middle" fill="${on?'#dce4f5':'#5b6688'}" font-size="11">${n.nm}</text>`;
+  if(!on&&need)s+=`<text x="${n.x+32}" y="${n.y-12}" text-anchor="start" fill="#e879a8" font-size="10">Lv${n.need+1}🔒</text>`;
+  if(!on&&!need)s+=`<text x="${n.x+32}" y="${n.y-12}" text-anchor="start" fill="#5ad1a0" font-size="10">⛁${n.cost}</text>`;
+  s+=`</g>`;}
+ svg.innerHTML=s;
+ svg.querySelectorAll('.node').forEach(g=>{
+  const id=g.dataset.id;const n=byId[id];if(unlocked.has(id)||n.root)return;
+  g.addEventListener('click',()=>onNode(id));
+ });
+}
+function onNode(id){
+ const n=byId[id];if(n.root||unlocked.has(id))return;
+ if(!unlocked.has(n.parent)){hint('需先解锁上级：'+byId[n.parent].nm);return;}
+ if(lvl<n.need){hint(n.nm+' 需要本体 '+BODY_NAMES[n.need]+'（Lv.'+(n.need+1)+'）');return;}
+ if((+document.getElementById('credits').textContent)<n.cost){hint('星币不足，需 ⛁'+n.cost);return;}
+ document.getElementById('credits').textContent=(+document.getElementById('credits').textContent)-n.cost;
+ unlocked.add(id);draw();updateStat();
+ hint(n.nm+' 已上线。');
+}
+function hint(t){document.getElementById('hint').textContent=t;}
+function updateStat(){
+ document.getElementById('stat').textContent='已解锁模块 '+unlocked.size+' / '+NODES.length;
+}
+function refresh(){
+ document.getElementById('bodyLv').textContent='本体 Lv.'+(lvl+1)+' · '+BODY_NAMES[lvl];
+ const up=document.getElementById('upBtn');
+ if(lvl>=3){up.disabled=true;up.textContent='已达终级';}
+ else{up.disabled=false;up.textContent='升级 → '+BODY_NAMES[lvl+1];}
+ draw();updateStat();
+}
+document.getElementById('upBtn').onclick=()=>{if(lvl<3){lvl++;refresh();}};
+refresh();
+</script>
+</body>
+</html>
