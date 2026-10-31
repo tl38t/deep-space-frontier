@@ -65,6 +65,30 @@
       if (!base.modules.owned.some(m => m && m.id === starter.id)) base.modules.owned.push({ id: starter.id, type: starter.type });
     }
     const hull = Ships.baseHullById(base.hullId);
+    // 舱段布局覆盖（2026-10-29）：玩家拖动交换舱位后的落点，键 = 舱位 id，值 = [x, y]。
+    // 旧档无此字段 → 空对象即「沿用船体蓝图拓扑」，与剧情字段一样靠 ensure 补齐，不升 STATE_VERSION。
+    if (!base.slotPos || typeof base.slotPos !== "object" || Array.isArray(base.slotPos)) base.slotPos = {};
+    const layoutSlots = Ships.baseHullSlots(hull).filter(s => s.type !== "core");
+    const cleanedPos = {};
+    for (const s of layoutSlots) {
+      const p = base.slotPos[s.id];
+      if (!Array.isArray(p) || p.length !== 2) continue;
+      const px = p[0], py = p[1];
+      if (!Number.isInteger(px) || !Number.isInteger(py) || px < 1 || px > 7 || py < 1 || py > 6) continue;
+      if (px === s.x && py === s.y) continue;   // 与默认一致，不必存
+      cleanedPos[s.id] = [px, py];
+    }
+    // 坐标冲突（手改存档 / 跨船体残留）时整套丢弃，回退船体默认布局，避免两张卡叠在同一格。
+    const takenCells = new Set();
+    let layoutConflict = false;
+    for (const s of layoutSlots) {
+      const p = cleanedPos[s.id] || [s.x, s.y];
+      const cell = p[0] + "," + p[1];
+      if (takenCells.has(cell)) { layoutConflict = true; break; }
+      takenCells.add(cell);
+    }
+    base.slotPos = layoutConflict ? {} : cleanedPos;
+
     const validSlots = new Map(Ships.baseHullSlots(hull).filter(s => s.type !== "core").map(s => [s.id, s.type]));
     const owned = new Map(base.modules.owned.filter(m => m && m.id && Ships.baseModuleByType(m.type)).map(m => [m.id, m]));
     const seen = new Set();
@@ -89,12 +113,49 @@
     const module = installation(state, slotId);
     return module ? Ships.baseModuleByType(module.type) : null;
   }
-  function slotById(state, slotId) { return Ships.baseHullSlots(hullOf(state)).find(s => s.id === slotId) || null; }
+  // 生效的舱位拓扑 = 船体蓝图默认 layout + 玩家拖拽覆盖（state.base.slotPos）。
+  // 所有「相邻」判定必须走这里：否则界面显示的邻接关系与耗时/增效计算会分叉。
+  function stateSlots(state) {
+    const slots = Ships.baseHullSlots(hullOf(state));
+    const pos = state && state.base ? state.base.slotPos : null;
+    if (!pos || typeof pos !== "object") return slots;
+    return slots.map(s => {
+      if (s.type === "core") return s;
+      const p = pos[s.id];
+      if (!Array.isArray(p) || p.length !== 2) return s;
+      return { id: s.id, type: s.type, x: p[0], y: p[1], special: s.special };
+    });
+  }
+  function slotById(state, slotId) { return stateSlots(state).find(s => s.id === slotId) || null; }
   function adjacentSlots(state, slotId) {
-    const slot = slotById(state, slotId);
+    const slots = stateSlots(state);
+    const slot = slots.find(s => s.id === slotId);
     if (!slot) return [];
-    return Ships.baseHullSlots(hullOf(state)).filter(other => other.type !== "core" && other.id !== slotId
+    return slots.filter(other => other.type !== "core" && other.id !== slotId
       && Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) === 1);
+  }
+
+  // 拖动换位：交换两个非核心舱位的坐标。唯一核心是舰体中轴锚点，固定不可移动。
+  function swapSlots(state, idA, idB) {
+    if (!idA || !idB || idA === idB) return { ok: false, err: "舱位相同" };
+    const slots = stateSlots(state);
+    const a = slots.find(s => s.id === idA);
+    const b = slots.find(s => s.id === idB);
+    if (!a || !b) return { ok: false, err: "舱位不存在" };
+    if (a.type === "core" || b.type === "core") return { ok: false, err: "唯一核心不可移动" };
+    if (!state.base.slotPos || typeof state.base.slotPos !== "object") state.base.slotPos = {};
+    state.base.slotPos[idA] = [b.x, b.y];
+    state.base.slotPos[idB] = [a.x, a.y];
+    return { ok: true, a: { id: idA, x: b.x, y: b.y }, b: { id: idB, x: a.x, y: a.y } };
+  }
+  function resetSlotPos(state) {
+    if (!state || !state.base) return { ok: false, err: "舰基不存在" };
+    state.base.slotPos = {};
+    return { ok: true };
+  }
+  function hasCustomLayout(state) {
+    const pos = state && state.base ? state.base.slotPos : null;
+    return !!(pos && typeof pos === "object" && Object.keys(pos).length);
   }
   function availableModules(state, slotId) {
     const slot = slotById(state, slotId);
@@ -123,7 +184,9 @@
     if (!state.base.ownedHullBlueprints.includes(hullId)) return { ok: false, err: "尚未取得该母舰蓝图" };
     if (state.base.hullId === hullId) return { ok: false, err: "这就是当前母舰" };
     // 船体离坞时所有已装模块回到玩家库存；核心与工业队列留在唯一舰基状态上。
+    // 舱位布局是船体的物理结构，换船即回落到新船体的默认拓扑。
     state.base.modules.installed = [];
+    state.base.slotPos = {};
     state.base.hullId = hullId;
     return { ok: true, hull: Ships.baseHullById(hullId) };
   }
@@ -224,8 +287,7 @@
   }
 
   function queueDurationMultiplier(state, queueType) {
-    const hull = hullOf(state);
-    const slots = Ships.baseHullSlots(hull).filter(s => s.type !== "core");
+    const slots = stateSlots(state).filter(s => s.type !== "core");
     const installedTypes = new Map(slots.map(s => [s.id, (moduleAt(state, s.id) || {}).type || null]));
     let multiplier = 1;
     for (const slot of slots) {
@@ -258,7 +320,8 @@
   }
 
   return {
-    normalize, hullOf, slotById, adjacentSlots, moduleAt, availableModules,
+    normalize, hullOf, stateSlots, slotById, adjacentSlots, moduleAt, availableModules,
+    swapSlots, resetSlotPos, hasCustomLayout,
     buyBlueprint, switchHull, installModule, uninstallModule, slotEffects,
     queueDurationMultiplier, hullStatus,
     energyBudget, energyUsed, powerReport, powerMult, upgradeCore,

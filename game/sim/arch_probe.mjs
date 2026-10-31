@@ -9,12 +9,12 @@ const files = [
   "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
-  "js/data/resources.js", "js/data/starmap.js", "js/data/ships.js", "js/data/recipes.js",
+  "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
   "js/data/factions.js", "js/data/names.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js",
-  "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js", "js/engine/sites.js", "js/narrative/events.js",
-  "js/engine/settle.js",
+  "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js",   "js/engine/sites.js", "js/narrative/events.js",
+  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
 ];
 
 // 构造最小 window/global 环境（UMD 走 window 分支）
@@ -837,6 +837,272 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     delete sandbox.tap;
     Storage.reset();
   }
+})();
+
+// 26) 舱段布局拖拽换位（2026-10-29）：换的是舱位坐标，必须真实改变相邻增效
+{
+  const sl = Engine.State.defaultState(now, Data);
+  Engine.Base.normalize(sl);
+  const hull = Engine.Base.hullOf(sl);
+  ok("布局:旧档 normalize 补齐 slotPos 空对象", !!sl.base.slotPos && typeof sl.base.slotPos === "object" && Object.keys(sl.base.slotPos).length === 0);
+  const slots0 = Engine.Base.stateSlots(sl);
+  ok("布局:默认拓扑等于船体蓝图 layout",
+    slots0.every(s => s.type === "core" || (s.x === hull.layout[s.type][0] && s.y === hull.layout[s.type][1])),
+    slots0.length + " slots");
+  // 拓荒者级：energy(3,1) 与 manufacture(3,2) 相邻 → 能源直供 0.94
+  const multBefore = Engine.Base.queueDurationMultiplier(sl, "manufacture");
+  ok("布局:初始制造倍率含能源直供", Math.abs(multBefore - 0.94) < 1e-9, "mult=" + multBefore);
+  ok("布局:初始相邻增效含「相邻能源舱」", Engine.Base.slotEffects(sl, "manufacture").some(x => x.text.indexOf("相邻能源舱") >= 0));
+  const sw = Engine.Base.swapSlots(sl, "energy", "dock");
+  const movedE = Engine.Base.stateSlots(sl).find(s => s.id === "energy");
+  const movedD = Engine.Base.stateSlots(sl).find(s => s.id === "dock");
+  ok("布局:交换 energy↔dock 成功且坐标互换", sw.ok && movedE.x === 2 && movedE.y === 3 && movedD.x === 3 && movedD.y === 1,
+    JSON.stringify({ e: [movedE.x, movedE.y], d: [movedD.x, movedD.y] }));
+  const multAfter = Engine.Base.queueDurationMultiplier(sl, "manufacture");
+  ok("布局:换位后能源不再邻接总装 → 制造倍率回到 1", Math.abs(multAfter - 1) < 1e-9, "mult=" + multAfter);
+  ok("布局:相邻增效文本随换位消失", !Engine.Base.slotEffects(sl, "manufacture").some(x => x.text.indexOf("相邻能源舱") >= 0));
+  ok("布局:核心不可交换", Engine.Base.swapSlots(sl, "core", "cargo").ok === false);
+  ok("布局:同舱位交换被拒", Engine.Base.swapSlots(sl, "cargo", "cargo").ok === false);
+  ok("布局:未知舱位被拒", Engine.Base.swapSlots(sl, "cargo", "nope").ok === false);
+  ok("布局:hasCustomLayout 换位后为真", Engine.Base.hasCustomLayout(sl) === true);
+  ok("布局:恢复默认清空覆盖", Engine.Base.resetSlotPos(sl).ok && Engine.Base.hasCustomLayout(sl) === false);
+  ok("布局:恢复默认后坐标回到蓝图", Engine.Base.stateSlots(sl).every(s => s.type === "core" || (s.x === hull.layout[s.type][0] && s.y === hull.layout[s.type][1])));
+  // 手改存档：越界坐标 + 与默认位重叠 → normalize 整套丢弃，避免两张卡叠在同一格
+  const dirty = Engine.State.defaultState(now, Data);
+  dirty.base.slotPos = { cargo: [9, 9], smelt: [3, 1], energy: [3, 1] };
+  Engine.Base.normalize(dirty);
+  ok("布局:越界/重叠坐标被 normalize 清洗", Object.keys(dirty.base.slotPos).length === 0, JSON.stringify(dirty.base.slotPos));
+  // 换船体：舱位布局属于船体物理结构，换船回落新船体默认拓扑
+  const sw2 = Engine.State.defaultState(now, Data);
+  if (!sw2.base.ownedHullBlueprints.includes("hull_angel_raider")) sw2.base.ownedHullBlueprints.push("hull_angel_raider");
+  Engine.Base.normalize(sw2);
+  Engine.Base.swapSlots(sw2, "energy", "dock");
+  const swapped2 = Engine.Base.hasCustomLayout(sw2);
+  Engine.Base.switchHull(sw2, "hull_angel_raider");
+  ok("布局:切换船体清空舱位覆盖", swapped2 === true && Engine.Base.hasCustomLayout(sw2) === false && sw2.base.hullId === "hull_angel_raider");
+}
+
+// 22) 残骸场考古（§13 扩展）：每节点恰 1 残骸场 + band + 风味名；成功率随考古等级单调；
+//     掉落/反噬正确；派遣 focus 写入；结算周期产出（星币/bp/rep）与确定性 RNG。
+(function probeArchaeology() {
+  const sb = Engine.State.defaultState(now, Data);
+  const map = sb.starMap;
+  // 22a) 每节点恰好 1 个残骸场，带 band(1–5) 与中文风味名，无重复 id
+  let drCount = 0, badBand = 0, noName = 0, dupIds = new Set(), idDup = 0;
+  for (const n of map.nodes) {
+    const drs = n.bodies.filter(b => b.kind === "derelict");
+    if (drs.length !== 1) { badBand++; continue; }
+    drCount += drs.length;
+    const d = drs[0];
+    if (!(d.band >= 1 && d.band <= 5)) badBand++;
+    if (!d.name || /残骸场$/.test(d.name)) noName++; // 风味名应非默认「XX 残骸场」
+    if (dupIds.has(d.id)) idDup++; else dupIds.add(d.id);
+  }
+  ok("考古:每节点恰1残骸场", drCount === map.nodes.length && badBand === 0, "drs=" + drCount + "/" + map.nodes.length + " bad=" + badBand);
+  ok("考古:残骸场band∈1..5且无重复id", badBand === 0 && idDup === 0, "idDup=" + idDup);
+  ok("考古:残骸场使用风味名(非默认'XX 残骸场')", noName === 0, "noName=" + noName);
+
+  // 22b) 扫描强度模型：成功率随考古等级 + 装配 + 强化单调提升；焦点难度修正生效
+  const A = Engine.Archaeology;
+  const D = Data.Archaeology;
+  function mkMember(archLvl, opts) {
+    const xp = 1000 * (Math.pow(1.1, archLvl - 1) - 1);
+    const m = { name: "T" + archLvl, skills: { archaeology: xp }, passion: {}, shipId: "destroyer", enhancementLevel: 0, fitted: { high: [], mid: [], low: [], rig: [] } };
+    if (opts) Object.assign(m, opts);
+    const max = Data.Ships.maxHp(m.shipId);
+    m.hp = { shield: max.shield, armor: max.armor, structure: max.structure };
+    return m;
+  }
+  const dr = sb.starMap.nodes[0].bodies.find(b => b.kind === "derelict"); // band 取决于节点
+  const band = dr.band;
+  // 同焦点(cache)：成功率随考古等级单调不减
+  let mono = true, prev = -1;
+  for (let lv = 1; lv <= 20; lv++) {
+    const r = A.successChance(mkMember(lv), dr, "cache");
+    if (r < prev - 1e-9) mono = false;
+    prev = r;
+  }
+  ok("考古:成功率随等级单调不减(cache)", mono);
+  ok("考古:安全打捞成功率高于危险秘藏(Lv1)", A.successChance(mkMember(1), dr, "salvage") > A.successChance(mkMember(1), dr, "cache"));
+  ok("考古:安全打捞Lv1可肝(salvage>=0.3)", A.successChance(mkMember(1), dr, "salvage") >= 0.3);
+  ok("考古:危险秘藏Lv1处于地板(>=0.05,极难但非不可能)", A.successChance(mkMember(1), dr, "cache") >= 0.05);
+  ok("考古:高等级封顶0.95", A.successChance(mkMember(80), dr, "cache") <= 0.9501);
+
+  // 22c) 装配 analyzer 提升扫描强度 → 成功率提升
+  const base = mkMember(10);
+  const withAna = mkMember(10, { fitted: { high: ["analyzer_t3"], mid: [], low: [], rig: [] } });
+  ok("考古:装配扫描仪提升扫描强度", A.scanStrength(withAna) > A.scanStrength(base), "base=" + A.scanStrength(base).toFixed(2) + " +ana=" + A.scanStrength(withAna).toFixed(2));
+  ok("考古:装配扫描仪提升成功率", A.successChance(withAna, dr, "cache") > A.successChance(base, dr, "cache"));
+
+  // 22d) 舰船强化提升扫描强度（archaeologyScanMultiplier 作用于舰船基础扫描）
+  const noEnh = mkMember(10, { shipId: "destroyer" });
+  const enh = mkMember(10, { shipId: "destroyer", enhancementLevel: 20 });
+  ok("考古:舰船强化(20级)提升扫描强度", A.scanStrength(enh) > A.scanStrength(noEnh), "noEnh=" + A.scanStrength(noEnh).toFixed(2) + " enh=" + A.scanStrength(enh).toFixed(2));
+
+  // 22e) 派遣 focus 写入 assignment
+  const sb2 = Engine.State.defaultState(now, Data);
+  const node2 = sb2.starMap.nodes[0];
+  const dr2 = node2.bodies.find(b => b.kind === "derelict");
+  const r2 = Engine.Dispatch.assign(sb2, sb2.members[0].id, "explore", { nodeId: node2.id, bodyId: dr2.id, focus: "cache" });
+  ok("考古:派遣focus写入assignment", r2.ok && sb2.members[0].assignment.focus === "cache", JSON.stringify(sb2.members[0].assignment.focus));
+
+  // 22f) 结算周期：残骸场走考古 cycle，确定性强者必产出
+  const sb3 = Engine.State.defaultState(now, Data);
+  const node3 = sb3.starMap.nodes[0];
+  const dr3 = node3.bodies.find(b => b.kind === "derelict");
+  sb3.members[0].skills.archaeology = 1000 * (Math.pow(1.1, 40) - 1); // ~Lv40，确保 salvage 必成功
+  sb3.members[0].shipId = "destroyer";
+  Engine.Dispatch.assign(sb3, sb3.members[0].id, "explore", { nodeId: node3.id, bodyId: dr3.id, focus: "salvage" });
+  const credBefore = sb3.res.credits;
+  const archBefore = sb3.members[0].skills.archaeology;
+  const counterBefore = sb3.archCounter || 0;
+  Engine.Settle.settle(sb3, now + 1500 * 1000); // 1500s ≈ 12 周期
+  ok("考古:成员考古经验增长", sb3.members[0].skills.archaeology > archBefore);
+  ok("考古:安全打捞结算产出星币", sb3.res.credits > credBefore, "credits " + credBefore.toFixed(0) + " -> " + sb3.res.credits.toFixed(0));
+  ok("考古:archCounter 递增(确定性)", (sb3.archCounter || 0) > counterBefore);
+
+  // 22g) 焦点掉落倾向：research 有 bp 倾向，cache 有 rep 倾向；经验成功率≈理论值
+  const sb4 = Engine.State.defaultState(now, Data);
+  const node4 = sb4.starMap.nodes[0];
+  const dr4 = node4.bodies.find(b => b.kind === "derelict");
+  const archMember = mkMember(20);
+  const maxHp4 = Data.Ships.maxHp(archMember.shipId);
+  let bpHits = 0, repHits = 0, successN = 0;
+  for (let i = 0; i < 400; i++) {
+    sb4.archCounter = i;
+    archMember.hp = { shield: maxHp4.shield, armor: maxHp4.armor, structure: maxHp4.structure };
+    archMember.destroyed = false; // 真实游戏成员周期间回舰基修复，此处隔离反噬累积以独立测 RNG
+    const r = A.cycle(sb4, archMember, dr4, "research");
+    if (r.success) { successN++; if (r.drops.bp > 0) bpHits++; if (r.drops.rep > 0) repHits++; }
+  }
+  const researchRate = A.successChance(archMember, dr4, "research");
+  ok("考古:research经验成功率≈理论值(容差0.08)", Math.abs(successN / 400 - researchRate) < 0.08, "emp=" + (successN / 400).toFixed(3) + " theory=" + researchRate.toFixed(3));
+  ok("考古:research掉落含bp(50%倾向)", bpHits > 0 && bpHits <= 400);
+  let cacheRep = 0, cacheSucc = 0;
+  for (let i = 0; i < 400; i++) {
+    sb4.archCounter = 1000 + i;
+    archMember.hp = { shield: maxHp4.shield, armor: maxHp4.armor, structure: maxHp4.structure };
+    archMember.destroyed = false;
+    const r = A.cycle(sb4, archMember, dr4, "cache");
+    if (r.success) { cacheSucc++; if (r.drops.rep > 0) cacheRep++; }
+  }
+  const cacheRate = A.successChance(archMember, dr4, "cache");
+  ok("考古:cache经验成功率≈理论值(容差0.08)", Math.abs(cacheSucc / 400 - cacheRate) < 0.08);
+  ok("考古:cache掉落含rep(40%倾向)", cacheRep > 0 && cacheRep <= 400);
+
+  // 22h) 反噬扣船体：低技能 cache 失败 → hp 下降；稳定器减免；非致命免伤可规避
+  const sbH = Engine.State.defaultState(now, Data);
+  const drH = sbH.starMap.nodes[0].bodies.find(b => b.kind === "derelict");
+  const hm = sbH.members[0]; hm.skills.archaeology = 1000 * (Math.pow(1.1, 1) - 1); hm.shipId = "destroyer";
+  const hpBefore = hm.hp.shield + hm.hp.armor + hm.hp.structure;
+  let damaged = false, destroyed = false;
+  for (let i = 0; i < 60; i++) { sbH.archCounter = i; const r = A.cycle(sbH, hm, drH, "cache"); if (r.hullDamage.frac > 0) damaged = true; if (r.destroyed) destroyed = true; }
+  const hpAfter = hm.hp.shield + hm.hp.armor + hm.hp.structure;
+  ok("考古:反噬扣船体(hp下降)", damaged && hpAfter < hpBefore, "hp " + hpBefore + " -> " + hpAfter);
+
+  // 22i) 修复回路：受损成员回归 idle 后，Repair.tick 回满三防
+  const sbR = Engine.State.defaultState(now, Data);
+  const rm = sbR.members[0]; rm.shipId = "destroyer";
+  rm.hp.shield = 0; rm.hp.armor = 0; rm.hp.structure = 0; rm.status = "idle"; // 模拟全损（未阵亡）
+  const Repair = Engine.Repair;
+  ok("考古:全损成员需修复", Repair.needsRepair(rm));
+  for (let t = 0; t < 2000; t += 5) Repair.tick(sbR, 5); // 推进足够时间
+  const maxHp = Data.Ships.maxHp("destroyer");
+  const full = rm.hp.shield >= maxHp.shield - 1e-6 && rm.hp.armor >= maxHp.armor - 1e-6 && rm.hp.structure >= maxHp.structure - 1e-6;
+  ok("考古:修复回路回满三防", full, JSON.stringify(rm.hp));
+
+  // 22j) 确定性：同种子两次 cycle 序列一致
+  const sb5 = Engine.State.defaultState(now, Data);
+  const dr5 = sb5.starMap.nodes[0].bodies.find(b => b.kind === "derelict");
+  sb5.members[0].skills.archaeology = 1000 * (Math.pow(1.1, 5) - 1); sb5.members[0].shipId = "destroyer";
+  const seq1 = [], seq2 = [];
+  const maxHp5 = Data.Ships.maxHp("destroyer");
+  for (let i = 0; i < 30; i++) {
+    sb5.archCounter = i;
+    const m5 = sb5.members[0];
+    m5.hp = { shield: maxHp5.shield, armor: maxHp5.armor, structure: maxHp5.structure };
+    m5.destroyed = false;
+    const r = A.cycle(sb5, m5, dr5, "cache"); seq1.push(r.success ? 1 : 0);
+  }
+  const sb6 = JSON.parse(JSON.stringify(sb5)); sb6.archCounter = 0;
+  const maxHp6 = Data.Ships.maxHp("destroyer");
+  for (let i = 0; i < 30; i++) {
+    sb6.archCounter = i;
+    const m6 = sb6.members[0];
+    m6.hp = { shield: maxHp6.shield, armor: maxHp6.armor, structure: maxHp6.structure };
+    m6.destroyed = false;
+    const r = A.cycle(sb6, m6, dr5, "cache"); seq2.push(r.success ? 1 : 0);
+  }
+  ok("考古:同种子周期序列可复现", JSON.stringify(seq1) === JSON.stringify(seq2), JSON.stringify(seq1.slice(0, 8)));
+})();
+
+// 27) 装备制造闭环（总装船坞）：buildEquipment 入 manufacture 队列 → 结算入库 state.equipment
+(function probeEquipment() {
+  const P = Engine.Production;
+  // 27a) T1 装备（analyzer_t1, level1→gate0）在起始档可造：扣原料 + 入队 + 结算入库
+  const sb = Engine.State.defaultState(now, Data);
+  const eq = Data.Equipment.byId("analyzer_t1");
+  for (const k in eq.cost) sb.res[k] = (sb.res[k] || 0) + eq.cost[k] + 100; // 备足原料
+  const before = sb.equipment["analyzer_t1"] || 0;
+  const r = P.buildEquipment(sb, "analyzer_t1");
+  ok("装备:起始档T1可造且入队", r.ok && (sb.base.industry.manufactureQueue || []).length === 1, JSON.stringify(r));
+  Engine.Settle.settle(sb, now + 60 * 1000); // time 20s × durationMult，结算完成
+  ok("装备:结算后入库 state.equipment", (sb.equipment["analyzer_t1"] || 0) === before + 1, "equip=" + (sb.equipment["analyzer_t1"] || 0));
+  ok("装备:总装槽位已释放", P.manufactureUsed(sb) === 0, "used=" + P.manufactureUsed(sb));
+
+  // 27b) 等级门禁：T5（level80→gate3）在起始档被拒
+  const sb2 = Engine.State.defaultState(now, Data);
+  const r5 = P.buildEquipment(sb2, "analyzer_t5");
+  ok("装备:T5需核心Lv4被拒(gate)", r5.ok === false && r5.err.indexOf("核心等级不足") === 0, JSON.stringify(r5));
+
+  // 27c) 原料不足被拒（先清空 T1 所需原料：fe_alloy 40 / ni_alloy 15）
+  const sb3 = Engine.State.defaultState(now, Data);
+  sb3.res.fe_alloy = 0; sb3.res.ni_alloy = 0;
+  const r3 = P.buildEquipment(sb3, "analyzer_t1");
+  ok("装备:原料不足被拒", r3.ok === false && r3.err.indexOf("原料不足") === 0, JSON.stringify(r3));
+
+  // 27d) 与造船共享总装槽位：造船占满后装备入队被拒
+  const sb4 = Engine.State.defaultState(now, Data);
+  for (const k in eq.cost) sb4.res[k] = (sb4.res[k] || 0) + eq.cost[k] + 100;
+  const bs = P.buildShip(sb4, "frigate"); // 占 1 个总装槽（起始档 manufacture=1）
+  ok("装备:先造舰占满总装槽", bs.ok && P.manufactureUsed(sb4) === 1, "used=" + P.manufactureUsed(sb4));
+  const rEq = P.buildEquipment(sb4, "analyzer_t1");
+  ok("装备:总装槽满后装备入队被拒", rEq.ok === false && rEq.err.indexOf("槽位已满") > -1, JSON.stringify(rEq));
+})();
+
+(function probeFitRepair() {
+  const P = Engine.Production;
+  const Repair = Engine.Repair;
+  // 28a) 装配：destroyer 成员（高/中/低槽各 1），仓库有 analyzer_t1(high) ×2 + stabilizer_t1(mid)
+  const sb = Engine.State.defaultState(now, Data);
+  const m = sb.members[0]; m.shipId = "destroyer"; // 强制有高/中/低槽
+  sb.equipment["analyzer_t1"] = 2;
+  sb.equipment["stabilizer_t1"] = 1;
+  const rFit = P.fitEquipment(sb, m.id, "high", "analyzer_t1");
+  ok("装配:high 槽装配成功", rFit.ok && m.fitted.high.indexOf("analyzer_t1") >= 0, JSON.stringify(rFit));
+  ok("装配:库存扣减", (sb.equipment["analyzer_t1"] || 0) === 1, "inv=" + (sb.equipment["analyzer_t1"] || 0));
+  // 28b) 卸下反向归还库存
+  const rUn = P.unfitEquipment(sb, m.id, "high", "analyzer_t1");
+  ok("卸下:成功且库存归还", rUn.ok && (sb.equipment["analyzer_t1"] || 0) === 2 && m.fitted.high.length === 0, JSON.stringify(rUn));
+  // 28c) 槽类型不匹配：把 mid 装备装入 high 槽
+  const rMis = P.fitEquipment(sb, m.id, "high", "stabilizer_t1");
+  ok("装配:槽类型不匹配被拒", rMis.ok === false && rMis.err.indexOf("不匹配") > -1, JSON.stringify(rMis));
+  // 28d) 槽位容量超限：frigate 高槽=1，装两件 analyzer 被拒
+  const sb2 = Engine.State.defaultState(now, Data);
+  const m2 = sb2.members[0]; m2.shipId = "frigate";
+  sb2.equipment["analyzer_t1"] = 3; sb2.equipment["analyzer_t2"] = 1;
+  const f1 = P.fitEquipment(sb2, m2.id, "high", "analyzer_t1");
+  const f2 = P.fitEquipment(sb2, m2.id, "high", "analyzer_t2");
+  ok("装配:高槽满(1)后再装被拒", f1.ok && f2.ok === false && f2.err.indexOf("已满") > -1, JSON.stringify({ f1, f2 }));
+  // 28e) 修复信息：制造一名重创 idle 成员，settle 后应进入修复队列（模型 C）
+  const sb3 = Engine.State.defaultState(now, Data);
+  const m3 = sb3.members[0]; m3.shipId = "destroyer";
+  m3.hp = { shield: 0, armor: 0, structure: 10 };
+  Engine.Settle.settle(sb3, now + 1000); // 触发 Repair.tick
+  const info = Repair.repairInfo(sb3);
+  const inRep = info.repairing.concat(info.waiting).some(e => e.id === m3.id);
+  ok("修复:受损成员进入修复队列", inRep, "used=" + info.used + "/" + info.bays);
+  ok("修复:泊位数量=max(2,bodyLevel+2)", info.bays === Math.max(2, sb3.base.bodyLevel + 2), "bays=" + info.bays);
 })();
 
 console.log("\n== 架构探针结果: " + pass + " PASS / " + fail + " FAIL ==");

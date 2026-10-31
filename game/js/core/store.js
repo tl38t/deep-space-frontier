@@ -60,6 +60,8 @@
     if (!Array.isArray(s.pendingEvents)) s.pendingEvents = [];
     // 行星采集设施（EVE 式收菜，2026-10-27 方案 B）字段兜底
     if (!s.sites || typeof s.sites !== "object") s.sites = {};
+    // 舰船装备库存（2026-10-31 总装船坞制造）：旧档补 equipment
+    if (!s.equipment || typeof s.equipment !== "object") s.equipment = {};
     const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Ships : null;
     for (const m of s.members) {
       // develop 岗已退役（行星产出走 Engine.Sites 设施）：旧档驻留行星的成员召回待命
@@ -76,6 +78,21 @@
       if (!m.hp) {
         const hp = Ships ? Ships.maxHp(m.shipId) : { shield: 100, armor: 100, structure: 100 };
         m.hp = { shield: hp.shield, armor: hp.armor, structure: hp.structure };
+      }
+      // 舰船装配（2026-10-31）：旧档成员补 fitted/enhancementLevel，避免 UI 读 undefined
+      if (!m.fitted || typeof m.fitted !== "object") m.fitted = { high: [], mid: [], low: [], rig: [] };
+      for (const slot of ["high", "mid", "low", "rig"]) if (!Array.isArray(m.fitted[slot])) m.fitted[slot] = [];
+      if (typeof m.enhancementLevel !== "number") m.enhancementLevel = 0;
+      // 装配槽数不得超过该舰槽位布局（防御手改/旧档越界）；溢出按 1 代「越界回收」退回库存
+      if (Ships && Ships.slotLayout) {
+        const layout = Ships.slotLayout(m.shipId);
+        for (const slot of ["high", "mid", "low", "rig"]) {
+          const cap = layout[slot] || 0;
+          if (m.fitted[slot].length > cap) {
+            const overflow = m.fitted[slot].splice(cap);
+            for (const id of overflow) s.equipment[id] = (s.equipment[id] || 0) + 1;
+          }
+        }
       }
       if (!m.backstory) m.backstory = null;
       if (!m.trait) m.trait = null;

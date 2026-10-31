@@ -34,6 +34,7 @@
         type: type,
         nodeId: nodeId,
         bodyId: opts.bodyId || null,   // 星系内天体（belt/planet/derelict）：采矿/勘探/考古精确落点
+        focus: opts.focus || null,     // 考古焦点（残骸场自选：salvage/research/cache）；非残骸场为 null
         oreId: opts.oreId || null,     // 采矿目标矿（null=自动选最丰富）；belt 含全矿种，可指定稀缺矿
         startedAt: Date.now(),
         trainSkill: opts.trainSkill || "combatLaser",

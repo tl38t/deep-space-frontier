@@ -33,6 +33,10 @@
   let tab = "starmap";
   let curSystem = null;      // 星系视图当前选中系统（独立 Tab）
   let baseFocus = "core";   // 舰基可视化当前选中的舱段
+  // 舱段拖拽换位（2026-10-29）：active=true 期间 renderView 必须跳过重绘，
+  // 否则 1Hz 定时器会把正在跟随手指的卡片连同 innerHTML 一起销毁。
+  let baseDragState = null;
+  let baseDragEndedAt = 0;
   let warehouseFilter = "all"; // 仓库页类别筛选（all/ore/gas/mineral/component/blueprint）
   let whShowEmpty = false;     // 仓库页是否显示空仓条目（默认只看有货的）
   // 星图平移/缩放状态（跨 1Hz 重渲染保持，避免每次重建丢视角）
@@ -300,9 +304,11 @@
   function planetProductName(t) { const m = (t && Data.Resources) ? Data.Resources.meta("planet_" + t) : null; return m ? m.name : null; }
   function topSkill(m) { let best = SKILL_KEYS[0]; for (const k of SKILL_KEYS) if (Engine.Settle.levelOf(m.skills[k]) > Engine.Settle.levelOf(m.skills[best])) best = k; return best; }
   function bodyActs(k) {
+    // 行星「勘探」暂未开放（2026-10-31）：产出走采集装置（Engine.Sites），成员不再驻留；
+    // 扫图发现节点的玩法暂定为不好玩，先下线。残骸场「考古」保留。
     return k === "belt" ? [{ type: "mine", label: "采矿" }]
       : k === "gas" ? [{ type: "mine", label: "采集气云" }]
-      : k === "planet" ? [{ type: "explore", label: "勘探" }]   // 行星产出走「采集装置」（Engine.Sites），成员不再驻留
+      : k === "planet" ? []
       : k === "derelict" ? [{ type: "explore", label: "考古" }]
       : [];   // station 为工业/势力锚点，后续接入冶炼制造
   }
@@ -460,7 +466,7 @@
       if (b.kind === "belt" || b.kind === "gas") sub = Object.entries(b.abundance || {}).map(([o, v]) =>
         '<span class="tag ' + (v > 1 ? "good" : "") + '">' + resIcon(o) + resName(o) + " ×" + v.toFixed(1) + "</span>").join("");
       else if (b.kind === "station") sub = "冶炼 / 制造锚点";
-      else if (b.kind === "derelict") sub = "考古目标";
+      else if (b.kind === "derelict") sub = '<span class="tag">' + ((Data.Archaeology && Data.Archaeology.tierLabel(b.band)) || "遗址") + '</span> ' + esc(b.name) + " · 自选考古焦点";
       else if (b.kind === "planet") sub = "行星 · " + planetTypeName(b.planetType) + "型" + (planetProductName(b.planetType) ? " → " + planetProductName(b.planetType) : "");
       html += '<div class="node-card click" data-act="body:' + node.id + ":" + b.id + '"><div class="row"><b>' + esc(b.name) + '</b><span class="tag" style="color:' + colOf2(b.kind) + '">' + kindCN(b.kind) + "</span></div>" +
         '<div class="dim">' + sub + "</div>" +
@@ -553,7 +559,11 @@
     if (body.kind === "belt") html += '<div>可采矿种：' + Object.entries(body.abundance || {}).map(([o, v]) =>
       '<span class="tag ' + (v > 1 ? "good" : "") + '">' + resIcon(o) + resName(o) + " ×" + v.toFixed(1) + "</span>").join("") + "</div>";
     else if (body.kind === "station") html += '<div class="dim">势力 / 工业锚点：冶炼、制造将在此接入。</div>';
-    else if (body.kind === "derelict") html += '<div class="dim">考古目标：派遣「考古」稳定涨 archaeology 经验。</div>';
+    else if (body.kind === "derelict") {
+      const tl = (Data.Archaeology && Data.Archaeology.tierLabel(body.band)) || "遗址";
+      html += '<div><b>' + tl + "</b> · " + esc(body.name) + "</div>";
+      html += '<div class="dim">残骸场考古：自选焦点决定收益与风险，成员考古等级越高成功率越高。</div>';
+    }
     else if (body.kind === "planet") {
       const pt = body.planetType;
       const prod = planetProductName(pt);
@@ -602,8 +612,25 @@
         html += '<div class="row"><select id="body-mem" class="mbr-sel">' + idle.map(m =>
           '<option value="' + m.id + '">' + esc(m.name) + " · " + SKILL_CN[topSkill(m)] + " L" + Engine.Settle.levelOf(m.skills[topSkill(m)]) + "</option>").join("") + "</select></div>";
         html += oreSel;
-        html += '<div class="row">' + acts.map(a =>
-          '<button class="sm" data-act="assignBody:' + nodeId + ":" + bodyId + ":" + a.type + '">' + a.label + "</button>").join(" ") + "</div>";
+        if (body.kind === "derelict") {
+          // 残骸场：玩家自选考古焦点（3 类），按钮上显示所选成员的成功率预览
+          const firstM = idle[0];
+          const Arch = (Engine && Engine.Archaeology) ? Engine.Archaeology : null;
+          const order = (Data.Archaeology && Data.Archaeology.PROFILE_ORDER) || ["salvage"];
+          html += '<div class="dim">选择考古焦点（收益 / 风险各异）：</div>';
+          html += '<div class="row" style="flex-wrap:wrap;gap:4px">';
+          for (const pid of order) {
+            const pf = Data.Archaeology.profileById(pid);
+            const rate = (Arch && firstM) ? Math.round(100 * Arch.successRate(pf, firstM)) : 0;
+            const riskTag = pf.risk === 1 ? "低风险" : pf.risk === 2 ? "中风险" : "高风险";
+            html += '<button class="sm focus-btn" data-act="assignBody:' + nodeId + ":" + bodyId + ':explore" data-focus="' + pid + '" title="' + esc(pf.desc) + '">' + pf.name + (firstM ? " · " + rate + "%" : "") + ' <span class="risk ' + (pf.risk === 3 ? "bad" : pf.risk === 2 ? "warn" : "good") + '">' + riskTag + "</span></button>";
+          }
+          html += "</div>";
+          if (firstM) html += '<div class="dim">成功率按「' + esc(firstM.name) + '」（下拉首位）考古等级估算；换成员结果不同。</div>';
+        } else {
+          html += '<div class="row">' + acts.map(a =>
+            '<button class="sm" data-act="assignBody:' + nodeId + ":" + bodyId + ":" + a.type + '">' + a.label + "</button>").join(" ") + "</div>";
+        }
       }
     }
     // 在岗成员（采矿/开发/勘探都算）——直接可召回
@@ -658,8 +685,8 @@
     return html + '</div></section>';
   }
 
-  function baseConnectionsSvg(hull) {
-    const slots = Data.Ships.baseHullSlots(hull);
+  function baseConnectionsSvg() {
+    const slots = Engine.Base.stateSlots(state);
     const lines = [];
     for (let i = 0; i < slots.length; i++) for (let j = i + 1; j < slots.length; j++) {
       const a = slots[i], b = slots[j];
@@ -672,6 +699,17 @@
       lines.push('<line class="' + (active ? "active" : "") + '" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>');
     }
     return '<svg class="base-connections" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">' + lines.join("") + '</svg>';
+  }
+
+  // 舱段布局编辑提示条（2026-10-29 拖动换位）
+  // 换位改的是舱位坐标，直接改变「相邻增效」与特化舱位生效位置 → 提供一键回退默认拓扑。
+  function baseDragHint() {
+    const custom = Engine.Base.hasCustomLayout(state);
+    return '<div class="base-drag-hint">'
+      + '<span class="bdh-grip" aria-hidden="true">⠿</span><b>拖动舱段可交换位置</b>'
+      + '<span class="dim">相邻增效（能源直供 / 短链物流）随布局实时重算；唯一核心为舰体中轴，固定不可移动。</span>'
+      + (custom ? '<button class="sm ghost" data-act="baseSlotReset">恢复默认布局</button>' : '')
+      + '</div>';
   }
 
   function baseModule(slot, plan) {
@@ -751,14 +789,14 @@
       const can = Engine.Production.canAfford(state.res, up);
       html += '<button class="sm base-upgrade" data-act="upgrade"' + (can ? "" : " disabled") + '">升级本体 · ' + costStr + '</button>';
     } else html += '<span class="tag good">已达终级</span>';
-    html += '</div>' + baseHullSelector() + baseInventoryStrip();
+    html += '</div>' + baseDragHint() + baseHullSelector() + baseInventoryStrip();
 
-    const slots = Data.Ships.baseHullSlots(hull);
+    const slots = Engine.Base.stateSlots(state);
     const coreSlot = slots.find(s => s.type === "core");
     const smeltMult = Engine.Base.queueDurationMultiplier(state, "smelt");
     const manufactureMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const inventMult = Engine.Base.queueDurationMultiplier(state, "invent");
-    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + '" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg(hull);
+    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + '" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg();
     html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
     for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
     const installedCount = state.base.modules.installed.length;
@@ -772,6 +810,8 @@
     if (plan.invent > 0) html += queueBlock("invent", "发明（→改装图纸）", Data.Recipes.INVENT, plan.invent, "out");
     else html += '<div class="panel dim">发明需舰基升至星堡（Lv.2）解锁。</div>';
     html += shipyardBlock();
+    html += equipCraftBlock();
+    html += repairDockBlock();
     // 小队协议升级（容量 1→2→3，复用 EVE-IDLE 研究门禁思路）
     const tier = state.base.squadTier || 0;
     if (tier < 2) {
@@ -903,6 +943,43 @@
     return html;
   }
 
+  // 装备制造面板（总装船坞，共享 manufacture 槽位；完成入 state.equipment 库存）
+  function equipCraftBlock() {
+    const Eq = Data.Equipment;
+    if (!Eq) return "";
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    const used = Engine.Production.manufactureUsed(state);
+    const durMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
+    const slotMeta = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
+    let html = '<div class="panel"><h3>装备制造 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3>';
+    html += '<div class="dim">装备与造船、部件制造共享总装船坞槽位；制造完成入「已存装备」库存，再到成员页装配。</div>';
+    const slots = ["high", "mid", "low", "rig"];
+    for (const sl of slots) {
+      const items = Eq.bySlot(sl);
+      if (!items.length) continue;
+      html += '<div class="eq-slot-group"><b>' + slotMeta[sl] + "</b>";
+      for (const eq of items) {
+        const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
+        const gate = Engine.Production.equipGateLevel(eq.level);
+        const locked = state.base.bodyLevel < gate;
+        const canAfford = Engine.Production.canAfford(state.res, eq.cost);
+        const costStr = Object.entries(eq.cost).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ");
+        const adjDur = Math.round(eq.time * durMult);
+        const dis = (locked || !canAfford) ? " disabled" : "";
+        const note = locked ? "（核心 Lv." + (gate + 1) + " 解锁）" : "";
+        html += '<div class="row"><span>' + esc(eq.name) + " T" + tier + note + " · " + costStr + " · " + adjDur + 's</span>'
+          + '<button class="sm" data-act="build_equip:' + eq.id + '"' + dis + ">制造</button></div>";
+      }
+      html += "</div>";
+    }
+    const inv = Object.entries(state.equipment || {}).filter(([k, v]) => (v || 0) > 0);
+    html += '<div class="eq-inv"><b>已存装备</b>';
+    if (!inv.length) html += '<span class="dim"> 暂无（制造后在此显示）</span>';
+    else html += inv.map(([k, v]) => { const e = Eq.byId(k); return '<span class="eq-chip">' + (e ? esc(e.name) : k) + " ×" + v + "</span>"; }).join("");
+    html += "</div></div>";
+    return html;
+  }
+
   // 增强剂（整舱生效）状态面板
   function boosterPanel() {
     const list = Engine.Booster ? Engine.Booster.list(state) : [];
@@ -979,7 +1056,6 @@
           ? '<button class="sm ghost" data-act="recall:' + m.id + '">召回</button>'
           : '<div class="row" style="margin-top:6px;flex-wrap:wrap;gap:4px">'
             + '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button>'
-            + '<button class="sm" data-act="dispatch:' + m.id + ':explore">探索</button>'
             + '<button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button>'
             + '<button class="sm" data-act="dispatch:' + m.id + ':train">演训</button>'
             + '<button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button></div>';
@@ -1280,6 +1356,7 @@
     { id: "mineral", name: "矿材" },
     { id: "component", name: "部件" },
     { id: "blueprint", name: "图纸" },
+    { id: "equip", name: "装备" },
   ];
   // 顶层资源在页首三卡展示，不重复进网格
   const WH_TOP = ["credits", "fuel", "rep"];
@@ -1304,6 +1381,8 @@
     for (const cat of Object.keys(groups)) {
       groups[cat].sort((a, b) => (res[b] || 0) - (res[a] || 0) || (hudIdx[a] || 0) - (hudIdx[b] || 0));
     }
+    // 装备库存（独立于资源，走 state.equipment；制造完成入库，成员装配时消耗）
+    const eqInv = Object.entries(state.equipment || {}).filter(([k, v]) => (v || 0) > 0);
 
     let html = '<div class="wh-head"><div><h2>仓库 · 物资库存</h2>'
       + '<div class="wh-desc">军团持有的全部物资；交付势力、排产、派遣产出实时同步。</div></div>'
@@ -1326,7 +1405,7 @@
     html += "</div>";
 
     // 分段标签（带各类条目数）
-    const catCount = (id) => id === "all" ? totalKinds : (groups[id] || []).length;
+    const catCount = (id) => id === "all" ? totalKinds + eqInv.length : (id === "equip" ? eqInv.length : (groups[id] || []).length);
     html += '<div class="seg-tabs">';
     for (const c of WH_CATS) {
       html += '<span class="seg-tab' + (warehouseFilter === c.id ? " on" : "") + '" data-act="wh:' + c.id + '">'
@@ -1358,6 +1437,25 @@
           + '<div class="wh-q">' + fmt(val) + "</div></div>";
       }
       html += "</div>";
+    }
+    // 装备库存（state.equipment）：独立分类，不与资源同网格；仅在筛选「全部」或「装备」时显示
+    if (warehouseFilter === "all" || warehouseFilter === "equip") {
+      shown++;
+      html += '<div class="wh-sec" data-cat="equip"><span class="nm">装备</span>'
+        + '<span class="cnt">' + eqInv.length + ' 种在库</span><span class="ln"></span></div>';
+      html += '<div class="wh-grid">';
+      if (!eqInv.length) html += '<div class="wh-note">暂无装备。前往「舰基」总装船坞制造。</div>';
+      else for (const [k, v] of eqInv) {
+        const e = Data.Equipment ? Data.Equipment.byId(k) : null;
+        const nm = e ? e.name : k;
+        const slotCN = e ? ({ high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" }[e.slot] || e.slot) : "";
+        const bonuses = e ? Object.keys(e.bonuses || {}).map(bk => (Data.Equipment.BONUS_LABELS[bk] || bk)).join("·") : "";
+        html += '<div class="wh-item">'
+          + '<div class="wh-top"><span class="wh-ic">🔧</span>'
+          + '<span class="wh-nm">' + esc(nm) + '</span></div>'
+          + '<div class="wh-q">×' + v + ' <small>' + slotCN + (bonuses ? " · " + bonuses : "") + '</small></div></div>';
+      }
+      html += '</div>';
     }
     if (!shown) html += '<div class="wh-note">该分类下暂无物资。</div>';
     html += '<div class="wh-note">装备与脑插将在制造 / 事件系统接入后显示于本页。</div>';
@@ -1450,6 +1548,7 @@
   }
   let npcDetailEl = null;
   let pendingFireId = null;   // 解雇二次确认：待确认解雇的成员 id（null=无）
+  let openFitSlot = null;     // 成员详情：当前展开的装备选择槽 {memberId, slot}（1-E 装配）
   function npcPortraitUrl(m) {
     if (m.portraitUrl) return m.portraitUrl;
     // 出身 → 立绘原型：每个出身各有独立原型（2026-10-25 起，新出身不再复用老原型）。
@@ -1518,6 +1617,104 @@
         + '<div class="hp-track"><span class="hp-fill ' + kind + '" style="width:' + pct.toFixed(1) + '%"></span></div></div>';
     }).join("");
   }
+
+  // ---------- 1-E：成员舰船装配面板（四槽，复用 1 代 fitted 数组模型） ----------
+  const FIT_SLOT_META = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
+  function fitBonusChips(eq) {
+    const Eq = Data.Equipment;
+    if (!eq || !eq.bonuses) return "";
+    return Object.keys(eq.bonuses).map(bk => (Eq.BONUS_LABELS[bk] || bk)).join(" · ");
+  }
+  function memberFitSection(m) {
+    const Eq = Data.Equipment;
+    if (!Eq) return "";
+    const layout = Data.Ships.slotLayout(m.shipId);
+    const slots = ["high", "mid", "low", "rig"];
+    let html = '<section class="npc-panel-section npc-fit-section"><div class="npc-section-head"><span>舰船装配 · 四槽</span><small>FIT MATRIX</small></div>';
+    html += '<div class="dim" style="margin-bottom:8px">从「已存装备」库存装配；卸下自动归还库存。装配即时生效（如考古扫描强度）。</div>';
+    let any = false;
+    for (const sl of slots) {
+      const cap = layout[sl] || 0;
+      if (cap <= 0) continue;
+      any = true;
+      html += '<div class="fit-slot-group"><b>' + FIT_SLOT_META[sl] + " ×" + cap + "</b>";
+      const arr = (m.fitted && m.fitted[sl]) || [];
+      for (let i = 0; i < cap; i++) {
+        const eqId = arr[i];
+        if (eqId) {
+          const e = Eq.byId(eqId);
+          const bn = fitBonusChips(e);
+          html += '<div class="fit-cell fitted"><span>' + esc(e ? e.name : eqId)
+            + (bn ? ' <i class="fit-bonus">· ' + esc(bn) + "</i>" : "") + '</span>'
+            + '<button class="sm ghost" data-act="unfit:' + m.id + ":" + sl + ":" + eqId + '">卸下</button></div>';
+        } else if (openFitSlot && openFitSlot.memberId === m.id && openFitSlot.slot === sl) {
+          const inv = Object.entries(state.equipment || {})
+            .filter(([k, v]) => v > 0 && Eq.byId(k) && Eq.byId(k).slot === sl);
+          html += '<div class="fit-picker">';
+          if (!inv.length) html += '<div class="dim">无可用装备（前往舰基总装船坞制造）。</div>';
+          else for (const [k, v] of inv) {
+            const e = Eq.byId(k);
+            html += '<div class="fit-pick-row"><span>' + esc(e.name)
+              + ' <i class="fit-bonus">· ' + esc(fitBonusChips(e)) + "</i></span>"
+              + '<button class="sm" data-act="fit:' + m.id + ":" + sl + ":" + k + '">装备 ×' + v + '</button></div>';
+          }
+          html += '<button class="sm ghost" data-act="fit_picker_close">关闭</button></div>';
+        } else {
+          html += '<div class="fit-cell empty"><span class="dim">空槽</span>'
+            + '<button class="sm" data-act="open_fit_picker:' + m.id + ":" + sl + '">装配</button></div>';
+        }
+      }
+      html += "</div>";
+    }
+    if (!any) html += '<div class="dim">该舰无装配槽位。</div>';
+    html += "</section>";
+    return html;
+  }
+
+  // ---------- 1-E：成员舰船状态（三防 + 修复状态） ----------
+  function memberRepairStatusLine(m) {
+    const R = Engine.Repair;
+    if (!R) return "";
+    if (m.destroyed) return '<div class="npc-repair bad">阵亡 · 不可修复</div>';
+    if (m.status === "repairing") return '<div class="npc-repair warn">修复中 · 预计 ' + fmtDur(R.repairETA(m)) + ' 回满</div>';
+    if (R.needsRepair(m)) {
+      const info = R.repairInfo(state);
+      const me = info.waiting.find(w => w.id === m.id);
+      return '<div class="npc-repair">排队中 · 约 ' + fmtDur(me ? me.startEta : 0) + ' 后开始</div>';
+    }
+    return '<div class="npc-repair good">完好 · 待命</div>';
+  }
+
+  // ---------- 1-E：舰基船坞自动修复面板（泊位占用 + 在修/排队列表，模型 C） ----------
+  function repairDockBlock() {
+    const R = Engine.Repair;
+    if (!R) return "";
+    const info = R.repairInfo(state);
+    let html = '<div class="panel"><h3>船坞 · 自动修复 ' + info.used + "/" + info.bays + '</h3>';
+    html += '<div class="dim">受损舰船回港待命即自动入坞修复（护盾→装甲→结构）；泊位有限，越残越优先。修复不消耗资源。</div>';
+    const rows = info.repairing.concat(info.waiting);
+    if (!rows.length) html += '<div class="wh-note">无受损舰船。</div>';
+    else for (const e of rows) {
+      const m = state.members.find(x => x.id === e.id);
+      const ship = m ? Data.Ships.shipById(m.shipId) : null;
+      const isRep = info.repairing.indexOf(e) >= 0;
+      const badge = isRep ? '<span class="tag warn">修复中</span>' : '<span class="tag">排队中</span>';
+      const eta = isRep ? ("预计 " + fmtDur(e.eta) + " 回满") : ("约 " + fmtDur(e.startEta || 0) + " 后开始");
+      const hpMax = Data.Ships.maxHp(e.shipId);
+      const hp = (m && m.hp) || { shield: 0, armor: 0, structure: 0 };
+      const bars = [["shield", "护盾"], ["armor", "装甲"], ["struct", "结构"]].map(([k, lab]) => {
+        const max = (hpMax && hpMax[k === "struct" ? "structure" : k]) || 0;
+        const cur = hp[k === "struct" ? "structure" : k] || 0;
+        const pct = max ? Math.max(0, Math.min(100, cur / max * 100)) : 0;
+        return '<div class="mini-hp"><span>' + lab + '</span><i style="width:' + pct.toFixed(1) + '%"></i></div>';
+      }).join("");
+      html += '<div class="repair-row"><div class="repair-row-head"><b>' + esc(e.name) + '</b>' + badge
+        + '<small>' + esc(ship ? ship.name : "") + ' · ' + eta + '</small></div>' + bars + "</div>";
+    }
+    html += "</div>";
+    return html;
+  }
+
   function openNpcDetail(memberId) {
     closeNpcDetail();
     const m = state.members.find(x => x.id === memberId);
@@ -1593,8 +1790,11 @@
       + '<div class="npc-skill-grid">' + npcSkillCells(m) + '</div></section>'
       + '<section class="npc-panel-section npc-vitals-section"><div class="npc-section-head"><span>舰体状态</span><small>HULL INTEGRITY</small></div>'
       + '<div class="npc-ship-label"><b>' + esc(shipName) + '</b><span>' + (ship && ship.classTier ? 'CLASS T' + ship.classTier : '舰船型号未知') + '</span></div>'
-      + '<div class="npc-vitals">' + npcVitalRows(m, hpMax) + '</div></section>'
+      + '<div class="npc-vitals">' + npcVitalRows(m, hpMax) + '</div>'
+      + memberRepairStatusLine(m)
+      + '</section>'
       + '</div>'
+      + memberFitSection(m)
       + '<section class="npc-panel-section npc-goals-section"><div class="npc-section-head"><span>人生目的</span><small>PERSONAL DIRECTIVES <b>全经验 ×' + goalXp.toFixed(3) + '</b></small></div>'
       + '<div class="goal-list">' + goalDetailRows(m) + '</div></section>'
       + '<section class="npc-panel-section npc-ms-section"><div class="npc-section-head"><span>里程碑</span><small>MILESTONES <b>' + earnedIds.length + " / " + allMs.length + '</b></small></div>'
@@ -1608,7 +1808,7 @@
             + '</div>'
           : (m.destroyed ? '' :
               m.assignment ? '<button class="sm ghost" data-act="recall:' + m.id + '">召回</button>'
-              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':explore">探索</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="dispatch:' + m.id + ':train">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button>')
+              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="dispatch:' + m.id + ':train">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button>')
             + '<button class="sm danger" data-act="fire:' + m.id + '">解雇</button>')
       + '<span class="npc-footer-note">深空星疆 · 人员档案系统</span></div>'
       + '</div>';
@@ -1770,6 +1970,8 @@
   }
 
   function renderView() {
+    // 正在拖动舱段时冻结重绘（1Hz 定时器会打断拖拽）。pointerup/cancel 必定清空 baseDragState。
+    if (baseDragState) return;
     const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
     // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，
@@ -1845,7 +2047,9 @@
       const [nodeId, bodyId, type] = [a, b, act.split(":")[3]];
       const mid = (document.getElementById("body-mem") || {}).value || "";
       const oreId = (document.getElementById("body-ore") || {}).value || "";
-      if (mid) Engine.Dispatch.assign(state, mid, type, { nodeId: nodeId, bodyId: bodyId, oreId: oreId || null });
+      const focusEl = (e && e.target && e.target.closest) ? e.target.closest("[data-focus]") : null;
+      const focus = (focusEl && focusEl.dataset.focus) || (document.getElementById("body-focus") || {}).value || "salvage";
+      if (mid) Engine.Dispatch.assign(state, mid, type, { nodeId: nodeId, bodyId: bodyId, oreId: oreId || null, focus: focus });
       hidePop();
     }
     if (cmd === "move") Engine.Settle.moveBase(state, a);
@@ -1863,10 +2067,41 @@
     else if (cmd === "baseHull") { Engine.Base.switchHull(state, a); baseFocus = "core"; }
     else if (cmd === "moduleInstall") { Engine.Base.installModule(state, a, b); baseFocus = a; }
     else if (cmd === "moduleRemove") { Engine.Base.uninstallModule(state, a); baseFocus = a; }
+    else if (cmd === "baseSlotReset") {
+      const r = Engine.Base.resetSlotPos(state);
+      if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
+    }
     else if (cmd === "enqueue") Engine.Production.enqueue(state, a, b, 1);
     else if (cmd === "build") {
       const r = Engine.Production.buildShip(state, a);
       if (r.ok) toast("开始建造 " + r.ship.name);
+      else toast(r.err);
+    }
+    else if (cmd === "build_equip") {
+      const r = Engine.Production.buildEquipment(state, a);
+      if (r.ok) toast("开始制造 " + (r.equip ? r.equip.name : "装备"));
+      else toast(r.err);
+    }
+    else if (cmd === "open_fit_picker") {
+      const mid = a, slot = b;
+      openFitSlot = { memberId: mid, slot: slot };
+      openNpcDetail(mid);
+    }
+    else if (cmd === "fit_picker_close") {
+      const mid = openFitSlot && openFitSlot.memberId;
+      openFitSlot = null;
+      if (mid) openNpcDetail(mid);
+    }
+    else if (cmd === "fit") {
+      const mid = a, slot = b, eqId = act.split(":")[3];
+      const r = Engine.Production.fitEquipment(state, mid, slot, eqId);
+      if (r.ok) { openFitSlot = null; openNpcDetail(mid); }
+      else toast(r.err);
+    }
+    else if (cmd === "unfit") {
+      const mid = a, slot = b, eqId = act.split(":")[3];
+      const r = Engine.Production.unfitEquipment(state, mid, slot, eqId);
+      if (r.ok) openNpcDetail(mid);
       else toast(r.err);
     }
     else if (cmd === "booster") {
@@ -2015,12 +2250,82 @@
     if (Persistence) Persistence.save(state); else Core.save(state);
   }
 
+  // ---------- 舱段拖拽换位（2026-10-29）----------
+  // 用 pointer 事件统一鼠标 / 触屏，不依赖 HTML5 DnD（移动端不支持）。
+  // 关键点：
+  //  1) 换的是「舱位坐标」，模块类型与舱位一一绑定 → 拖动会真实改变相邻增效与特化舱位位置。
+  //  2) 6px 阈值区分「点击看详情」与「拖动换位」，未越阈值时不动，原 data-act 流程照旧。
+  //  3) 拖动中的卡片加 .dragging（pointer-events:none），让 elementFromPoint 穿透拿到下方目标卡。
+  //  4) 唯一核心固定（舰体中轴锚点），不能拖也不能作为落点。
+  const BASE_DRAG_THRESHOLD = 6;
+  function baseSlotIdOf(el) {
+    const act = (el && el.getAttribute) ? el.getAttribute("data-act") || "" : "";
+    return act.indexOf("baseinfo:") === 0 ? act.slice(9) : "";
+  }
+  function setBaseDropTarget(el) {
+    const prev = document.querySelector(".base-module.drop-target");
+    if (prev && prev !== el) prev.classList.remove("drop-target");
+    if (el) el.classList.add("drop-target");
+  }
+  function onBaseDragDown(e) {
+    if (tab !== "base") return;
+    if (e.button != null && e.button > 0) return;
+    const el = e.target && e.target.closest ? e.target.closest(".base-module") : null;
+    if (!el || !el.closest(".base-layout")) return;
+    if (el.classList.contains("base-core")) return;   // 唯一核心固定
+    const slotId = baseSlotIdOf(el);
+    if (!slotId) return;
+    baseDragState = { el: el, slotId: slotId, pid: e.pointerId, sx: e.clientX, sy: e.clientY, active: false };
+  }
+  function onBaseDragMove(e) {
+    const d = baseDragState;
+    if (!d || e.pointerId !== d.pid) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.active) {
+      if (Math.abs(dx) < BASE_DRAG_THRESHOLD && Math.abs(dy) < BASE_DRAG_THRESHOLD) return;
+      d.active = true;
+      d.el.classList.add("dragging");
+      const layout = d.el.closest(".base-layout");
+      if (layout) layout.classList.add("is-dragging");
+    }
+    d.el.style.setProperty("--dx", dx + "px");
+    d.el.style.setProperty("--dy", dy + "px");
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    const target = hit && hit.closest ? hit.closest(".base-module") : null;
+    setBaseDropTarget(target && target !== d.el && !target.classList.contains("base-core") ? target : null);
+  }
+  function onBaseDragEnd(e, cancelled) {
+    const d = baseDragState;
+    if (!d || (e && e.pointerId != null && e.pointerId !== d.pid)) return;
+    baseDragState = null;
+    if (!d.active) return;              // 未越阈值 = 普通点击，交给既有 click 委托
+    baseDragEndedAt = Date.now();
+    const target = document.querySelector(".base-module.drop-target");
+    d.el.classList.remove("dragging");
+    d.el.style.removeProperty("--dx");
+    d.el.style.removeProperty("--dy");
+    const layout = document.querySelector(".base-layout.is-dragging");
+    if (layout) layout.classList.remove("is-dragging");
+    if (target) target.classList.remove("drop-target");
+    if (!target || cancelled) return;
+    const toId = baseSlotIdOf(target);
+    const r = Engine.Base.swapSlots(state, d.slotId, toId);
+    if (!r.ok) { if (r.err) toast(r.err); renderView(); return; }
+    baseFocus = d.slotId;
+    const fromDef = Data.Ships.baseModuleByType(d.slotId);
+    const toDef = Data.Ships.baseModuleByType(toId);
+    toast("已交换 " + (fromDef ? fromDef.name : d.slotId) + " ⇄ " + (toDef ? toDef.name : toId) + " · 相邻增效已重算");
+    renderView();
+  }
+
   function bind() {
     // 设置页签的「导入存档文件」：file input 的 change 需要单独委托（click 委托接不到）
     document.addEventListener("change", function (e) {
       if (e.target && e.target.id === "set-import-file") doImportFile(e);
     });
     document.addEventListener("click", e => {
+      // 拖动舱段后紧跟的 click：target 是「落到的那张卡」，会误开右侧详情，用时间窗吞掉。
+      if (Date.now() - baseDragEndedAt < 320 && e.target.closest && e.target.closest(".base-layout")) return;
       // 轻点/拖拽收尾的误触：抑制窗口内、且不是点在菜单自身的点击，全部吞掉。
       // 关键：setPointerCapture 会把轻点后的 click 目标重定向到 $view 容器，若只判断
       // 「落在星图内」会漏掉——重定向的 click.target 是 $view（starmap-wrap 的父级），
@@ -2035,6 +2340,12 @@
       if (!$nodePop.contains(e.target)) hideNodeMenu();
       if ($actDrawer.classList.contains("show") && !$actDrawer.contains(e.target) && !e.target.closest('[data-act="toggleActivity"]')) hideActivityDrawer();
     });
+
+    // 舱段拖拽换位（pointer 统一鼠标 / 触屏；HTML5 DnD 在移动端不可用）
+    document.addEventListener("pointerdown", onBaseDragDown);
+    document.addEventListener("pointermove", onBaseDragMove);
+    document.addEventListener("pointerup", e => onBaseDragEnd(e, false));
+    document.addEventListener("pointercancel", e => onBaseDragEnd(e, true));
 
     // 派遣任务选人 → 实时刷新预测成功率
     $view.addEventListener("change", e => {

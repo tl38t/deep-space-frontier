@@ -62,7 +62,8 @@
     spend(state.res, r.in);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, queueType) : 1;
     q.push({
-      recipeId: recipeId, dur: r.dur * durationMult, out: r.out, qty: r.qty,
+      recipeId: recipeId, dur: r.dur * durationMult, out: r.out, qty: r.qty, outType: "res",
+      in: r.in,
       startedAt: Date.now(), repeat: repeat, done: 0,
     });
     return { ok: true };
@@ -84,18 +85,20 @@
       const elapsed = (now - it.startedAt) / 1000; // 真实流逝（秒）
       if (typeof console !== "undefined" && state.__dbg) console.log("  PQ", queueType, "elapsed=", elapsed.toFixed(2), "effDur=", effDur(it).toFixed(2), "pm=", pm, "bm=", bm, "done=", it.done);
       if (elapsed < effDur(it)) break; // 队首未到一批
-      // 完成一批
-      gain(state.res, it.out, it.qty);
-      log.push({ out: it.out, qty: it.qty });
+      // 完成一批：装备入库，部件/矿材/图纸入 state.res
+      if (it.outType === "equipment") {
+        state.equipment[it.out] = (state.equipment[it.out] || 0) + it.qty;
+        log.push({ out: it.out, qty: it.qty, outType: "equipment" });
+      } else {
+        gain(state.res, it.out, it.qty);
+        log.push({ out: it.out, qty: it.qty });
+      }
       it.done += 1;
       if (it.done >= it.repeat) { q.shift(); continue; }
-      // 续下一批：推进 startedAt（按等效耗时），重新校验原料
+      // 续下一批：推进 startedAt（按等效耗时），重新校验原料（用队列项快照 it.in，避免依赖配方表）
       it.startedAt += effDur(it) * 1000;
-      const tbl = queueType === "smelt" ? Data.Recipes.SMELT
-        : queueType === "manufacture" ? Data.Recipes.COMPONENT : Data.Recipes.INVENT;
-      const r = tbl.find(x => x.id === it.recipeId);
-      if (!r || !canAfford(state.res, r.in)) { q.shift(); continue; }
-      spend(state.res, r.in);
+      if (!it.in || !canAfford(state.res, it.in)) { q.shift(); continue; }
+      spend(state.res, it.in);
       guard += 1;
     }
     return log;
@@ -116,6 +119,25 @@
     const q = state.base.industry.buildQueue || (state.base.industry.buildQueue = []);
     q.push({ shipId: shipId, dur: ship.buildTime * durationMult, startedAt: Date.now(), repeat: 1, done: 0 });
     return { ok: true, ship: ship };
+  }
+
+  // ---- 装备制造（总装船坞，共享 manufacture 槽位；完成入 state.equipment 库存）----
+  // 复刻 1 代舰船装配：装备按 T1-T5 分档（equipment.level: 1/15/35/55/80），
+  // 映射到舰基核心等级门禁（bodyLevel 0-3，提议值）；消耗 equipment.cost，耗时 equipment.time。
+  function equipGateLevel(equipLevel) { return Math.min(3, Math.floor((equipLevel - 1) / 20)); }
+  function buildEquipment(state, equipId) {
+    const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
+    if (!Eq) return { ok: false, err: "装备不存在" };
+    const gate = equipGateLevel(Eq.level);
+    if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
+    if (!canAfford(state.res, Eq.cost)) return { ok: false, err: "原料不足" };
+    spend(state.res, Eq.cost);
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
+    const q = state.base.industry.manufactureQueue;
+    q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: Eq.cost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: 1, done: 0 });
+    return { ok: true, equip: Eq };
   }
 
   // 结算造船队列：完成一艘 → 推入 state.ships（{id, shipId, name, status, nodeId}），并记 counters.builtShips。
@@ -148,6 +170,40 @@
     return log;
   }
 
+  // ---- 舰船装配（成员四槽；复用 1 代 fitted 数组模型）----
+  // 装配：从 state.equipment 库存取一件装备，装入成员 m.fitted[slot]；卸下反向退回库存。
+  const FIT_SLOTS = ["high", "mid", "low", "rig"];
+  const SLOT_CN = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
+  function fitEquipment(state, memberId, slot, equipId) {
+    if (FIT_SLOTS.indexOf(slot) < 0) return { ok: false, err: "槽位类型非法" };
+    const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
+    if (!Eq) return { ok: false, err: "装备不存在" };
+    if (Eq.slot !== slot) return { ok: false, err: "装备槽位不匹配（需 " + (SLOT_CN[Eq.slot] || Eq.slot) + "）" };
+    const m = (state.members || []).find(x => x.id === memberId);
+    if (!m) return { ok: false, err: "成员不存在" };
+    const layout = (Data.Ships && Data.Ships.slotLayout) ? Data.Ships.slotLayout(m.shipId) : {};
+    const cap = layout[slot] || 0;
+    if (cap <= 0) return { ok: false, err: "该舰无「" + (SLOT_CN[slot] || slot) + "」槽位" };
+    const cur = (m.fitted && m.fitted[slot]) || [];
+    if (cur.length >= cap) return { ok: false, err: "该槽位已满（" + cap + "）" };
+    if ((state.equipment[equipId] || 0) <= 0) return { ok: false, err: "库存不足" };
+    state.equipment[equipId] -= 1;
+    m.fitted[slot] = cur.concat(equipId);
+    return { ok: true, equip: Eq };
+  }
+  function unfitEquipment(state, memberId, slot, equipId) {
+    if (FIT_SLOTS.indexOf(slot) < 0) return { ok: false, err: "槽位类型非法" };
+    const m = (state.members || []).find(x => x.id === memberId);
+    if (!m) return { ok: false, err: "成员不存在" };
+    const arr = (m.fitted && m.fitted[slot]) || [];
+    const idx = arr.indexOf(equipId);
+    if (idx < 0) return { ok: false, err: "该槽未装配此装备" };
+    arr.splice(idx, 1);
+    m.fitted[slot] = arr;
+    state.equipment[equipId] = (state.equipment[equipId] || 0) + 1;
+    return { ok: true, equip: (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null };
+  }
+
   function buildStatus(state, now) {
     const q = state.base.industry.buildQueue || [];
     return q.map(it => {
@@ -176,5 +232,5 @@
     });
   }
 
-  return { enqueue, processAll, processQueue, processBuildQueue, buildShip, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain };
+  return { enqueue, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain };
 });

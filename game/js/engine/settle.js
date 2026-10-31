@@ -146,6 +146,10 @@
     const M = _Mastery();
     const masteryYield = (M && M.combatYieldMult) ? M.combatYieldMult(state) : 1;
 
+    // 舰基自动修复（§14）：受损成员回港后排队修复，每 tick 推进
+    const Repair = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Repair : null;
+    if (Repair) Repair.tick(state, dt);
+
     // 0) 预聚合各节点剿匪战力（O(1) 单次扫描；结算循环内只读不重算，不踩 §14.5 红线）
     const combatByNode = {}, combatCount = {};
     for (const m of state.members) {
@@ -185,21 +189,40 @@
         state.res[ore] = (state.res[ore] || 0) + y;
         m.skills.mining = (m.skills.mining || 0) + XP_RATE.mining * dt * passionMult(m, "mining") * xpMultOf(m, "mining");
       } else if (a.type === "explore" && node) {
-        a.exploreProgress += dt / 120;
-        m.skills.scanning = (m.skills.scanning || 0) + XP_RATE.scanning * dt * passionMult(m, "scanning") * xpMultOf(m, "scanning");
-        // 残骸场勘探额外涨考古（archaeology 主要由遗迹事件涨，这里给稳定通道）
+        // 残骸场考古：装配 analyzer 的 archaeologyCycleReduction 缩短遗址周期（封顶 0.50）
+        const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
+        const cycRed = Arch ? Arch.cycleReduction(m) : 0;
+        const period = 120 * (1 - Math.min(0.50, cycRed));
+        a.exploreProgress += dt / period;
         const ebody = Dispatch.bodyById ? Dispatch.bodyById(state.starMap, a.nodeId, a.bodyId) : null;
-        if (ebody && ebody.kind === "derelict") m.skills.archaeology = (m.skills.archaeology || 0) + XP_RATE.archaeology * dt * passionMult(m, "archaeology") * xpMultOf(m, "archaeology");
-        if (a.exploreProgress >= 1) {
-          a.exploreProgress = 0;
-          const adj = Data.StarMap.adjacency(state.starMap)[a.nodeId] || [];
-          const hidden = adj.map(e => Data.StarMap.nodeById(state.starMap, e.to)).filter(n => n && !n.discovered);
-          if (hidden.length) {
-            state.exploreCounter = (state.exploreCounter || 0) + 1;
-            const er = deriveRng(state, 0xED11, state.exploreCounter);
-            const t = hidden[Math.floor(er() * hidden.length)];
-            t.discovered = true; state.starMap.discovered.push(t.id);
-            pushReport(state, "星图发现", [m.name + " 在「" + node.name + "」侦测到新节点：「" + t.name + "」"]);
+        if (ebody && ebody.kind === "derelict") {
+          // —— 残骸场考古（焦点自选）：每个遗址周期按焦点算成功率/掉落/反噬（含船体损伤）——
+          m.skills.archaeology = (m.skills.archaeology || 0) + XP_RATE.archaeology * dt * passionMult(m, "archaeology") * xpMultOf(m, "archaeology");
+          if (a.exploreProgress >= 1) {
+            a.exploreProgress = 0;
+            const focus = a.focus || "salvage";
+            if (Arch) {
+              const res = Arch.cycle(state, m, ebody, focus);
+              if (res.drops.credits) state.res.credits = (state.res.credits || 0) + res.drops.credits;
+              if (res.drops.bp) state.res.bp = (state.res.bp || 0) + res.drops.bp;
+              if (res.drops.rep) state.res.rep = (state.res.rep || 0) + res.drops.rep;
+              pushReport(state, "考古 · " + Data.Archaeology.profileById(focus).name, res.lines);
+            }
+          }
+        } else {
+          // —— 旧逻辑：行星勘探 = 扫图发现新节点（UI 已下线，仅存量行星 explorer 兼容）——
+          m.skills.scanning = (m.skills.scanning || 0) + XP_RATE.scanning * dt * passionMult(m, "scanning") * xpMultOf(m, "scanning");
+          if (a.exploreProgress >= 1) {
+            a.exploreProgress = 0;
+            const adj = Data.StarMap.adjacency(state.starMap)[a.nodeId] || [];
+            const hidden = adj.map(e => Data.StarMap.nodeById(state.starMap, e.to)).filter(n => n && !n.discovered);
+            if (hidden.length) {
+              state.exploreCounter = (state.exploreCounter || 0) + 1;
+              const er = deriveRng(state, 0xED11, state.exploreCounter);
+              const t = hidden[Math.floor(er() * hidden.length)];
+              t.discovered = true; state.starMap.discovered.push(t.id);
+              pushReport(state, "星图发现", [m.name + " 在「" + node.name + "」侦测到新节点：「" + t.name + "」"]);
+            }
           }
         }
       } else if (a.type === "combat") {

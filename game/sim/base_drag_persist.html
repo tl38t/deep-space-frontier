@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-drag-persist</title>
+<style>body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}#log{white-space:pre-wrap}iframe{position:absolute;left:-9999px;top:0;width:1240px;height:960px;border:0}</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html#base"></iframe>
+<script>
+(function () {
+  const out = []; let pass = 0, fail = 0;
+  function ok(n, c, e) { if (c) { pass++; out.push("PASS " + n + (e ? " :: " + e : "")); } else { fail++; out.push("FAIL " + n + (e ? " :: " + e : "")); } }
+  function dump() { out.push("== " + pass + " PASS / " + fail + " FAIL =="); document.getElementById("log").textContent = out.join("\n"); }
+  window.onerror = function (m, s, l) { out.push("JS-ERROR " + m + " @" + l); dump(); };
+  const f = document.getElementById("f");
+  function styleOf(el) { return (el && el.getAttribute("style") || "").replace(/\s+/g, ""); }
+
+  let ticks = 0;
+  const poll = setInterval(function () {
+    ticks++;
+    let d = null;
+    try { d = f.contentDocument; } catch (e) { }
+    const ready = d && d.querySelector(".base-layout .base-module.base-energy");
+    if (!ready) {
+      if (ticks > 60) { out.push("TIMEOUT 等不到 .base-layout 舱段卡"); dump(); clearInterval(poll); }
+      return;
+    }
+    clearInterval(poll);
+    try { run(d); } catch (e) { out.push("THROW " + e.message + "\n" + (e.stack || "").split("\n")[1]); dump(); }
+  }, 250);
+
+  function run(d) {
+    const w = f.contentWindow;
+    const q = (s) => d.querySelector(s);
+
+    // 阶段 1：拖动交换 energy ↔ dock
+    const energy = q(".base-module.base-energy"), dock = q(".base-module.base-dock");
+    ok("定位到能源舱 / 舰队泊位", !!energy && !!dock);
+    energy.scrollIntoView({ block: "center" });
+    const ra = energy.getBoundingClientRect(), rb = dock.getBoundingClientRect();
+    const ax = Math.round(ra.left + ra.width / 2), ay = Math.round(ra.top + ra.height / 2);
+    const bx = Math.round(rb.left + rb.width / 2), by = Math.round(rb.top + rb.height / 2);
+    const fire = (t, x, y) => energy.dispatchEvent(new w.PointerEvent(t, {
+      pointerId: 3, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true,
+      clientX: x, clientY: y, button: 0, buttons: t === "pointerup" ? 0 : 1,
+    }));
+    fire("pointerdown", ax, ay); fire("pointermove", ax + 12, ay + 12); fire("pointermove", bx, by); fire("pointerup", bx, by);
+    ok("拖动后 DOM 坐标已交换", /grid-column:2;grid-row:3/.test(styleOf(q(".base-module.base-energy"))), styleOf(q(".base-module.base-energy")).slice(0, 34));
+
+    // 等一个 5s 存档周期（存档定时器 5000ms）
+    setTimeout(function () {
+      let raw = null;
+      try { raw = w.localStorage.getItem("nsk_save_v7"); } catch (_) { }
+      ok("本地存档已写入 nsk_save_v7", !!raw, "len=" + (raw ? raw.length : 0));
+      let decoded = null;
+      try { decoded = w.NSK.Core.decodeLocalSave(raw); } catch (e) { out.push("decode error: " + e.message); }
+      ok("存档可解码（NSK2 校验通过）", !!decoded);
+      if (!decoded) { dump(); return; }
+      const pos = (decoded.base || {}).slotPos || {};
+      ok("存档写入 base.slotPos.energy=[2,3]", JSON.stringify(pos.energy) === "[2,3]", JSON.stringify(pos));
+      ok("存档写入 base.slotPos.dock=[3,1]", JSON.stringify(pos.dock) === "[3,1]");
+      ok("存档版本仍为 v8（未升版）", decoded.version === 8, "v=" + decoded.version);
+
+      // 模拟「冷启动」：走 boot 同款 load → normalize → 生效拓扑
+      const reloaded = w.NSK.Core.load();
+      ok("冷启动 Core.load 成功", !!reloaded);
+      if (reloaded) {
+        ok("Core.load 自带 slotPos（无需外部回填）", !!(reloaded.base && reloaded.base.slotPos && reloaded.base.slotPos.energy), JSON.stringify(reloaded.base && reloaded.base.slotPos));
+        w.NSK.Engine.Base.normalize(reloaded);
+        const slots = w.NSK.Engine.Base.stateSlots(reloaded);
+        const e2 = slots.find(s => s.id === "energy"), d2 = slots.find(s => s.id === "dock");
+        ok("冷启动后 energy 仍在 (2,3)", e2.x === 2 && e2.y === 3, JSON.stringify([e2.x, e2.y]));
+        ok("冷启动后 dock 仍在 (3,1)", d2.x === 3 && d2.y === 1, JSON.stringify([d2.x, d2.y]));
+        ok("冷启动后自定义布局标志为真", w.NSK.Engine.Base.hasCustomLayout(reloaded) === true);
+        ok("冷启动后制造倍率仍为 1（能源已离开总装邻位）", Math.abs(w.NSK.Engine.Base.queueDurationMultiplier(reloaded, "manufacture") - 1) < 1e-9);
+      }
+      dump();
+    }, 5600);
+  }
+})();
+</script>
+</body>
+</html>

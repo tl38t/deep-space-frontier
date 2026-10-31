@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>考古 UI 自测</title></head>
+<body>
+<div id="log"></div>
+<iframe id="f" src="file:///D:/深空星疆：商业与战争/game/index.html#system" style="width:1280px;height:900px;border:0"></iframe>
+<script>
+const f = document.getElementById("f");
+const L = (s) => { const d = document.getElementById("log"); d.innerHTML += s + "<br>"; };
+let done = false;
+function finish(){ if (done) return; done = true; L("__DONE__"); }
+function run() {
+  const d = f.contentDocument;
+  if (!d || !d.querySelector) { setTimeout(run, 200); return; }
+  const card = d.querySelector('[data-act="body:node_0:node_0_dr"]');
+  if (!card) { setTimeout(run, 200); return; }
+  // 点击残骸场卡片打开弹窗
+  const ev = new d.defaultView.MouseEvent("click", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 });
+  card.dispatchEvent(ev);
+  setTimeout(() => {
+    const pop = d.getElementById("nsk-pop");
+    const html = pop ? pop.innerHTML : "";
+    const fb = d.querySelectorAll("#nsk-pop .focus-btn");
+    L("弹窗可见(class show): " + (pop && pop.classList.contains("show")));
+    L("焦点按钮数: " + fb.length);
+    if (fb[0]) L("按钮0文本: " + fb[0].textContent.trim());
+    if (fb[1]) L("按钮1文本: " + fb[1].textContent.trim());
+    if (fb[2]) L("按钮2文本: " + fb[2].textContent.trim());
+    L("含安全打捞: " + /安全打捞/.test(html));
+    L("含科研遗迹: " + /科研遗迹/.test(html));
+    L("含危险秘藏: " + /危险秘藏/.test(html));
+    L("有 data-focus=salvage: " + !!d.querySelector('#nsk-pop [data-focus="salvage"]'));
+    L("有 data-focus=cache: " + !!d.querySelector('#nsk-pop [data-focus="cache"]'));
+    L("成功率%出现在按钮: " + /·\s*\d+%/.test(html));
+    // 模拟点击「危险秘藏」焦点按钮，验证派遣写入 focus
+    const cacheBtn = d.querySelector('#nsk-pop [data-focus="cache"]');
+    const before = (function(){ try { return JSON.parse(f.contentWindow.localStorage.getItem("nsk_save_v2") || "{}"); } catch(e){ return {}; } })();
+    if (cacheBtn) {
+      const memSel = d.getElementById("body-mem");
+      L("派遣前body-mem值: " + (memSel ? memSel.value : "NO_SELECT") + " 选项数: " + (memSel ? memSel.options.length : 0));
+      const cev = new d.defaultView.MouseEvent("click", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 });
+      cacheBtn.dispatchEvent(cev);
+      setTimeout(() => {
+        const pop2 = d.getElementById("nsk-pop");
+        L("点击cache后弹窗关闭(=派遣执行): " + (pop2 && !pop2.classList.contains("show")));
+        // 重新打开残骸场弹窗，看是否出现「召回」(说明已派遣)
+        const card2 = d.querySelector('[data-act="body:node_0:node_0_dr"]');
+        if (card2) card2.dispatchEvent(new d.defaultView.MouseEvent("click", { bubbles: true, clientX: 20, clientY: 20 }));
+        setTimeout(() => {
+          const pop3 = d.getElementById("nsk-pop");
+          const html3 = pop3 ? pop3.innerHTML : "";
+          L("重开弹窗含'召回'(=已派遣): " + /召回/.test(html3));
+          L("重开弹窗含'在岗'(考古): " + /在岗/.test(html3) && /考古/.test(html3));
+          finish();
+        }, 500);
+      }, 400);
+    } else { finish(); }
+  }, 500);
+}
+window.addEventListener("load", () => setTimeout(run, 1500));
+setTimeout(finish, 12000);
+</script>
+</body>
+</html>

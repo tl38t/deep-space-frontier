@@ -48,8 +48,10 @@
       createdAt: now,
       lastSeen: now,
       rngSeed: (Math.random() * 4294967296) >>> 0,
+      archCounter: 0,        // 考古结算确定性计数器（每次遗址周期 +1，存档持久化）
       legionName: "深空星疆军团",
       res: Data.Resources.startingResources(),
+      equipment: {},            // 已制造的舰船装备库存：equipId -> 数量（§14 舰船装配，总装船坞制造）
       base: Object.assign(baseIdentity, {
         nodeId: map.startId,
         fuel: 100,
@@ -303,6 +305,8 @@
       status: "idle",                              // idle | dispatched | traveling | repairing
       shipId: shipId,                              // 绑定舰船（EVE-IDLE 解耦名）
       hp: { shield: hp.shield, armor: hp.armor, structure: hp.structure }, // 上限 = 舰船三防
+      fitted: { high: [], mid: [], low: [], rig: [] }, // 舰船装配（2026-10-31）：各槽存 equipment id
+      enhancementLevel: 0,                         // 舰船强化等级（每 5 级一档加成）
       destroyed: false,
       wage: 0,                                     // 星币/周期（初值占位，平衡数值待定）
       merit: 0,                                    // 个人功勋（晋升/薪资档，映射待定）

@@ -120,7 +120,19 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function makeBodies(node, rand, regionStage) {
+  // 残骸场（每个节点恰好 1 个）：风味名（多起点名字给观感）+ 安等 band（遗址 I–V）。
+  // 玩家在 UI 自选考古焦点，band 决定掉落肥度，与焦点正交。
+  function makeDerelict(node, rand, band) {
+    const rt = nodeRich(node);
+    const ArchData = (typeof window !== "undefined" && window.NSK && window.NSK.Data && window.NSK.Data.Archaeology) ? window.NSK.Data.Archaeology : null;
+    const an = ArchData ? ArchData.siteName(band, rand) : (node.name + " 残骸场");
+    return {
+      id: node.id + "_dr", kind: "derelict", name: an,
+      orbit: 200 + rand() * 18, ang: Math.floor(rand() * 360), size: 9, tier: rt, band: band,
+      abundance: {},
+    };
+  }
+  function makeBodies(node, rand, regionStage, band) {
     const bodies = [];
     const rt = nodeRich(node);
     bodies.push({ id: node.id + "_star", kind: "star", name: node.name + " 主星", orbit: 0, ang: 0, size: 26, tier: rt });
@@ -134,19 +146,21 @@
       for (const g of ALL_GASES) gasOres[g] = +oreAbundance(GAS_TIER[g], rt, rand).toFixed(3);
       bodies.push({ id: node.id + "_gas", kind: "gas", name: node.name + " 气云", orbit: 50, ang: Math.floor(rand() * 360), size: 22, tier: rt, abundance: gasOres });
     }
-    const pool = ["planet", "planet", "planet", "derelict", "derelict", "station"];
-    const nExtra = 2 + Math.floor(rand() * 3); // 2~4
+    // —— 每个节点恰好 1 个残骸场（玩家自选考古焦点）——
+    bodies.push(makeDerelict(node, rand, band));
+    // 其余：2~3 个行星 + 可能 1 空间站（随机池不再含 derelict）
+    const pool = ["planet", "planet", "planet", "station"];
+    const nExtra = 2 + Math.floor(rand() * 2); // 2~3
     for (let i = 0; i < nExtra; i++) {
       const k = pool[Math.floor(rand() * pool.length)];
       const orbit = 72 + (i + 1) * 40 + rand() * 10;
       const ang = Math.floor(rand() * 360);
-      const size = k === "planet" ? 11 + Math.floor(rand() * 8) : k === "station" ? 12 : 9;
+      const size = k === "planet" ? 11 + Math.floor(rand() * 8) : 12;
       const b = {
         id: node.id + "_b" + i, kind: k,
-        name: node.name + "-" + (i + 1) + (k === "planet" ? " 行星" : k === "derelict" ? " 残骸场" : " 空间站"),
+        name: node.name + "-" + (i + 1) + (k === "planet" ? " 行星" : " 空间站"),
         orbit: Math.round(orbit), ang: ang, size: size, tier: rt,
       };
-      if (k === "derelict") b.abundance = {};
       if (k === "planet") b.planetType = planetTypeForStage(regionStage, rand);
       bodies.push(b);
     }
@@ -156,7 +170,12 @@
   function ensureBodies(map) {
     if (!map || !map.nodes) return map;
     for (const n of map.nodes) {
-      if (!n.bodies || !n.bodies.length) { n.bodies = makeBodies(n, hashPrng(n.id)); continue; }
+      if (!n.bodies || !n.bodies.length) {
+        const reg2 = (map.regions || []).find(r => r.id === n.region) || {};
+        const stage2 = reg2.stage || 1;
+        const band2 = SECLEVEL_TABLE[reg2.secLevel] ? SECLEVEL_TABLE[reg2.secLevel].band : 1;
+        n.bodies = makeBodies(n, hashPrng(n.id), stage2, band2); continue;
+      }
       // 节点 abundance 补全（缺某矿种则按 tier 补丰寡倍率）
       if (!n.abundance) n.abundance = {};
       let needFill = false;
@@ -179,6 +198,13 @@
         }
       } else {
         for (const g of ALL_GASES) if (!(g in gas.abundance)) gas.abundance[g] = +oreAbundance(GAS_TIER[g], nodeRich(n), gr).toFixed(3);
+      }
+      // 迁移：保证每个节点恰好 1 个残骸场（旧档可能缺失或多余，缺则补，多则保留首条不删）
+      if (!n.bodies.some(b => b.kind === "derelict")) {
+        const rr = hashPrng(n.id + "_dr");
+        const reg2 = (map.regions || []).find(r => r.id === n.region) || {};
+        const band2 = SECLEVEL_TABLE[reg2.secLevel] ? SECLEVEL_TABLE[reg2.secLevel].band : 1;
+        n.bodies.push(makeDerelict(n, rr, band2));
       }
     }
     return map;
@@ -342,7 +368,7 @@
           faction: null,
           trialOpen: reg.stage <= TRIAL_STAGE_MAX,  // MVP 试玩门禁：仅 stage1 开放
         };
-        nd.bodies = makeBodies(nd, rand, reg.stage);   // 星系内部天体（确定性）
+        nd.bodies = makeBodies(nd, rand, reg.stage, SECLEVEL_TABLE[reg.secLevel].band);   // 星系内部天体（确定性；band=安等分档→遗址 I–V）
         nodes.push(nd);
         sysIdx++;
       }
@@ -567,5 +593,5 @@
     };
   }
 
-  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE };
+  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, makeDerelict, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE };
 });

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-drag-selftest</title>
+<style>body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}#log{white-space:pre-wrap}iframe{position:absolute;left:-9999px;top:0;width:1240px;height:960px;border:0}</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html#base"></iframe>
+<script>
+(function () {
+  const out = [];
+  let pass = 0, fail = 0;
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() { out.push("== " + pass + " PASS / " + fail + " FAIL =="); document.getElementById("log").textContent = out.join("\n"); document.title = pass + "PASS-" + fail + "FAIL"; }
+
+  const f = document.getElementById("f");
+  f.addEventListener("load", function () { setTimeout(run, 1500); });
+
+  function run() {
+    const w = f.contentWindow, d = f.contentDocument;
+    const q = (sel) => d.querySelector(sel);
+    const qa = (sel) => [...d.querySelectorAll(sel)];
+
+    ok("进入舰基页", !!q(".base-layout"), "layout=" + !!q(".base-layout"));
+    if (!q(".base-layout")) { dump(); return; }
+    ok("舱段卡片 9 张（含核心）", qa(".base-layout .base-module").length === 9, "n=" + qa(".base-layout .base-module").length);
+    ok("提示条已渲染", !!q(".base-drag-hint b") && q(".base-drag-hint b").textContent.indexOf("拖动舱段") >= 0);
+    ok("初始无「恢复默认布局」按钮（未自定义）", !qa('[data-act="baseSlotReset"]').length);
+
+    // 阈值内点击必须仍然打开右侧舱位详情（拖拽不能吃掉原有交互）
+    const inventCard = q(".base-module.base-invent");
+    const pevAt = (el, type, x, y) => el.dispatchEvent(new w.PointerEvent(type, {
+      pointerId: 21, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true,
+      clientX: x, clientY: y, button: 0, buttons: type === "pointerup" ? 0 : 1,
+    }));
+    const ri = inventCard.getBoundingClientRect();
+    const ix = Math.round(ri.left + ri.width / 2), iy = Math.round(ri.top + ri.height / 2);
+    pevAt(inventCard, "pointerdown", ix, iy);
+    pevAt(inventCard, "pointerup", ix, iy);
+    inventCard.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true, clientX: ix, clientY: iy }));
+    ok("阈值内点击仍打开舱位详情", (q(".base-focus-panel h3") || {}).textContent === "发明舱",
+      "h3=" + ((q(".base-focus-panel h3") || {}).textContent || ""));
+    ok("点击后未留下拖拽残留类", !q(".base-module.dragging") && !q(".base-module.drop-target"));
+
+    const energy = q(".base-module.base-energy");
+    const dock = q(".base-module.base-dock");
+    ok("能源舱 / 舰队泊位可定位", !!energy && !!dock);
+    if (!energy || !dock) { dump(); return; }
+
+    const styleOf = (el) => (el.getAttribute("style") || "").replace(/\s+/g, "");
+    const beforeEnergy = styleOf(energy), beforeDock = styleOf(dock);
+    const noteBefore = (q(".base-queue-note") || {}).textContent || "";
+
+    // 让两张卡都进视口（elementFromPoint 只认视口内坐标）
+    energy.scrollIntoView({ block: "center" });
+    const ra = energy.getBoundingClientRect();
+    const rb = dock.getBoundingClientRect();
+    const ax = Math.round(ra.left + ra.width / 2), ay = Math.round(ra.top + ra.height / 2);
+    const bx = Math.round(rb.left + rb.width / 2), by = Math.round(rb.top + rb.height / 2);
+    ok("两张卡中心都在视口内", ax > 0 && ay > 0 && bx > 0 && by > 0 && ay < w.innerHeight && by < w.innerHeight,
+      JSON.stringify({ a: [ax, ay], b: [bx, by], vh: w.innerHeight }));
+
+    function pev(type, x, y) {
+      const ev = new w.PointerEvent(type, {
+        pointerId: 7, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true,
+        clientX: x, clientY: y, button: 0, buttons: type === "pointerup" ? 0 : 1,
+      });
+      energy.dispatchEvent(ev);
+    }
+
+    // 拖动：down → 越过 6px 阈值 → 移到目标卡 → up
+    pev("pointerdown", ax, ay);
+    pev("pointermove", ax + 12, ay + 12);
+    const draggingCls = q(".base-module.dragging");
+    ok("越过阈值后进入拖动态（.dragging）", !!draggingCls, "el=" + (draggingCls ? draggingCls.className : "none"));
+    ok("拖动中卡片带位移变量 --dx", !!draggingCls && /--dx:\s*\d/.test(draggingCls.getAttribute("style") || ""),
+      draggingCls ? styleOf(draggingCls).slice(-46) : "");
+
+    pev("pointermove", bx, by);
+    const dt = q(".base-module.drop-target");
+    ok("悬停目标卡出现落点提示", !!dt && dt.classList.contains("base-dock"), "target=" + (dt ? dt.className : "none"));
+
+    pev("pointerup", bx, by);
+
+    const energy2 = q(".base-module.base-energy");
+    const dock2 = q(".base-module.base-dock");
+    const afterEnergy = styleOf(energy2), afterDock = styleOf(dock2);
+    ok("能源舱坐标已改为泊位原坐标(2,3)", /grid-column:2;grid-row:3/.test(afterEnergy), afterEnergy.slice(0, 40));
+    ok("舰队泊位坐标已改为能源舱原坐标(3,1)", /grid-column:3;grid-row:1/.test(afterDock), afterDock.slice(0, 40));
+    ok("坐标确实对调（非原地不动）", beforeEnergy !== afterEnergy && beforeDock !== afterDock);
+    ok("拖动残留类已清理", !q(".base-module.dragging") && !q(".base-module.drop-target") && !q(".base-layout.is-dragging"));
+    ok("提示条出现「恢复默认布局」", !!q('[data-act="baseSlotReset"]'));
+
+    // 引擎联动：能源舱不再邻接总装船坞 → 制造耗时加成从 -6% 变为 -0%
+    const noteAfter = (q(".base-queue-note") || {}).textContent || "";
+    ok("制造耗时加成随布局重算（-6% → -0%）",
+      noteBefore.indexOf("制造 0/1 · 耗时 -6%") >= 0 && noteAfter.indexOf("制造 0/1 · 耗时 -0%") >= 0,
+      "beforeN=" + (noteBefore.match(/制造[^·]*· 耗时 -\d+%/) || ["?"])[0] + " afterN=" + (noteAfter.match(/制造[^·]*· 耗时 -\d+%/) || ["?"])[0]);
+
+    // 拖后 click 抑制：320ms 内点布局区不应打开详情
+    const focusBefore = (q(".base-focus-title") || {}).textContent || "";
+    const clickEv = new w.MouseEvent("click", { bubbles: true, cancelable: true, clientX: bx, clientY: by });
+    q(".base-module.base-dock").dispatchEvent(clickEv);
+    const focusAfter = (q(".base-focus-title") || {}).textContent || "";
+    ok("拖后 320ms 内的误触 click 被吞掉", focusBefore === focusAfter, "before=" + focusBefore.slice(0, 18));
+
+    // 唯一核心不可拖
+    const core = q(".base-module.base-core");
+    const coreStyle = styleOf(core);
+    const rc = core.getBoundingClientRect();
+    const cx = Math.round(rc.left + rc.width / 2), cy = Math.round(rc.top + rc.height / 2);
+    core.dispatchEvent(new w.PointerEvent("pointerdown", { pointerId: 9, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 }));
+    core.dispatchEvent(new w.PointerEvent("pointermove", { pointerId: 9, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true, clientX: ax, clientY: ay, button: 0, buttons: 1 }));
+    ok("唯一核心拖不动", !q(".base-module.dragging") && styleOf(q(".base-module.base-core")) === coreStyle);
+    core.dispatchEvent(new w.PointerEvent("pointerup", { pointerId: 9, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true, clientX: ax, clientY: ay, button: 0, buttons: 0 }));
+
+    // 恢复默认布局
+    setTimeout(function () {
+      const btn = q('[data-act="baseSlotReset"]');
+      if (btn) btn.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+      const e3 = styleOf(q(".base-module.base-energy")), d3 = styleOf(q(".base-module.base-dock"));
+      ok("恢复默认布局后能源舱回(3,1)", /grid-column:3;grid-row:1/.test(e3), e3.slice(0, 40));
+      ok("恢复默认后泊位回(2,3)", /grid-column:2;grid-row:3/.test(d3), d3.slice(0, 40));
+      dump();
+    }, 1200);
+  }
+})();
+</script>
+</body>
+</html>

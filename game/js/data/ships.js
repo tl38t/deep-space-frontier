@@ -25,14 +25,35 @@
   //   frigate/destroyer 可在起始本体（空间站 Lv1，bodyLevel=0）直接建造；
   //   cruiser/battlecruiser 需升级核心一次（星堡 Lv2）；battleship/capital 需 Lv3；supercapital 需 Lv4。
   const SHIPS = {
-    frigate:      { id: "frigate",      name: "启程级", classTier: 1, bodyLevelReq: 0, cost: { fe_alloy: 20, struct: 4 },                 buildTime: 60,  slots: 2, hp: { shield: 240,  armor: 320,  structure: 460 } },
-    destroyer:     { id: "destroyer",     name: "星矛级", classTier: 1, bodyLevelReq: 0, cost: { fe_alloy: 40, struct: 10, prop: 4 },        buildTime: 120, slots: 3, hp: { shield: 360,  armor: 520,  structure: 680 } },
-    cruiser:       { id: "cruiser",       name: "铁卫级", classTier: 2, bodyLevelReq: 1, cost: { ni_alloy: 60, struct: 20, prop: 10 },       buildTime: 300, slots: 4, hp: { shield: 700,  armor: 980,  structure: 1300 } },
-    battlecruiser: { id: "battlecruiser", name: "闪刃级", classTier: 2, bodyLevelReq: 1, cost: { ni_alloy: 120, struct: 40, prop: 20, weapon: 10 }, buildTime: 540, slots: 5, hp: { shield: 1000, armor: 1400, structure: 1900 } },
-    battleship:    { id: "battleship",    name: "岩脊级", classTier: 3, bodyLevelReq: 2, cost: { bo_alloy: 200, struct: 80, prop: 40, weapon: 30 }, buildTime: 1200, slots: 6, hp: { shield: 1800, armor: 2600, structure: 3400 } },
-    capital:       { id: "capital",       name: "山海级", classTier: 3, bodyLevelReq: 2, cost: { bo_alloy: 400, struct: 160, prop: 80, weapon: 60 }, buildTime: 2400, slots: 8, hp: { shield: 3000, armor: 4200, structure: 5600 } },
-    supercapital:  { id: "supercapital",  name: "星渊泰坦", classTier: 4, bodyLevelReq: 3, cost: { px_alloy: 600, struct: 300, prop: 150, weapon: 120 }, buildTime: 5400, slots: 10, hp: { shield: 6000, armor: 9000, structure: 12000 } },
+    frigate:      { id: "frigate",      name: "启程级", classTier: 1, bodyLevelReq: 0, cost: { fe_alloy: 20, struct: 4 },                 buildTime: 60,  slots: 2, hp: { shield: 240,  armor: 320,  structure: 460 },  archaeologyScanStrength: 5 },
+    destroyer:     { id: "destroyer",     name: "星矛级", classTier: 1, bodyLevelReq: 0, cost: { fe_alloy: 40, struct: 10, prop: 4 },        buildTime: 120, slots: 3, hp: { shield: 360,  armor: 520,  structure: 680 },  archaeologyScanStrength: 8 },
+    cruiser:       { id: "cruiser",       name: "铁卫级", classTier: 2, bodyLevelReq: 1, cost: { ni_alloy: 60, struct: 20, prop: 10 },       buildTime: 300, slots: 4, hp: { shield: 700,  armor: 980,  structure: 1300 }, archaeologyScanStrength: 12 },
+    battlecruiser: { id: "battlecruiser", name: "闪刃级", classTier: 2, bodyLevelReq: 1, cost: { ni_alloy: 120, struct: 40, prop: 20, weapon: 10 }, buildTime: 540, slots: 5, hp: { shield: 1000, armor: 1400, structure: 1900 }, archaeologyScanStrength: 14 },
+    battleship:    { id: "battleship",    name: "岩脊级", classTier: 3, bodyLevelReq: 2, cost: { bo_alloy: 200, struct: 80, prop: 40, weapon: 30 }, buildTime: 1200, slots: 6, hp: { shield: 1800, armor: 2600, structure: 3400 }, archaeologyScanStrength: 18 },
+    capital:       { id: "capital",       name: "山海级", classTier: 3, bodyLevelReq: 2, cost: { bo_alloy: 400, struct: 160, prop: 80, weapon: 60 }, buildTime: 2400, slots: 8, hp: { shield: 3000, armor: 4200, structure: 5600 }, archaeologyScanStrength: 24 },
+    supercapital:  { id: "supercapital",  name: "星渊泰坦", classTier: 4, bodyLevelReq: 3, cost: { px_alloy: 600, struct: 300, prop: 150, weapon: 120 }, buildTime: 5400, slots: 10, hp: { shield: 6000, armor: 9000, structure: 12000 }, archaeologyScanStrength: 32 },
   };
+
+  // 舰船装配槽位布局（2026-10-31 舰船装配系统）：把原有扁平 slots 拆成 high/mid/low/rig 四槽，总数与 slots 对齐。
+  // 深空星疆成员以单舰执行全部活动，故每艘舰都给到考古/战斗/工业可共用的槽位；装配加成由 Engine.Archaeology / Combat / Production 读取。
+  const SLOT_LAYOUT = {
+    frigate:      { high: 1, mid: 1, low: 0, rig: 0 },
+    destroyer:     { high: 1, mid: 1, low: 1, rig: 0 },
+    cruiser:       { high: 2, mid: 1, low: 1, rig: 0 },
+    battlecruiser: { high: 2, mid: 1, low: 1, rig: 1 },
+    battleship:    { high: 2, mid: 2, low: 1, rig: 1 },
+    capital:       { high: 3, mid: 2, low: 2, rig: 1 },
+    supercapital:  { high: 3, mid: 3, low: 3, rig: 1 },
+  };
+  function slotLayout(shipId) {
+    const base = SLOT_LAYOUT[shipId] || { high: 1, mid: 1, low: 0, rig: 0 };
+    return { high: base.high, mid: base.mid, low: base.low, rig: base.rig };
+  }
+  // 槽位总数（= 原 slots）
+  function totalSlots(shipId) {
+    const l = slotLayout(shipId);
+    return l.high + l.mid + l.low + l.rig;
+  }
 
   // 单个能源舱的发电输出（供能）。与 BODY_LEVELS[i].energy（本体外壳电网基础容量）共同构成总预算。
   const ENERGY_OUTPUT = 100;
@@ -156,5 +177,6 @@
   }
 
   return { SHIPS, BODY_LEVELS, bodyLevelPlan, canBuildAt, shipsAtLevel, shipById, maxHp, upgradeCost, ENERGY_OUTPUT,
+    SLOT_LAYOUT, slotLayout, totalSlots,
     BASE_MODULES, BASE_HULLS, baseHullById, baseModuleByType, baseHullSlots, createInitialBase };
 });
