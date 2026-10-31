@@ -586,6 +586,7 @@
       faction: region.pirate || "sansha",
       secLevel: region.secLevel,
       secName: p.name,
+      band: p.band,
       iskMult: p.iskMult,
       repMult: p.repMult,
       requiredCL: p.requiredCL,

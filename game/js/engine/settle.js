@@ -135,6 +135,43 @@
     return { ok: true, fuelCost: edge.fuelCost };
   }
 
+  // 战斗受击：把该节点本 tick 的敌方总伤害平摊给参战成员，按 shield→armor→structure 扣除。
+  // 结构归零 → 舰体失去战力，撤出剿匪返港（不阵亡：人是活的，船进船坞修）。
+  // 返港后 status="idle"，下一 tick 由 Repair.tick 自动拉进修复泊位（复用 1-E 队列）。
+  // O(参战成员)，与离线时长无关（受击量由 Combat.advance 一次算出）。
+  function applyCombatDamage(state, nodeId, totalDamage) {
+    if (!(totalDamage > 0)) return [];
+    const fighters = (state.members || []).filter(function (m) {
+      return m && !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === nodeId;
+    });
+    if (!fighters.length) return [];
+    const share = totalDamage / fighters.length;
+    const withdrawn = [];
+    for (const m of fighters) {
+      m.hp = m.hp || {};
+      let dmg = share;
+      for (const key of ["shield", "armor", "structure"]) {
+        if (dmg <= 0) break;
+        const cur = Math.max(0, m.hp[key] || 0);
+        const take = Math.min(cur, dmg);
+        m.hp[key] = cur - take;
+        dmg -= take;
+      }
+      // 浮点容差：血池封顶后 damage 恰等于血池，逐项相减会残留 ~1e-13，不能因此判定「还有结构」
+      if ((m.hp.structure || 0) <= 1e-6) {
+        m.hp.structure = 0;
+        m.assignment = null;
+        m.status = "idle";
+        const ship = Data.Ships.shipById ? Data.Ships.shipById(m.shipId) : null;
+        pushReport(state, "战斗撤离", [
+          m.name + " 的" + ((ship && ship.name) || "舰船") + "结构被打穿，已撤出剿匪返港，等待船坞修复。",
+        ]);
+        withdrawn.push(m.id);
+      }
+    }
+    return withdrawn;
+  }
+
   // 主结算
   function settle(state, now) {
     const raw = Math.max(0, (now - state.lastSeen) / 1000);
@@ -150,13 +187,40 @@
     const Repair = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Repair : null;
     if (Repair) Repair.tick(state, dt);
 
-    // 0) 预聚合各节点剿匪战力（O(1) 单次扫描；结算循环内只读不重算，不踩 §14.5 红线）
-    const combatByNode = {}, combatCount = {};
-    for (const m of state.members) {
-      if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
-      const nid = m.assignment.nodeId;
-      combatByNode[nid] = (combatByNode[nid] || 0) + levelOf(m.skills.combatLaser) + levelOf(m.skills.combatTurret) + levelOf(m.skills.command);
-      combatCount[nid] = (combatCount[nid] || 0) + 1;
+    // 0) 剿匪逐波结算（在线逐波 / 离线封顶外推；零分配循环，见 Engine.Combat.advance）
+    //    每个「有参战成员」的节点结算一次，产出直接累加进 state.res；成员循环内不再重复算 loot。
+    const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
+    state.combatCarry = state.combatCarry || {};
+    state.battles = state.battles || {};
+    if (Combat && Combat.advance) {
+      const combatNodes = {};
+      for (const m of state.members) {
+        if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
+        combatNodes[m.assignment.nodeId] = 1;
+      }
+      for (const nid in combatNodes) {
+        const r = Combat.advance(state, nid, dt, state.combatCarry[nid] || 0);
+        state.combatCarry[nid] = r.carry;
+        if (r.credits || r.rep) { state.res.credits += r.credits; state.res.rep += r.rep; }
+        // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
+        if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
+        // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
+        const b = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
+        b.waves += r.waves;
+        b.credits += r.credits;
+        b.rep += r.rep;
+        if (r.waves > 0) b.lastTs = now;
+        b.waveSec = r.waveSec;
+        b.progress = r.progress;
+        b.squadPower = r.squadPower;
+        b.enemyPower = r.enemyPower;
+        b.clearRatio = r.clearRatio;
+        b.squadDps = r.squadDps;
+        b.fleetDps = r.fleetDps;
+        b.band = r.fleet ? r.fleet.band : 1;
+      }
+      // 战斗结束（节点已无参战成员）时清空该节点战报与余量，保证「本场」语义正确
+      for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; delete state.combatCarry[k]; } }
     }
 
     // 1) 燃料回复
@@ -226,23 +290,8 @@
           }
         }
       } else if (a.type === "combat") {
-        // 轻量化战斗结算：挂机连续速率，O(1)。无逐波仿真、无每击杀簿记、无 N 级变量。
-        // 详见 §14.7「轻量化战斗模式」：产出 = baseRate × skill × env × mod × eff × underCL × dt。
-        const raid = node ? Data.StarMap.pirateRaid(state.starMap, a.nodeId) : null;
-        const sp = combatByNode[a.nodeId] || 0;          // 该节点三武器等级之和
-        const cnt = combatCount[a.nodeId] || 0;            // 该节点参战人数
-        const skill = combatBonus(m.skills);             // 该成员战斗技能加成（独立乘区）
-        const envRep = raid ? raid.repMult : 1;          // 星系环境：声望倍率（独立乘区）
-        const envCredit = raid ? raid.iskMult : 1;       // 星系环境：赏金倍率（独立乘区）
-        const modCredit = (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1; // 成员修正：星币倍率（独立乘区）
-        const eff = raid ? clamp(sp / raid.piratePower, 0.2, 2.5) : 1;   // 战力效率（独立乘区）
-        const avgCL = cnt > 0 ? sp / cnt : 0;             // 平均战斗等级
-        const underCL = (raid && avgCL < raid.requiredCL) ? 0.5 : 1;     // 等级不足惩罚（独立乘区）
-        // 基础速率（标定常数）。未来调平衡只改这里，不动公式结构。
-        const BASE_REP_RATE = 0.05;
-        const BASE_CREDIT_RATE = 0.3;
-        state.res.rep += BASE_REP_RATE * skill * envRep * eff * underCL * masteryYield * dt;
-        state.res.credits += BASE_CREDIT_RATE * skill * envCredit * modCredit * eff * underCL * masteryYield * dt;
+        // 剿匪产出已在第 0 步按节点逐波结算（Engine.Combat.advance）；此处只增长战斗技能，
+        // 避免「节点级产出」在成员循环里被重复累加。无逐波仿真、无每击杀簿记。
         // 战斗同时增长三武器技能（激光/炮台/指挥，各满额）+ 防御（副，0.6×），复用 EVE-IDLE 战斗攻击三类 / 战斗防御
         m.skills.combatLaser = (m.skills.combatLaser || 0) + XP_RATE.combatLaser * dt * passionMult(m, "combatLaser") * xpMultOf(m, "combatLaser");
         m.skills.combatTurret = (m.skills.combatTurret || 0) + XP_RATE.combatTurret * dt * passionMult(m, "combatTurret") * xpMultOf(m, "combatTurret");

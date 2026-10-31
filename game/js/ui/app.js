@@ -487,6 +487,87 @@
   }
   function colOf2(k) { return kindColor(k); }
 
+  // 单条三防血条（label + 百分比宽度填充）。cur/max 任一非法都退化为空条，不抛错。
+  function bhpRow(label, key, cur, max) {
+    const c = Number(cur) || 0, m = Number(max) || 0;
+    const pct = m > 0 ? Math.max(0, Math.min(100, (c / m) * 100)) : 0;
+    return '<div class="bhp-row"><span>' + label + '</span>'
+      + '<div class="bhp ' + key + '"><i style="width:' + pct.toFixed(1) + '%"></i></div></div>';
+  }
+
+  // 战斗观测面板：只在「本节点有参战成员」时出现（= 焦点战场）。
+  // 数据全部读 state.battles（settle 每 tick 写入标量），renderView 1Hz 刷新，
+  // 血条按「一波」的节奏推进而非逐帧重绘，开销与帧率无关。
+  function battlePanelBlock(node) {
+    const fighters = state.members.filter(function (m) {
+      return !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id;
+    });
+    if (!fighters.length) return "";
+    const bt = (state.battles && state.battles[node.id]) || {};
+    const raid = Data.StarMap.pirateRaid(state.starMap, node.id);
+    const Pirates = Data.Pirates;
+    const fleet = (Pirates && raid) ? Pirates.fleetFor(raid.band || 1, raid.faction) : null;
+    const snap = (fleet && Engine.Combat && Engine.Combat.fleetSnapshot)
+      ? Engine.Combat.fleetSnapshot(fleet, bt.progress || 0) : null;
+
+    let html = '<h3>战斗观测 · ' + esc(node.name) + '</h3><div class="battle-panel">';
+
+    html += '<div class="battle-head">'
+      + '<span class="tag good">第 ' + fmt(Math.round(bt.waves || 0)) + ' 波</span>'
+      + (bt.waveSec ? '<span class="tag">一波 ' + (Math.round(bt.waveSec * 10) / 10) + ' 秒</span>' : '')
+      + '<span class="dim">我方火力 ' + fmt(Math.round(bt.squadDps || 0)) + '/s　敌方火力 '
+      + (Math.round((bt.fleetDps || 0) * 10) / 10) + '/s</span>'
+      + '</div>';
+
+    html += '<div class="battle-arena">';
+
+    // 左：我方参战舰船
+    html += '<div class="battle-side"><div class="battle-kicker">我方参战 · ' + fighters.length + ' 艘</div>';
+    for (const m of fighters) {
+      const max = Data.Ships.maxHp(m.shipId);
+      const ship = Data.Ships.shipById(m.shipId);
+      html += '<div class="battle-unit">'
+        + '<div class="battle-unit-head"><b>' + esc((ship && ship.name) || "舰船") + '</b>'
+        + '<span class="dim">' + esc(m.name) + '</span></div>'
+        + bhpRow("盾", "shield", m.hp.shield, max.shield)
+        + bhpRow("甲", "armor", m.hp.armor, max.armor)
+        + bhpRow("构", "structure", m.hp.structure, max.structure)
+        + '</div>';
+    }
+    html += '</div>';
+
+    // 右：敌方编队
+    html += '<div class="battle-side">';
+    if (snap) {
+      html += '<div class="battle-kicker">' + esc(snap.factionName || "") + ' · ' + esc(snap.title || "编队")
+        + ' · 剩 ' + (snap.ships.length - snap.cleared) + ' 艘</div>';
+      snap.ships.forEach(function (s, i) {
+        const isTarget = (i === snap.targetIdx);
+        html += '<div class="battle-unit enemy' + (isTarget ? ' target' : '') + (s.cleared ? ' down' : '') + '">'
+          + '<div class="battle-unit-head"><b>' + esc(s.name) + '</b>'
+          + '<span class="battle-kind ' + s.kind + '">' + s.kindCn + '</span></div>'
+          + bhpRow("盾", "shield", s.hp.shield, s.maxHp.shield)
+          + bhpRow("甲", "armor", s.hp.armor, s.maxHp.armor)
+          + bhpRow("构", "structure", s.hp.structure, s.maxHp.structure)
+          + (s.cleared ? '<div class="battle-cleared">已清场</div>' : '')
+          + '</div>';
+      });
+    } else {
+      html += '<div class="battle-kicker">敌方编队</div><div class="dim">正在扫描海盗信号…</div>';
+    }
+    html += '</div></div>';
+
+    html += '<div class="battle-foot">'
+      + '<span class="dim">本场累计 ' + fmt(Math.round(bt.waves || 0)) + ' 波'
+      + (snap ? ' · 本轮清场 ' + snap.cleared + ' 艘' : '') + '</span>'
+      + '<span><b class="good">+' + fmt(Math.round(bt.credits || 0)) + ' ⛁</b>'
+      + '<span class="dim">　+' + fmt(Math.round(bt.rep || 0)) + ' 功勋</span></span>'
+      + '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
   // 星系海盗据点 + 剿匪小队管理面板
   function viewPirateRaid(node) {
     const raid = Data.StarMap.pirateRaid(state.starMap, node.id);
@@ -494,22 +575,27 @@
     const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(raid.faction) : null;
     const cap = Engine.Combat.getSquadCapacity(state);
     const deployedHere = state.squad && state.squad.enabled && state.squad.targetId === node.id;
-    // 小队战力（部署到本星系时的总三武器等级；O(1)）
+    // 本节点实际参战战力（读 assignment，与战斗观测面板同源，避免「小队名册战力 0 但正在打」的自相矛盾）
+    const fighting = state.members.filter(function (m) {
+      return !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id;
+    });
     let sp = 0;
-    for (const id of (state.squad.members || [])) {
-      const m = state.members.find(x => x.id === id);
-      if (m && !m.destroyed) sp += Engine.Settle.levelOf(m.skills.combatLaser) + Engine.Settle.levelOf(m.skills.combatTurret) + Engine.Settle.levelOf(m.skills.command);
+    for (const m of fighting) {
+      sp += Engine.Settle.levelOf(m.skills.combatLaser) + Engine.Settle.levelOf(m.skills.combatTurret) + Engine.Settle.levelOf(m.skills.command);
     }
     const eff = Math.max(0.2, Math.min(2.5, raid.piratePower > 0 ? sp / raid.piratePower : 1));
-    const avgCL = (state.squad.members && state.squad.members.length) ? sp / state.squad.members.length : 0;
-    const underCL = avgCL < raid.requiredCL ? '<span class="tag bad">低于推荐等级 · 效率×0.5</span>' : "";
+    const avgCL = fighting.length ? sp / fighting.length : 0;
+    const underCL = (fighting.length && avgCL < raid.requiredCL) ? '<span class="tag bad">低于推荐等级 · 效率×0.5</span>' : "";
     let html = "<h3>海盗据点 · 剿匪</h3><div class='panel squad-panel'>";
     html += '<div class="row"><b>' + (pf ? esc(pf.name) : raid.faction) + " 劫掠者</b>" +
       '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
       '<span class="tag">推荐战斗等级 ' + raid.requiredCL + "</span>" +
       '<span class="tag">海盗战力 ' + raid.piratePower + "</span></div>";
     html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
-      "　小队战力 " + sp + "　预估效率 ×" + eff.toFixed(2) + "　" + underCL + "</div>";
+      "　本节点战力 " + sp + (fighting.length ? "（" + fighting.length + " 艘在战）" : "（暂无舰船）") +
+      "　预估效率 ×" + (fighting.length ? eff.toFixed(2) : "—") + "　" + underCL + "</div>";
+    // 战斗观测面板（一波 = 一支敌方编队）：左我方参战舰船三防血条，右敌方编队卡片，底部本场累计
+    html += battlePanelBlock(node);
     // 小队名册
     const inSquad = (state.squad.members || []).map(id => state.members.find(m => m.id === id)).filter(Boolean);
     html += '<div class="squad-roster">';

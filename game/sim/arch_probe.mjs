@@ -10,6 +10,7 @@ const files = [
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
+  "js/data/pirates.js",
   "js/data/factions.js", "js/data/names.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js",
@@ -1103,6 +1104,101 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   const inRep = info.repairing.concat(info.waiting).some(e => e.id === m3.id);
   ok("修复:受损成员进入修复队列", inRep, "used=" + info.used + "/" + info.bays);
   ok("修复:泊位数量=max(2,bodyLevel+2)", info.bays === Math.max(2, sb3.base.bodyLevel + 2), "bays=" + info.bays);
+})();
+
+(function probeWaveCombat() {
+  const C = Engine.Combat, S = Engine.Settle;
+  const sb = Engine.State.defaultState(now, Data);
+  const m = sb.members[0];
+  // 抬高战斗技能，保证 sp>0、eff 有值，断言可复现
+  m.skills.combatLaser = 20000; m.skills.combatTurret = 20000; m.skills.command = 20000;
+  const asg = Engine.Dispatch.assign(sb, m.id, "combat", { nodeId: sb.base.nodeId });
+  ok("齐射:派遣战斗成功", asg && asg.ok !== false, JSON.stringify(asg));
+
+  // 29a) 预聚合：每波掉落 / 一波时长 / 编队三要素
+  const P = C.prepareNode(sb, sb.base.nodeId);
+  ok("齐射:prepareNode 返回每波掉落与波时长",
+    !!P && P.dropCredits > 0 && P.dropRep > 0 && P.waveSec >= C.WAVE_MIN_SEC && P.waveSec <= C.WAVE_MAX_SEC,
+    P ? ("cred/wave=" + P.dropCredits.toFixed(2) + " waveSec=" + P.waveSec.toFixed(2) + "s") : "null");
+  ok("齐射:编队含 3 艘敌舰且带三防血量",
+    !!P && !!P.fleet && P.fleet.ships.length === 3 &&
+      P.fleet.ships.every(s => s.maxHp.shield > 0 && s.maxHp.armor > 0 && s.maxHp.structure > 0),
+    P && P.fleet ? ("fleet=" + P.fleet.ships.map(s => s.name + "(" + s.kindCn + ")").join(" / ")) : "");
+  ok("齐射:波时长 = 每波掉落 ÷ 每秒速率（两路推导一致）",
+    !!P && Math.abs(P.waveSec - (P.dropCredits / P.rateCredits)) < 1e-6,
+    P ? ("waveSec=" + P.waveSec.toFixed(4) + " drop/rate=" + (P.dropCredits / P.rateCredits).toFixed(4)) : "");
+
+  // 29b) 核心：波时长不再是硬编码常量，而是随战力变化
+  const weak = Engine.State.defaultState(now, Data);
+  const wm = weak.members[0];
+  wm.skills.combatLaser = 0; wm.skills.combatTurret = 0; wm.skills.command = 0;
+  Engine.Dispatch.assign(weak, wm.id, "combat", { nodeId: weak.base.nodeId });
+  const Pw = C.prepareNode(weak, weak.base.nodeId);
+  ok("齐射:战力越低一波越长（波时长由敌我强度算出，非常量）",
+    !!Pw && Pw.waveSec > P.waveSec * 1.5,
+    "weak=" + (Pw ? Pw.waveSec.toFixed(2) : "-") + "s vs strong=" + P.waveSec.toFixed(2) + "s");
+
+  // 29c) 经济等价：未触发 clamp 时，新模型每秒速率 == 旧连续公式速率
+  ok("齐射:每秒速率与旧连续公式等价（经济零漂移）",
+    !!P && Math.abs(P.realRateCredits - P.rateCredits) < 1e-9,
+    P ? ("real=" + P.realRateCredits.toFixed(6) + " raw=" + P.rateCredits.toFixed(6)) : "");
+
+  // 29d) 波数换算 + 掉落 = 每波 × 波数（按实际战斗时长，受血池封顶）
+  const r1 = C.advance(sb, sb.base.nodeId, 3600, 0);
+  const expWaves1 = Math.floor(r1.fightSec / P.waveSec);
+  ok("齐射:波数 = 实际战斗时长 ÷ 波长", r1.waves === expWaves1,
+    "waves=" + r1.waves + " exp=" + expWaves1 + " fightSec=" + r1.fightSec.toFixed(1));
+  ok("齐射:掉落 = 每波掉落 × 波数", Math.abs(r1.credits - P.dropCredits * r1.waves) < 1e-6,
+    "cred=" + r1.credits.toFixed(2) + " exp=" + (P.dropCredits * r1.waves).toFixed(2));
+
+  // 29e) 受击封顶：血池打空后不再继续受击（离线大 dt 不失真）
+  ok("齐射:受击正比于实际战斗时长", Math.abs(r1.damage - P.fleetDps * r1.fightSec) < 1e-6,
+    "dmg=" + r1.damage.toFixed(1) + " fleetDps=" + P.fleetDps.toFixed(2));
+  let poolNow = 0;
+  for (const mm of P.members) poolNow += mm.hp.shield + mm.hp.armor + mm.hp.structure;
+  ok("齐射:超长 dt 触发血池封顶（wiped）", r1.wiped === true && r1.fightSec < 3600,
+    "fightSec=" + r1.fightSec.toFixed(1) + "/3600 wiped=" + r1.wiped);
+
+  // 29f) carry：未满一波不结算
+  const rc0 = C.advance(sb, sb.base.nodeId, 0, 0);
+  const rc1 = C.advance(sb, sb.base.nodeId, P.waveSec * 0.4, 0);
+  ok("齐射:carry 未满一波不结算", rc1.waves === 0 && rc1.carry > 0,
+    "waves=" + rc1.waves + " carry=" + rc1.carry.toFixed(2));
+
+  // 29g) 编队快照：按波内进度扣血，清场数递增
+  const snap0 = C.fleetSnapshot(P.fleet, 0);
+  const snap5 = C.fleetSnapshot(P.fleet, 0.5);
+  const snap1 = C.fleetSnapshot(P.fleet, 1);
+  const hpSum = s => s.ships.reduce((a, x) => a + x.hp.shield + x.hp.armor + x.hp.structure, 0);
+  ok("齐射:编队快照按进度扣血", !!snap0 && hpSum(snap0) > hpSum(snap5) && hpSum(snap5) > hpSum(snap1),
+    "0%=" + hpSum(snap0) + " 50%=" + hpSum(snap5) + " 100%=" + hpSum(snap1));
+  ok("齐射:进度 100% 时全部清场", !!snap1 && snap1.cleared === 3 && snap1.targetIdx === -1,
+    "cleared=" + (snap1 ? snap1.cleared : "-"));
+
+  // 29h) 性能：O(1) 闭式，成本与 dt 无关
+  const t0 = Date.now();
+  for (let k = 0; k < 1000; k++) C.advance(sb, sb.base.nodeId, 86400, 0);
+  const ms = Date.now() - t0;
+  ok("齐射:O(1) 闭式 1000 次超大 dt < 50ms", ms < 50, ms + "ms / 1000 次");
+
+  // 29i) settle 接线：战报累计 + 掉落入账 + 成员被打穿撤离返港
+  const sb2 = Engine.State.defaultState(now, Data);
+  const m2 = sb2.members[0];
+  m2.skills.combatLaser = 20000; m2.skills.combatTurret = 20000; m2.skills.command = 20000;
+  Engine.Dispatch.assign(sb2, m2.id, "combat", { nodeId: sb2.base.nodeId });
+  const credB = sb2.res.credits, repB = sb2.res.rep;
+  Engine.Settle.settle(sb2, now + 3600 * 1000);
+  const bt = sb2.battles[sb2.base.nodeId];
+  ok("齐射:settle 后战报累计波次", !!bt && bt.waves > 0, bt ? ("waves=" + bt.waves + " waveSec=" + Number(bt.waveSec).toFixed(2)) : "no battle");
+  ok("齐射:settle 后星币/声望增加", sb2.res.credits > credB && sb2.res.rep > repB,
+    "cred +" + (sb2.res.credits - credB).toFixed(1) + " rep +" + (sb2.res.rep - repB).toFixed(1));
+  ok("齐射:长时间战斗后成员被打穿撤离返港", m2.assignment === null && m2.hp.structure <= 0,
+    "assign=" + JSON.stringify(m2.assignment) + " struct=" + m2.hp.structure);
+  // 再 settle 一小步，撤离者应被 Repair.tick 拉进修复泊位
+  Engine.Settle.settle(sb2, now + 3600 * 1000 + 1000);
+  const info2 = Engine.Repair.repairInfo(sb2);
+  const inQ = info2.repairing.concat(info2.waiting).some(e => e.id === m2.id);
+  ok("齐射:撤离成员进入修复队列（接 1-E 船坞）", inQ, "used=" + info2.used + "/" + info2.bays);
 })();
 
 console.log("\n== 架构探针结果: " + pass + " PASS / " + fail + " FAIL ==");

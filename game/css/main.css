@@ -1118,3 +1118,29 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .repair-row .mini-hp > i { display: block; flex: 1; height: 6px; border-radius: 3px; background: rgba(66,214,232,.85); }
 .repair-row .mini-hp:nth-child(2) > i { background: rgba(240,163,94,.9); }
 .repair-row .mini-hp:nth-child(3) > i { background: rgba(239,107,107,.9); }
+
+/* ===== 战斗观测面板（一波 = 一支敌方编队）：左我方三防血条 / 右敌方编队卡片 / 底部本场累计 ===== */
+.battle-panel { border: 1px solid rgba(120,160,200,.22); border-radius: 10px; background: rgba(10,18,30,.45); padding: 10px 12px; }
+.battle-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.battle-arena { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+.battle-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.battle-kicker { font-size: 11px; letter-spacing: .06em; color: var(--dim); margin-bottom: 2px; }
+.battle-unit { border: 1px solid rgba(120,160,200,.18); border-radius: 8px; padding: 7px 9px; background: rgba(255,255,255,.02); }
+.battle-unit.enemy { border-color: rgba(239,107,107,.25); }
+.battle-unit.enemy.target { border-color: rgba(239,107,107,.72); background: rgba(239,107,107,.08); }
+.battle-unit.down { opacity: .42; }
+.battle-unit-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 5px; }
+.battle-kind { font-size: 10px; padding: 0 5px; border-radius: 4px; border: 1px solid currentColor; flex: 0 0 auto; }
+.battle-kind.normal { color: var(--dim); }
+.battle-kind.elite { color: #f0a35e; }
+.battle-kind.boss { color: #ef6b6b; }
+.bhp-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.bhp-row > span { width: 14px; flex: 0 0 auto; font-size: 10px; color: var(--dim); }
+.bhp { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.07); overflow: hidden; }
+.bhp > i { display: block; height: 100%; border-radius: 3px; transition: width .3s linear; }
+.bhp.shield > i { background: #42d6e8; }
+.bhp.armor > i { background: #f0a35e; }
+.bhp.structure > i { background: #ef6b6b; }
+.battle-cleared { font-size: 10px; color: var(--dim); margin-top: 3px; }
+.battle-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(120,160,200,.16); font-size: 12px; flex-wrap: wrap; }
+@media (max-width: 640px) { .battle-arena { grid-template-columns: 1fr; } }
