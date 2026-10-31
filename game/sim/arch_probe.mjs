@@ -1201,5 +1201,114 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("齐射:撤离成员进入修复队列（接 1-E 船坞）", inQ, "used=" + info2.used + "/" + info2.bays);
 })();
 
+// ================================================================
+// Block 30：Phase 2 装备接入（113 条 · 加成真正生效）
+// 验证：数据完整 / 采矿与气采乘区分离 / 加成按比例入账 / 冶炼泵聚合 / 势力关系门槛拦截
+// ================================================================
+(() => {
+  const all = Data.Equipment.all();
+  ok("装备:总条数 113（15 考古 + 98 迁入）", all.length === 113, "total=" + all.length);
+  ok("装备:战斗武器 12 条", all.filter(e => e.combat && e.combat.kind === "weapon").length === 12);
+  ok("装备:维修 12 条 / 损伤控制 6 条",
+    all.filter(e => e.combat && e.combat.kind === "repair").length === 12 &&
+    all.filter(e => e.combat && e.combat.kind === "damageControl").length === 6);
+  ok("装备:势力关系门槛 31 条", all.filter(e => e.requiresRel).length === 31);
+  ok("装备:加成键全部有中文标签",
+    all.every(e => Object.keys(e.bonuses || {}).every(k => !!Data.Equipment.BONUS_LABELS[k])),
+    "labels=" + Object.keys(Data.Equipment.BONUS_LABELS).length);
+
+  const n3 = Data.StarMap.nodeById(s.starMap, s.base.nodeId);
+  const oreKey = Object.keys(n3.abundance).find(k => !Data.Resources.GAS[k]);
+  const gasKey = Object.keys(n3.abundance).find(k => Data.Resources.GAS[k]);
+
+  // 同一节点、同一矿种、同一成员（技能/passion 完全一致），唯一变量是「是否装配」
+  // —— 基准 state 每个矿种只建一次并缓存，之后全部克隆：独立 defaultState 的成员技能是
+  //    随机生成的，若每次重建基准，A/B 比的就是两个不同的人，比值会随机漂移（曾测出 1.62~1.99）。
+  // —— dt 必须取短（10s）：长 dt 会触发随机事件，额外产出污染 A/B 比值。
+  const TEST_DT = 10;
+  const baseByKey = {};
+  const runMine = (eqId, key) => {
+    if (!baseByKey[key]) {
+      const b = Engine.State.defaultState(now, Data);
+      Engine.Dispatch.assign(b, b.members[0].id, "mine", { nodeId: b.base.nodeId, oreId: key });
+      baseByKey[key] = b;
+    }
+    const st = JSON.parse(JSON.stringify(baseByKey[key]));
+    if (eqId) st.members[0].fitted = { high: [eqId], mid: [], low: [], rig: [] };
+    const before = st.res[key] || 0;
+    Engine.Settle.settle(st, now + TEST_DT * 1000);
+    return (st.res[key] || 0) - before;
+  };
+
+  // 基地/非派遣来源的固定产出（不吃成员装配），必须先扣除才能测出装配乘区
+  const runBaseOut = (key) => {
+    const st = JSON.parse(JSON.stringify(baseByKey[key] || (function(){
+      const b = Engine.State.defaultState(now, Data);
+      Engine.Dispatch.assign(b, b.members[0].id, "mine", { nodeId: b.base.nodeId, oreId: key });
+      baseByKey[key] = b; return b;
+    })()));
+    st.members[0].assignment = null;   // 取消派遣 → 只剩基地产出
+    const b0 = st.res[key] || 0;
+    Engine.Settle.settle(st, now + TEST_DT * 1000);
+    return (st.res[key] || 0) - b0;
+  };
+
+  // 采矿：t5_mining_laser = miningEfficiency 0.80
+  const oreBaseOut = runBaseOut(oreKey);
+  const plainOre = runMine(null, oreKey) - oreBaseOut;
+  const eqOre = runMine("t5_mining_laser", oreKey) - oreBaseOut;
+  const ratioOre = plainOre > 0 ? eqOre / plainOre : 0;
+  ok("装备:采矿激光使成员产出 ×1.80", Math.abs(ratioOre - 1.8) < 1e-4,
+    "成员产出 无装=" + plainOre.toFixed(3) + " 有装=" + eqOre.toFixed(3) + " 比=" + ratioOre.toFixed(6)
+    + "（基地固定产出 " + oreBaseOut.toFixed(2) + " 已扣除）");
+
+  // 乘区分离：采矿装备不该给气体加成
+  if (gasKey) {
+    const gasBaseOut = runBaseOut(gasKey);
+    const plainGas = runMine(null, gasKey) - gasBaseOut;
+    const eqGas = runMine("t5_mining_laser", gasKey) - gasBaseOut;
+    const ratioGas = plainGas > 0 ? eqGas / plainGas : 0;
+    ok("装备:采矿激光对气体无效（乘区分离）", Math.abs(ratioGas - 1) < 1e-4,
+      "比=" + ratioGas.toFixed(6) + " (" + gasKey + ")");
+
+    // 气采装备对气体生效
+    const gasEq = runMine("t5_gas_harvester", gasKey) - gasBaseOut;
+    const ratioGas2 = plainGas > 0 ? gasEq / plainGas : 0;
+    ok("装备:气采采集器使气体产出 ×1.80", Math.abs(ratioGas2 - 1.8) < 1e-4, "比=" + ratioGas2.toFixed(6));
+  } else {
+    ok("装备:当前节点无气体（跳过乘区分离断言）", true, "skip");
+  }
+
+  // 低槽提升器与高槽采集器叠加：miningEfficiency 0.8 + miningLaserEfficiency 0.7 → ×2.50
+  const st2 = Engine.State.defaultState(now, Data);
+  const mm2 = st2.members[0];
+  Engine.Dispatch.assign(st2, mm2.id, "mine", { nodeId: st2.base.nodeId, oreId: oreKey });
+  mm2.fitted = { high: ["t5_mining_laser"], mid: [], low: ["t4_mining_booster"], rig: [] };
+  const fitStack = Engine.Archaeology.fittedBonuses(mm2);
+  ok("装备:高/低槽采矿乘区叠加", Math.abs((1 + fitStack.miningEfficiency + fitStack.miningLaserEfficiency) - 2.5) < 1e-9,
+    "mining=" + fitStack.miningEfficiency + " laser=" + fitStack.miningLaserEfficiency);
+
+  // 冶炼泵（mid 槽）：全军团聚合
+  const st3 = Engine.State.defaultState(now, Data);
+  st3.members[0].fitted = { high: [], mid: ["refinery_pump"], low: [], rig: [] };
+  const fitPump = Engine.Archaeology.fittedBonuses(st3.members[0]);
+  ok("装备:精炼泵 smeltingSpeed 聚合", Math.abs((fitPump.smeltingSpeed || 0) - 0.10) < 1e-9,
+    "smeltingSpeed=" + fitPump.smeltingSpeed);
+
+  // 势力关系门槛：angel_mining_laser 需 relation 25，初始 0 应被拒
+  const st4 = Engine.State.defaultState(now, Data);
+  st4.base.bodyLevel = 3;
+  st4.res.fe_alloy = 99999; st4.res.ni_alloy = 99999;
+  const rel0 = st4.factions.find(f => f.id === "angel").relation;
+  const denied = Engine.Production.buildEquipment(st4, "angel_mining_laser");
+  ok("装备:势力关系不足时拒绝制造", !denied.ok && /势力关系不足/.test(denied.err || ""),
+    "relation=" + rel0 + " err=" + (denied.err || ""));
+
+  // 关系达标后放行
+  st4.factions.find(f => f.id === "angel").relation = 50;
+  const allowed = Engine.Production.buildEquipment(st4, "angel_mining_laser");
+  ok("装备:关系达标后允许制造", allowed.ok === true, "relation=50 err=" + (allowed.err || "ok"));
+})();
+
 console.log("\n== 架构探针结果: " + pass + " PASS / " + fail + " FAIL ==");
 process.exit(fail ? 1 : 0);

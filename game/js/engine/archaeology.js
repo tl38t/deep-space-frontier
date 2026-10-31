@@ -122,6 +122,12 @@
     const lines = [];
     if (success) {
       drops.credits = profile.credits(band);
+      // 装配加成（Phase 2）：打捞焦点吃 salvageEfficiency（1 代 11 条打捞装备）。
+      // 只在 salvage 焦点生效——research/cache 是遗址解析与货柜窃取，不吃打捞效率。
+      if (focusId === "salvage") {
+        const fitS = fittedBonuses(m);
+        drops.credits = Math.round(drops.credits * (1 + (fitS.salvageEfficiency || 0)));
+      }
       if (profile.bpChance > 0 && rng() < profile.bpChance) drops.bp += profile.bp(band);
       if (profile.repChance > 0 && rng() < profile.repChance) drops.rep += profile.rep(band);
       lines.push(m.name + " 在「" + body.name + "」完成「" + profile.name + "」遗址解析，获得 " + drops.credits + "⛁");

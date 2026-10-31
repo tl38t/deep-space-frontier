@@ -76,7 +76,20 @@
     const bm = (Booster && Booster.mult) ? Booster.mult(state, queueType) : 1; // 增强剂加速（整舱生效）
     const M = _Mastery();
     const mm = (M && M.industryTimeMult) ? M.industryTimeMult(state) : 1;     // 精通点·工业调度（耗时乘区）
-    const effDur = (it) => it.dur / (pm * bm) * mm; // 棕化(pm<1)拉长；增强剂(bm>1)缩短；精通(mm<1)缩短
+    // 冶炼速度（Phase 2）：外接精炼泵是「any」槽外接设备，作用于舰基冶炼队列。
+    // 取全军团装配之和（封顶 50%）——泵是基地设施，不随成员出勤失效，故不走单成员判定。
+    let smeltFit = 0;
+    if (queueType === "smelt") {
+      const ArchP = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Archaeology : null;
+      if (ArchP && ArchP.fittedBonuses) {
+        for (const mbr of (state.members || [])) {
+          if (!mbr.fitted) continue;
+          smeltFit += ArchP.fittedBonuses(mbr).smeltingSpeed || 0;
+        }
+        smeltFit = Math.min(0.50, smeltFit);
+      }
+    }
+    const effDur = (it) => it.dur / (pm * bm) * mm / (1 + smeltFit); // 棕化(pm<1)拉长；增强剂(bm>1)缩短；精通(mm<1)缩短；精炼泵缩短
     const q = state.base.industry[queueType + "Queue"];
     const log = [];
     let guard = 0;
@@ -128,6 +141,19 @@
   function buildEquipment(state, equipId) {
     const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
     if (!Eq) return { ok: false, err: "装备不存在" };
+    // 势力关系门槛（Phase 2）：1 代「势力装备生产许可 A/B/C/D/S」改为本作 relation 门槛。
+    // relation 是 0~100 的好感度（每次交付 +4），不是新造的声望数值，故复用现成字段。
+    if (Eq.requiresRel) {
+      for (const fid in Eq.requiresRel) {
+        const ent = (state.factions || []).find(x => x.id === fid);
+        const cur = ent ? (ent.relation || 0) : 0;
+        const need = Eq.requiresRel[fid];
+        if (cur < need) {
+          const fdef = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(fid) : null;
+          return { ok: false, err: "势力关系不足（" + (fdef ? fdef.name : fid) + " 需 " + need + "，当前 " + Math.round(cur) + "）" };
+        }
+      }
+    }
     const gate = equipGateLevel(Eq.level);
     if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);

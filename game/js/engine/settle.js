@@ -249,7 +249,20 @@
         let ore = (a.oreId && ab[a.oreId] != null) ? a.oreId : (Object.keys(ab).sort((x, y) => ab[y] - ab[x])[0] || Object.keys(node.abundance)[0]);
         const abv = ab[ore] || 0;
         const ym = (m.mods && m.mods.yieldMult && m.mods.yieldMult.mine) || 1;
-        const y = BASE_MINE * skillBonus(m.skills, "mining") * abv * dt * ym * effLogi;
+        // 装配加成（Phase 2）：气云与矿石走**不同乘区**，高槽采集器与低槽提升器叠加。
+        //   气云 → gasEfficiency + gasLaserEfficiency
+        //   矿石 → miningEfficiency + miningLaserEfficiency
+        // 每成员每 tick 聚合一次（O(成员×槽位)，与离线时长无关，红线不破）。
+        const ArchM = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
+        const fitB = (ArchM && ArchM.fittedBonuses) ? ArchM.fittedBonuses(m) : null;
+        let fitEff = 1;
+        if (fitB) {
+          const isGas = !!(Data.Resources && Data.Resources.GAS && Data.Resources.GAS[ore]);
+          fitEff = isGas
+            ? 1 + (fitB.gasEfficiency || 0) + (fitB.gasLaserEfficiency || 0)
+            : 1 + (fitB.miningEfficiency || 0) + (fitB.miningLaserEfficiency || 0);
+        }
+        const y = BASE_MINE * skillBonus(m.skills, "mining") * abv * dt * ym * effLogi * fitEff;
         state.res[ore] = (state.res[ore] || 0) + y;
         m.skills.mining = (m.skills.mining || 0) + XP_RATE.mining * dt * passionMult(m, "mining") * xpMultOf(m, "mining");
       } else if (a.type === "explore" && node) {

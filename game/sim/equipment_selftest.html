@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>equipment selftest</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// Phase 2 装备接入真机自测（真实打开 index.html，用真实 DOM 驱动）
+//   1 游戏启动
+//   2 舰基页出现「装备制造」面板
+//   3 制造按钮总数 = 113（15 考古 + 98 迁入）
+//   4 代表性装备在位：战斗武器 / 冶炼泵 / 采矿激光 / 维修器
+//   5 槽位分组 = 3（high/mid/low，rig 无装备）
+//   6 成员页装配区存在
+//   7 控制台无未捕获错误
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const D=()=>fr.contentDocument;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+
+(async function(){
+  const errs=[];
+  fr.src="../index.html#base";
+  const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },25000);
+  ok("游戏启动完成", booted);
+  if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  try{ fr.contentWindow.addEventListener("error", e=>errs.push(e.message)); }catch(e){}
+
+  // 舰基页：装备制造面板
+  const panel=await until(()=>{
+    const els=[...qa(".panel h3")];
+    return els.some(h=>/装备制造/.test(h.textContent));
+  },12000);
+  ok("舰基页出现「装备制造」面板", panel);
+  if(!panel){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const btns=qa('[data-act^="build_equip:"]');
+  ok("制造按钮总数 = 113", btns.length===113, "count="+btns.length);
+
+  const groups=qa(".eq-slot-group");
+  ok("槽位分组 = 3（高/中/低，改装件无装备）", groups.length===3, "groups="+groups.length);
+
+  const need=[
+    ["t1_small_laser","小型激光炮 I（战斗武器）"],
+    ["refinery_pump","外接大型精炼泵（冶炼）"],
+    ["t5_mining_laser","旗舰采矿激光器（采矿）"],
+    ["t1_armor_repairer","小型装甲维修器（战斗内维修）"],
+    ["t1_damage_control","小型损伤控制单元（减伤）"],
+    ["sansha_mineral_assimilation","矿物同化注入器（势力装备）"],
+  ];
+  for(const [id,label] of need){
+    ok("在位：" + label, !!qa('[data-act="build_equip:'+id+'"]').length);
+  }
+
+  // 势力门槛应体现在名称/成本上（按钮存在即可，实际拦截在引擎层）
+  const eqErr = (function(){
+    try{
+      const NSK = fr.contentWindow.NSK;
+      const st = NSK.Engine.State.defaultState(Date.now(), NSK.Data);
+      st.base.bodyLevel = 3; st.res.fe_alloy = 99999; st.res.ni_alloy = 99999;
+      const r = NSK.Engine.Production.buildEquipment(st, "angel_mining_laser");
+      return r.ok ? "allowed" : r.err;
+    }catch(e){ return "ERR "+e.message; }
+  })();
+  ok("势力关系不足时引擎拒绝制造", /势力关系不足/.test(eqErr), eqErr);
+
+  // 成员页装配区（在成员详情面板内，需点开成员卡）
+  const memTab=q('[data-act="tab:members"]');
+  ok("成员页签存在", !!memTab);
+  if(memTab) memTab.click();
+  const cardThere=await until(()=>q(".member-card"),10000);
+  ok("成员页有成员卡", cardThere);
+  const card=q(".member-card");
+  if(card) card.click();
+  const fitThere=await until(()=>q(".npc-fit-section"),10000);
+  ok("点开成员后装配区出现", fitThere);
+  const fitSlots=qa(".npc-fit-section .fit-slot-group");
+  ok("装配区渲染槽位组", fitSlots.length>0, "groups="+fitSlots.length);
+  const fitCells=qa(".npc-fit-section .fit-cell");
+  ok("装配区渲染槽位格", fitCells.length>0, "cells="+fitCells.length);
+
+  await wait(300);
+  ok("控制台无未捕获错误", errs.length===0, errs.length?errs.join(" | "):"clean");
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>
