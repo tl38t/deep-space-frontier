@@ -141,6 +141,15 @@
   function buildEquipment(state, equipId) {
     const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
     if (!Eq) return { ok: false, err: "装备不存在" };
+    // 蓝图门禁（1 代 actions.js:339 同口径）：requiresBlueprint 为真且没解锁 → 拒绝。
+    // 1 代顺序为「蓝图 → 等级 → 船坞 → 材料」，这里保持一致，蓝图排在最前。
+    // ⚠️ 势力商店未实装期间由 Data.Equipment.BP_GRANT_ALL 在建档时全量授予，
+    //    故当前走不到这条分支；开关翻成 false 后立即生效。
+    if (Eq.requiresBlueprint) {
+      const okBp = (Data.Equipment && Data.Equipment.hasBlueprint)
+        ? Data.Equipment.hasBlueprint(state, equipId) : true;
+      if (!okBp) return { ok: false, err: "缺少蓝图：需先解锁该装备的制造蓝图（势力商店）" };
+    }
     // 势力关系门槛（Phase 2）：1 代「势力装备生产许可 A/B/C/D/S」改为本作 relation 门槛。
     // relation 是 0~100 的好感度（每次交付 +4），不是新造的声望数值，故复用现成字段。
     if (Eq.requiresRel) {

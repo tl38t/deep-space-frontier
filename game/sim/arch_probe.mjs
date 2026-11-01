@@ -1069,6 +1069,40 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("装备:先造舰占满总装槽", bs.ok && P.manufactureUsed(sb4) === 1, "used=" + P.manufactureUsed(sb4));
   const rEq = P.buildEquipment(sb4, "analyzer_t1");
   ok("装备:总装槽满后装备入队被拒", rEq.ok === false && rEq.err.indexOf("槽位已满") > -1, JSON.stringify(rEq));
+
+  // 27e) 蓝图门禁（1 代 ownedBlueprints 原样）：势力商店未实装期间由 BP_GRANT_ALL 全量授予
+  const sb5 = Engine.State.defaultState(now, Data);
+  const bpEqs = Data.Equipment.all().filter(e => e.requiresBlueprint);
+  ok("蓝图:新档授予全部 requiresBlueprint 装备",
+    bpEqs.every(e => Data.Equipment.hasBlueprint(sb5, e.id)),
+    "标蓝图=" + bpEqs.length + " 授予后 owned=" + sb5.ownedBlueprints.length);
+  ok("蓝图:key 前缀为 equipment:",
+    Data.Equipment.bpKey("analyzer_t1") === "equipment:analyzer_t1", Data.Equipment.bpKey("analyzer_t1"));
+  const nBp = sb5.ownedBlueprints.length;
+  Data.Equipment.grantAllBlueprints(sb5);
+  ok("蓝图:重复授予幂等", sb5.ownedBlueprints.length === nBp, nBp + " -> " + sb5.ownedBlueprints.length);
+
+  // 27f) 门真实生效：清空后同一件装备被拦，补回后可造（开关语义 = 只改授予，不改门）
+  const sb6 = Engine.State.defaultState(now, Data);
+  const GATED = "raider_mining_laser";        // requiresBlueprint 且无 requiresRel，排除干扰
+  const ge = Data.Equipment.byId(GATED);
+  for (const k in ge.cost) sb6.res[k] = (sb6.res[k] || 0) + ge.cost[k] + 100;
+  sb6.base.bodyLevel = 3;                      // 排除核心等级门
+  sb6.ownedBlueprints = [];                    // 模拟「势力商店还没买」
+  const rNo = P.buildEquipment(sb6, GATED);
+  ok("蓝图:未解锁被拒", rNo.ok === false && rNo.err.indexOf("缺少蓝图") === 0, JSON.stringify(rNo));
+  sb6.ownedBlueprints.push(Data.Equipment.bpKey(GATED));
+  const rYes = P.buildEquipment(sb6, GATED);
+  ok("蓝图:解锁后放行", rYes.ok === true, JSON.stringify(rYes));
+
+  // 27g) 无 requiresBlueprint 的装备不受门禁影响（refinery_pump 是通用槽件）
+  const sb7 = Engine.State.defaultState(now, Data);
+  const fp = Data.Equipment.byId("refinery_pump");
+  for (const k in fp.cost) sb7.res[k] = (sb7.res[k] || 0) + fp.cost[k] + 100;
+  sb7.base.bodyLevel = 3;
+  sb7.ownedBlueprints = [];
+  const rFree = P.buildEquipment(sb7, "refinery_pump");
+  ok("蓝图:无蓝图装备不受门禁影响", rFree.ok === true, JSON.stringify(rFree));
 })();
 
 (function probeFitRepair() {

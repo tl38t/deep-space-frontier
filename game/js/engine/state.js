@@ -43,7 +43,8 @@
     }));
     const baseIdentity = Data.Ships.createInitialBase();
 
-    return {
+    // 注意：这里先建对象再返回，因为「蓝图授予」需要拿到半成品 state 引用（1 代 ownedBlueprints）
+    const st = {
       version: 8,
       createdAt: now,
       lastSeen: now,
@@ -82,7 +83,16 @@
       mastery: { points: 0, earned: 0, spent: 0, nodes: {} }, // 精通点与全局强化（见 engine/mastery.js）
       pendingEvents: [],               // 待决事件（含 options / chain）→ 玩家在「日报」页决策
       counters: { builtShips: 0, doneJobs: 0, recruited: 6, delivered: 0 },
+      // 蓝图所有权（1 代同义，见 data/equipment.js bpKey）："equipment:<id>" 为装备，
+      // 裸 shipId 为舰船。一次性解锁，解锁后该装备可无限制造。
+      ownedBlueprints: [],
     };
+
+    // ⏳ 势力商店未实装期间：按 Data.Equipment.BP_GRANT_ALL 一次性授予全部装备蓝图
+    //    （开关在 data/equipment.js，翻成 false 即变成真门禁，本文件无需再改）
+    if (Data.Equipment && Data.Equipment.grantAllBlueprints) Data.Equipment.grantAllBlueprints(st);
+
+    return st;
   }
 
   // 技能 = 轻量化复用 EVE-IDLE 玩家技能树（采集 / 工业 / 战斗攻击 / 战斗防御 四类），共 10 项。

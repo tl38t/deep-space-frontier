@@ -1077,12 +1077,18 @@
       for (const eq of items) {
         const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
         const gate = Engine.Production.equipGateLevel(eq.level);
-        const locked = state.base.bodyLevel < gate;
+        const lvLocked = state.base.bodyLevel < gate;
+        // 蓝图门禁（1 代同口径）：仅当 requiresBlueprint 为真且未解锁时锁。
+        // BP_GRANT_ALL 期间恒为 false，UI 与现在完全一致；开关翻成 false 后自动显示「需蓝图」。
+        const bpLocked = !!eq.requiresBlueprint &&
+          !(Eq.hasBlueprint && Eq.hasBlueprint(state, eq.id));
+        const locked = lvLocked || bpLocked;
         const canAfford = Engine.Production.canAfford(state.res, eq.cost);
         const costStr = Object.entries(eq.cost).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ");
         const adjDur = Math.round(eq.time * durMult);
         const dis = (locked || !canAfford) ? " disabled" : "";
-        const note = locked ? "（核心 Lv." + (gate + 1) + " 解锁）" : "";
+        const note = lvLocked ? "（核心 Lv." + (gate + 1) + " 解锁）"
+                   : bpLocked ? "（需蓝图）" : "";
         html += '<div class="row"><span>' + esc(eq.name) + " T" + tier + note + " · " + costStr + " · " + adjDur + 's</span>'
           + '<button class="sm" data-act="build_equip:' + eq.id + '"' + dis + ">制造</button></div>";
       }

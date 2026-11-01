@@ -164,6 +164,40 @@
   function bySlot(slot) { return Object.values(EQUIPMENT).filter(e => e.slot === slot); }
   function byCategory(cat) { return Object.values(EQUIPMENT).filter(e => e.cat === cat); }
 
+  // ---- 装备制造蓝图（1 代 equipment.js:634-641 原样搬入）----
+  // 1 代用 state.ownedBlueprints: string[] 存所有权，装备键 = "equipment:" + id，
+  // 舰船键 = 裸 shipId，两种前缀共用一个数组（1 代 actions.js:196/339 同口径）。
+  // 蓝图是**一次性解锁**（BPO），解锁后该装备可无限制造，永不再消耗图纸。
+  // 与限次抄本（BPC，state.blueprintCharges）完全分离；本作暂不引入 BPC。
+  function bpKey(equipmentId) { return "equipment:" + equipmentId; }
+  function hasBlueprint(state, equipmentId) {
+    return Array.isArray(state && state.ownedBlueprints) &&
+      state.ownedBlueprints.includes(bpKey(equipmentId));
+  }
+
+  // ⏳ 势力商店尚未实装期间的临时开关。
+  //    true  = 建档 / 首次加载旧档时，把所有 requiresBlueprint 装备的蓝图直接授予
+  //            （机制在位、门不拦人，玩家体验与现在完全一致）
+  //    false = 未解锁的装备会被 Production.buildEquipment 拦下，蓝图需从势力商店获得
+  // 商店做完后只需把这里改成 false；机制本身不需要再动。
+  // ⚠️ 老档一旦写过 ownedBlueprints，改成 false 后仍是全解锁（存档已持久化）。
+  //    要真门禁需配合一次性回落（清空该字段后重新授予），那属于商店上线时的迁移工作。
+  const BP_GRANT_ALL = true;
+
+  // 把所有需要蓝图的装备一次性授予该存档（幂等，返回本次新授予数量）
+  function grantAllBlueprints(state) {
+    if (!state || typeof state !== "object") return 0;
+    if (!Array.isArray(state.ownedBlueprints)) state.ownedBlueprints = [];
+    if (!BP_GRANT_ALL) return 0;
+    let n = 0;
+    for (const eq of all()) {
+      if (!eq.requiresBlueprint) continue;
+      const key = bpKey(eq.id);
+      if (!state.ownedBlueprints.includes(key)) { state.ownedBlueprints.push(key); n++; }
+    }
+    return n;
+  }
+
   // 加成键中文标签（UI 显示用）
   const BONUS_LABELS = {
     archaeologyScan: "扫描强度",
@@ -186,5 +220,6 @@
     armorRepair: "装甲维修量",
   };
 
-  return { EQUIPMENT, byId, all, bySlot, byCategory, BONUS_LABELS };
+  return { EQUIPMENT, byId, all, bySlot, byCategory, BONUS_LABELS,
+           bpKey, hasBlueprint, BP_GRANT_ALL, grantAllBlueprints };
 });

@@ -54,7 +54,15 @@
 
   // 成员字段规范化（防御旧档/半成品档缺字段导致 UI 报错）
   function normalizeMembers(s) {
-    if (!s || !Array.isArray(s.members)) return s;
+    if (!s || typeof s !== "object") return s;
+    // 蓝图所有权（1 代同义，state.ownedBlueprints）：旧档补字段；
+    // 势力商店未实装期间按 Data.Equipment.BP_GRANT_ALL 全量授予（幂等，已授予的不重复 push）。
+    // 放在 members 校验之前，避免 members 异常时整段规范化被提前 return 掉。
+    if (!Array.isArray(s.ownedBlueprints)) s.ownedBlueprints = [];
+    const EqData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
+      ? window.NSK.Data.Equipment : null;
+    if (EqData && EqData.grantAllBlueprints) EqData.grantAllBlueprints(s);
+    if (!Array.isArray(s.members)) return s;
     // MVP 周六/周日新增字段兜底（旧档迁移）：精通点 / 待决事件 / 成员里程碑
     if (!s.mastery || typeof s.mastery !== "object") s.mastery = { points: 0, earned: 0, spent: 0, nodes: {} };
     if (!Array.isArray(s.pendingEvents)) s.pendingEvents = [];
