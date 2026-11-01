@@ -7,6 +7,7 @@
   "use strict";
   const NSK = window.NSK;
   const Core = NSK.Core, Data = NSK.Data, Engine = NSK.Engine;
+  const Planet = (NSK.UI && NSK.UI.Planet) || null;   // 行星球面渲染（纯 SVG），见 js/ui/planet-svg.js
   const Persistence = (NSK.Core && NSK.Core.Persistence) || (typeof window !== "undefined" && window.Persistence) || null;
 
   const TABS = [
@@ -22,7 +23,8 @@
     { id: "settings", name: "设置" },
   ];
 
-  const SKILL_CN = { mining: "采矿", scanning: "扫描", archaeology: "考古", refine: "冶炼", manufacture: "制造", invent: "发明", combatLaser: "激光", combatTurret: "炮台", command: "指挥", defense: "防御" };
+  // 12 项（2026-11-01 定案）。无人机暂缓，不进表；顺序即名册里的显示顺序。
+  const SKILL_CN = { mining: "采矿", gas: "采气", archaeology: "考古", combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", refine: "冶炼", manufacture: "制造", research: "科研", capacitor: "电容管理", logistics: "物流" };
   const SKILL_KEYS = Object.keys(SKILL_CN);
 
   // 增强剂（整舱生效）经济参数（MVP 提议值，待标定）：基础等级 1、持续 10 分钟、消耗星币。
@@ -118,6 +120,10 @@
       explore: { label: "探索中", detail: loc, cls: "good" },
       combat:  { label: "作战中", detail: loc, cls: "warn" },
       train:   { label: "演训中", detail: "舰基演训", cls: "good" },
+      station: { label: "驻舱中", detail: (function () {
+        const d = Data.Ships.baseModuleByType(a.slotType);
+        return d ? d.name : "舰基舱段";
+      })(), cls: "good" },
     };
     return map[a.type] || { label: jobName(a.type), detail: loc, cls: "good" };
   }
@@ -243,9 +249,9 @@
       // 已探明且未锁定节点可点弹查看；锁定节点不可点
       const actAttr = (n.discovered && !locked) ? ' data-act="nodeinfo:' + n.id + '"' : "";
       html += '<g class="' + cls + '"' + actAttr + ' transform="translate(' + n.x + "," + n.y + ')">';
-      // 据点光环：远景下 ⚔ 字形只有 2~3px、读不出来，但**环**跟着节点半径缩放，
-      // 缩到全景也能一眼扫出「哪几个星系能打」。（只画一圈描边，不挡节点的填充与点击。）
-      if (n.discovered && n.raid) html += '<circle class="raid-ring" r="' + (r + 5) + '" />';
+      // 海盗据点自 2026-11-01 起「每星系都有」，星图上**不再画光环与 ⚔ 角标** ——
+      // 207 个环会让整张图变成满墙噪点，而且「哪能打」这个信息已经消失（处处能打）。
+      // 据点名仍保留，只在 hover / 当前节点 / 可达节点时淡入，作为悬停信息使用。
       html += '<circle r="' + r + '" fill="' + fill + '" />';
       if (isCur) html += '<circle class="pulse" r="' + r + '" />';
       // 未探明只留雾点（不写文字，避免「?」铺屏）；已探明才标注名称
@@ -255,11 +261,8 @@
         const labelY = r + 22;
         const raidY = labelY + (isCur ? 28 : 26);
         html += '<text class="nlabel" y="' + labelY + '">' + esc(n.name) + "</text>";
-        // 海盗据点（战斗节点）：⚔ 角标 + 据点名（与节点名分两行，一眼看出这里能打谁）
-        if (n.raid) {
-          html += '<text class="nraid-badge" y="' + (-r - 8) + '">⚔</text>';
-          html += '<text class="nraid" y="' + raidY + '">' + esc(n.raid.name) + "</text>";
-        }
+        // 据点名：每星系都有据点，所以不常显（207 个名字会糊屏），只在 hover / 当前 / 可达时淡入
+        if (n.raid) html += '<text class="nraid" y="' + raidY + '">' + esc(n.raid.name) + "</text>";
         if (locked) html += '<text class="nlock" y="' + ((n.raid ? raidY : labelY) + 18) + '">后续版本开放</text>';
       } else if (locked) {
         html += '<text class="nlabel nlock" y="' + (r + 22) + '">🔒 锁定</text>';
@@ -463,13 +466,27 @@
       const clickable = (b.kind === "planet" || b.kind === "derelict");
       const act = clickable ? ' data-act="body:' + node.id + ":" + b.id + '"' : "";
       html += '<g class="sys-body ' + b.kind + (clickable ? " click" : "") + '"' + act + ' transform="translate(' + x + "," + y + ')">';
-      html += '<circle r="' + b.size + '" fill="' + col + '" />';
+      if (b.kind === "planet" && Planet) {
+        // 行星 = SVG 球面（贴图自转 + 轴倾角 + 独立光源），比纯色圆更像星球；
+        // 结构/几何约束见 js/ui/planet-svg.js 首部注释。
+        html += Planet.bodyHtml(b);
+        // 透明热区垫在最上层：球体内部是 <use>/渐变，命中测试在部分内核下不可靠，
+        // 且半径严格等于 size，不会像 hit-rect 那样吞掉邻居天体。
+        html += '<circle class="nsk-hit" r="' + b.size + '" fill="transparent"/>';
+      } else {
+        html += '<circle r="' + b.size + '" fill="' + col + '" />';
+      }
       if (b.kind === "star") html += '<circle class="star-glow" r="' + b.size + '" fill="' + col + '" />';
       if (clickable) html += labelHitRect(b.name, 0, b.size + 13);   // 名字也可点（行星/残骸）
       html += '<text class="sys-label" y="' + (b.size + 13) + '">' + esc(b.name) + "</text>";
       html += workerBadge(0, -b.size - 3, bodyWorkers(node.id, b.id));   // 天体上方在岗徽章
       html += "</g>";
     }
+    // 海盗据点（战斗节点）在星系图里的锚点。据点按 data/raids.js 的设计挂在星图节点上、
+    // 不是天体，所以这里**不参与轨道布点、不消耗任何随机数**——只按「四角哪边最空」挑个落点。
+    // 为什么必须画：星系图是点天体派遣的主场景，而派遣面板在页面最底部，
+    // 从星图橙环点进来后画面上完全没有「这里能打」的提示。
+    html += raidAnchorSvg(node, bodies);
     html += "</svg></div>";
 
     // 本星系在岗汇总（含未指定天体的派遣，例如成员页直接点「采矿」）
@@ -513,6 +530,57 @@
   }
   function colOf2(k) { return kindColor(k); }
 
+  // 敌情锚点：星系图内、但刻意不上轨。
+  // 不上轨的理由不是偷懒——往 makeBodies 里插天体要改动其内部 rand() 消耗序列，
+  // 少/多一次消耗就会让其后的行星与空间站整体错位、整张固定星图重排
+  // （见 data/starmap.js 里 makeDerelict 的 void rand() 注释）。
+  // 所以这里只做「四角择最空」，纯读 bodies，不写、不随机，反复渲染结果恒定。
+  function raidAnchorSvg(node, bodies) {
+    const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, node.id) : null;
+    if (!raid) return "";
+    const label = "⚔ " + raid.name;
+    // 宽估算：12px 字号下中文 ≈11.5px/字，符号与西文 ≈7px/字；再留 26px 内边距。
+    // 宁可估宽 10px 也不要估窄——窄了字会顶到圆角外，宁可多留白。
+    let vw = 0;
+    for (const ch of label) vw += (ch.charCodeAt(0) > 0x2000 ? 11.5 : 7);
+    if (raid.elite) vw += 23;                       // 「精锐」两个小字
+    const w = Math.round(Math.max(78, vw + 26)), h = 22, pad = 10;
+    // 每个天体的占用框：本体 + 下方名字 + 上方在岗徽章，垂直方向各留一行。
+    // 把它当外接矩形（而不是圆）是保守估计——宁可离远点，也别压在标签上。
+    const boxes = [];
+    for (const b of bodies) {
+      if (!(b.orbit > 0)) continue;
+      const rad = b.ang * Math.PI / 180;
+      boxes.push({
+        x: 200 + b.orbit * Math.cos(rad),
+        y: 200 + b.orbit * Math.sin(rad),
+        w: Math.max(b.size * 2, 80),               // 名字最长按 8 字估
+        h: b.size * 2 + 26,
+      });
+    }
+    const cands = [];
+    for (const cx of [w / 2 + pad, 400 - w / 2 - pad]) {
+      for (const cy of [h / 2 + pad, 400 - h / 2 - pad]) cands.push({ cx: cx, cy: cy });
+    }
+    let best = null;
+    for (const c of cands) {
+      let gap = 1e9;
+      for (const bx of boxes) {
+        const dx = Math.max(0, Math.abs(c.cx - bx.x) - (bx.w + w) / 2);
+        const dy = Math.max(0, Math.abs(c.cy - bx.y) - (bx.h + h) / 2);
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < gap) gap = d;
+      }
+      if (!best || gap > best.gap) best = { cx: c.cx, cy: c.cy, gap: gap };
+    }
+    const cx = best.cx.toFixed(1), cy = best.cy.toFixed(1);
+    let s = '<g class="sys-raid click" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
+    s += '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="' + (h / 2) + '"/>';
+    s += '<text y="4">' + esc(label) + (raid.elite ? '<tspan class="sys-raid-elite" dx="4">精锐</tspan>' : "") + "</text>";
+    s += "</g>";
+    return s;
+  }
+
   // 单条三防血条（label + 百分比宽度填充）。cur/max 任一非法都退化为空条，不抛错。
   function bhpRow(label, key, cur, max) {
     const c = Number(cur) || 0, m = Number(max) || 0;
@@ -530,9 +598,15 @@
     });
     if (!fighters.length) return "";
     const bt = (state.battles && state.battles[node.id]) || {};
+    // ⚠️ 敌方编队必须用「节点级」raid.band（精锐 = 星域档 +1），不能用星域档：
+    //    prepareNode() 用的是 Raids.raidAt(...).band，两边取错会在精锐节点上差一整档，
+    //    面板显示的敌舰与实际交战对象不是同一批。
+    const raidR = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, node.id) : null;
     const raid = Data.StarMap.pirateRaid(state.starMap, node.id);
     const Pirates = Data.Pirates;
-    const fleet = (Pirates && raid) ? Pirates.fleetFor(raid.band || 1, raid.faction) : null;
+    const band = (raidR && raidR.band) || (raid && raid.band) || 1;
+    const faction = (raidR && raidR.faction) || (raid && raid.faction);
+    const fleet = (Pirates && faction) ? Pirates.fleetFor(band, faction) : null;
     const snap = (fleet && Engine.Combat && Engine.Combat.fleetSnapshot)
       ? Engine.Combat.fleetSnapshot(fleet, bt.progress || 0) : null;
 
@@ -877,6 +951,8 @@
     if (installed) {
       const instance = state.base.modules.owned.find(m => m.id === (state.base.modules.installed.find(x => x.slotId === slot.id) || {}).moduleId);
       html += '<div class="base-module-instance">模块编号 <code>' + esc(instance ? instance.id : "—") + '</code></div>';
+      // 驻舱（2026-11-01 技能体系）：一人一岗，驻舱只提供技能倍率，不产经验。
+      html += stationPanel(state, slot);
       // 增强剂（整舱生效）：对当前舱段类型激活基础等级（持续 + 消耗星币）
       const bl = Engine.Booster ? Engine.Booster.levelOf(state, slot.type) : 0;
       if (bl > 0) html += '<div class="base-focus-effect">本舱段增强剂生效中 · Lv.' + bl + '</div>';
@@ -890,6 +966,60 @@
         : '<div class="dim">模块已安装在其他位置；先拆卸后即可移装。</div>';
     }
     return html;
+  }
+
+  // 舱段 ↔ 驻舱技能（2026-11-01 技能体系）。command 特殊（看三战斗技能均值）、habitat 特殊（玩家选）。
+  const STATION_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", cargo: "logistics", energy: "capacitor", dock: "manufacture" };
+  let habitatSkill = "combatLaser";   // 演训舱当前选中的技能（UI 态，不入存档）
+
+  // 驻舱面板：一人一岗。驻舱只提供技能倍率，**不产经验**（经验只在批次真产出时结算）。
+  function stationPanel(st, slot) {
+    const B = Engine.Base, S = Engine.Settle;
+    const isTrain = slot.type === "habitat";
+    const isCmd = slot.type === "command";
+    const worker = B.stationedAt(st, slot.id);
+    const fixedSkill = isTrain ? null : (STATION_SKILL[slot.type] || null);
+    const lvOf = (mm, key) => S.levelOf(((mm && mm.skills) || {})[key] || 0);
+    let h = '<div class="base-station">';
+    h += '<div class="base-station-head"><b>驻舱</b>';
+    if (worker) {
+      let extra = "";
+      if (isTrain) {
+        const sk = worker.assignment.trainSkill;
+        extra = "（" + (SKILL_CN[sk] || "演训") + " Lv." + lvOf(worker, sk) + "）";
+      } else if (isCmd) {
+        const avg = (lvOf(worker, "combatLaser") + lvOf(worker, "combatTurret") + lvOf(worker, "missile")) / 3;
+        extra = "（指挥值 " + avg.toFixed(1) + "）";
+      } else if (fixedSkill) {
+        extra = "（" + (SKILL_CN[fixedSkill] || fixedSkill) + " Lv." + lvOf(worker, fixedSkill) + "）";
+      }
+      h += '<span class="base-station-who">' + esc(worker.name) + extra + '</span>';
+      h += '<button class="sm ghost" data-act="station:clear:' + slot.id + '">撤下</button>';
+    } else {
+      const pen = STATION_SKILL[slot.type] ? ' · 该队列耗时 +40%' : '';
+      h += '<span class="base-station-none">无人' + pen + '</span>';
+    }
+    h += '</div>';
+    if (isCmd) h += '<div class="dim base-station-tip">指挥官坐镇基地、不参战：全队命中 +指挥值×2、伤害 +(指挥值×1%)。</div>';
+    if (isTrain) {
+      h += '<div class="dim base-station-tip">全游戏唯一「不产出也涨经验」的通道，代价是占一个人力。</div>';
+      h += '<div class="base-station-skills">' + SKILL_KEYS.map(k =>
+        '<button class="sm' + (k === habitatSkill ? '' : ' ghost') + '" data-act="station:skill:' + k + '">' + SKILL_CN[k] + '</button>').join('') + '</div>';
+    }
+    if (!worker) {
+      const key = isTrain ? habitatSkill : fixedSkill;
+      const cands = (st.members || [])
+        .filter(mm => !mm.destroyed && !mm.assignment && mm.status !== "repairing")
+        .map(mm => ({ mm, lv: key ? lvOf(mm, key) : 0 }))
+        .sort((x, y) => y.lv - x.lv);
+      h += cands.length
+        ? '<div class="base-station-pick">' + cands.map(c =>
+            '<button class="base-station-mem" data-act="station:put:' + slot.id + ':' + c.mm.id + '">'
+            + esc(c.mm.name) + (key ? '<small>Lv.' + c.lv + '</small>' : '') + '</button>').join('') + '</div>'
+        : '<div class="dim base-station-tip">没有待命成员（都在外面干活）。</div>';
+    }
+    h += '</div>';
+    return h;
   }
 
   function viewBase() {
@@ -1177,7 +1307,7 @@
           : '<div class="row" style="margin-top:6px;flex-wrap:wrap;gap:4px">'
             + '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button>'
             + '<button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button>'
-            + '<button class="sm" data-act="dispatch:' + m.id + ':train">演训</button>'
+            + '<button class="sm" data-act="station:train:' + m.id + '">演训</button>'
             + '<button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button></div>';
       }
       html += "</div>";
@@ -1199,7 +1329,7 @@
   function raidDispatchBody() {
     const nodeId = raidSel.nodeId;
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
-    if (!raid) return "<div class='dim'>该星系没有海盗据点。</div>";
+    if (!raid) return "<div class='dim'>目标星系不存在。</div>";
     const cap = Engine.Combat.squadCapacity(state);
     const sel = raidSel.ids;
     const here = raidFighting(nodeId).map(m => m.id);
@@ -1245,7 +1375,7 @@
   function openRaidDispatch(nodeId, preId) {
     closeRaidDispatch();
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
-    if (!raid) { toast("该星系没有海盗据点"); return; }
+    if (!raid) { toast("目标星系不存在"); return; }
     // 默认选中本据点现有参战者；若从成员卡点进来，把那个人也预选上
     const ids = raidFighting(nodeId).map(m => m.id);
     if (preId && ids.indexOf(preId) < 0) {
@@ -2042,17 +2172,27 @@
     m.portraitUrl = pickPortrait(P, portraitId, rng);
     return m.portraitUrl;
   }
-  // 选立绘：优先 v1（标准）→ reveal（清凉版）→ 同原型任意已生成 combo；清单未就绪时走原兜底路径。
+  // 选立绘：该原型下所有「非义体」combo（v1 / reveal / v2 / v3 / v4）全进随机池，
+  // 让同一原型多张图都能被抽到（修复原 v1 优先导致 70+ 张图永久闲置的问题）。
+  // 义体图（_eye/_limb）留作「已改造成员」专用，不进通用池。清单未就绪时走原兜底路径。
   // rng 由成员自身种子派生并缓存到 m.portraitUrl，保证同一 NPC 稳定不闪脸。
   function pickPortrait(P, archId, rng) {
     if (P) {
       const M = P.getManifest && P.getManifest();
       if (M) {
-        const pref = [archId + "/v1", archId + "/reveal"];
-        for (const key of pref) {
-          if (M[key] && M[key].length) return P.DIR + "/" + P.pickFromList(M[key], rng);
+        const prefix = archId + "/";
+        // 收集该原型全部「非义体」combo（v1/reveal/v2/v3/v4），随机抽一张
+        const keys = Object.keys(M).filter(k => {
+          if (k.indexOf(prefix) !== 0) return false;
+          const combo = k.slice(prefix.length);
+          return !/_eye|_limb/.test(combo) && M[k] && M[k].length;
+        });
+        if (keys.length) {
+          const k = keys[Math.floor(rng() * keys.length)];
+          return P.DIR + "/" + P.pickFromList(M[k], rng);
         }
-        const any = Object.keys(M).find(k => k.indexOf(archId + "/") === 0 && M[k] && M[k].length);
+        // 兜底：该原型只有义体图时再退而求其次
+        const any = Object.keys(M).find(k => k.indexOf(prefix) === 0 && M[k] && M[k].length);
         if (any) return P.DIR + "/" + P.pickFromList(M[any], rng);
       }
       return P.pick(archId, 0, {}, rng);
@@ -2144,7 +2284,7 @@
     const R = Engine.Repair;
     if (!R) return "";
     if (m.destroyed) return '<div class="npc-repair bad">阵亡 · 不可修复</div>';
-    if (m.status === "repairing") return '<div class="npc-repair warn">修复中 · 预计 ' + fmtDur(R.repairETA(m)) + ' 回满</div>';
+    if (m.status === "repairing") return '<div class="npc-repair warn">修复中 · 预计 ' + fmtDur(R.repairETA(m, state)) + ' 回满</div>';
     if (R.needsRepair(m)) {
       const info = R.repairInfo(state);
       const me = info.waiting.find(w => w.id === m.id);
@@ -2276,7 +2416,7 @@
             + '</div>'
           : (m.destroyed ? '' :
               m.assignment ? '<button class="sm ghost" data-act="recall:' + m.id + '">召回</button>'
-              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="dispatch:' + m.id + ':train">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button>')
+              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="station:train:' + m.id + '">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button>')
             + '<button class="sm danger" data-act="fire:' + m.id + '">解雇</button>')
       + '<span class="npc-footer-note">深空星疆 · 人员档案系统</span></div>'
       + '</div>';
@@ -2513,6 +2653,38 @@
     if (cmd === "nodeinfo") { openNodeMenu(a, e); return; }
     if (cmd === "body") { showBody(a, b); return; }
     if (cmd === "baseinfo") { baseFocus = a || "core"; renderView(); return; }
+    // 驻舱（2026-11-01 技能体系）：派/撤/换演训技能。一舱一人由 Dispatch.assign 兜底校验。
+    if (cmd === "station") {
+      const B = Engine.Base, D = Engine.Dispatch;
+      if (a === "skill") { habitatSkill = b; renderView(); return; }
+      if (a === "clear") {
+        const w = B.stationedAt(state, b);
+        if (w) { D.recall(state, w.id); toast("已撤下 " + w.name); }
+        renderView(); return;
+      }
+      if (a === "put") {
+        const slotId = b, mid = act.split(":")[3];
+        const slot = B.slotById(state, slotId);
+        const opts = { slotId: slotId };
+        if (slot && slot.type === "habitat") opts.trainSkill = habitatSkill;
+        const r = D.assign(state, mid, "station", opts);
+        toast(r.ok ? "已驻舱" : r.err);
+        renderView(); return;
+      }
+      if (a === "train") {
+        const mm = state.members.find(x => x.id === b);
+        const slot = B.stateSlots(state).find(s => s.type === "habitat");
+        if (!mm) return;
+        if (!slot) { toast("本舰没有演训舱"); return; }
+        // 默认练它最高的一项 —— 修掉旧版「演训恒练激光」的 bug
+        const best = SKILL_KEYS.slice().sort((x, y) =>
+          Engine.Settle.levelOf((mm.skills || {})[y] || 0) - Engine.Settle.levelOf((mm.skills || {})[x] || 0))[0];
+        const r = D.assign(state, mm.id, "station", { slotId: slot.id, trainSkill: best });
+        toast(r.ok ? ("已派往演训舱 · " + SKILL_CN[best]) : r.err);
+        renderView(); return;
+      }
+      return;
+    }
     if (cmd === "closePop") { hidePop(); return; }
     if (cmd === "assignBody") {
       const [nodeId, bodyId, type] = [a, b, act.split(":")[3]];
