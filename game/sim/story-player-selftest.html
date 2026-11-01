@@ -5,12 +5,20 @@
 <iframe id="fr" style="width:1120px;height:720px;border:1px solid #ccc"></iframe>
 <script>
 // 剧情播放器自测（真实打开 index.html#story，用真实 DOM 点击驱动）
-//   场景1 页签与红点：新增「剧情」页签，有未播完剧情时挂红点
-//   场景2 旁白句：无头像、文字上屏、进度 1/N
-//   场景3 有说话人的句子：名字 + 头像 img + 缺图兜底首字母
-//   场景4 选项句：渲染成按钮，且带可见的资源增减文案
-//   场景5 选分支：跳到目标场景，且生效资源只加一次
-//   场景6 播完：回到章节列表，标签变「重看」
+// 断言基线 = story.js version 2（2026-10-28 新手引导改版）：
+//   序章·边疆登记处 = 6 句（flora 开场 → 旁白打断 → 瑞瓦肖 3 句 → 三选项）
+//   三个分支各 3 句，末句都是「（继续）」→ prologue_flora
+//   序章·舰基唤醒 = 7 句，末句两选项（开工 / 追问）
+//   非隐藏章节 = 2 条（prologue_registrar / prologue_flora）
+//
+//   场景1 页签与红点
+//   场景2 首句 = F.I.O.N.A 全息立绘（头像 / 名 / 配色 / fx-holo / 真加载成功）
+//   场景3 第2句 = 纯旁白（无头像 / 斜体 / 无名字）
+//   场景4 第3句 = 瑞瓦肖（独立配色 + 登记官 bust 图）
+//   场景5 第6句 = 三选项（文案 + 资源提示 + 强制先选）
+//   场景6 选「问东问西」→ 跳支线 + special.addMembers 真的加了 2 人
+//   场景7 分支收尾「（继续）」→ 跳到舰基唤醒
+//   场景8 播完回章节列表（2 条 / 重看 / 红点消失）
 const out=[]; let PASS=0, FAIL=0;
 const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
 const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
@@ -23,17 +31,18 @@ const D=()=>fr.contentDocument, W=()=>fr.contentWindow;
 const q=(sel)=>D().querySelector(sel);
 const qa=(sel)=>Array.from(D().querySelectorAll(sel));
 const txt=(el)=>el?el.textContent.trim():"";
-function clickAct(act){
-  const el=D().querySelector('[data-act="'+act+'"]');
-  if(!el) return null;
-  el.click(); return el;
+const st=()=>{ try{ return W().NSK.Core.load(); }catch(e){ return null; } };
+async function next(){ const b=D().querySelector('[data-act="story:next"]'); if(!b) return false; b.click(); await wait(80); return true; }
+// 一路点到出现选项为止（返回是否点出来了）
+async function toChoices(max){
+  let g=0; while(g++<(max||12)){ if(q(".dlg-choices")) return true; if(!(await next())) return false; }
+  return !!q(".dlg-choices");
 }
-async function next(){ const b=D().querySelector('[data-act="story:next"]'); if(!b) return false; b.click(); await wait(70); return true; }
 
 (async function(){
   // ---------- 装载 ----------
   fr.src="../index.html#story";
-  const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },15000);
+  const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },20000);
   ok("游戏启动完成", booted);
   if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
 
@@ -43,49 +52,78 @@ async function next(){ const b=D().querySelector('[data-act="story:next"]'); if(
   ok("剧情有未播完 → 页签挂红点", !!(tabEl && tabEl.querySelector(".tab-dot")));
   ok("当前在剧情页（hash=#story）", !!q(".dlg"), q(".dlg")?"渲染了对话框":"没有对话框");
 
-  // ---------- 场景2：旁白句 ----------
-  const d1=q(".dlg");
-  ok("旁白句无头像容器", !q(".dlg-av"), q(".dlg-av")?"意外出现头像":"");
-  ok("旁白文字上屏", /拓殖民公社第七登记处/.test(txt(q(".dlg-text"))), txt(q(".dlg-text")).slice(0,18));
-  ok("旁白用斜体旁白样式", !!q(".dlg-text.narr"));
-  ok("进度显示 1 / 5", txt(q(".dlg-prog"))==="1 / 5", txt(q(".dlg-prog")));
+  // ---------- 场景2：首句 = F.I.O.N.A（全息立绘） ----------
+  const dlg1=q(".dlg");
+  const av1=q(".dlg-av"), img1=q(".dlg-av img"), name1=q(".dlg-name");
+  ok("首句有头像容器", !!av1, av1?"有":"无");
+  ok("首句说话人名 = F.I.O.N.A", txt(name1)==="F.I.O.N.A", txt(name1));
+  ok("F.I.O.N.A 名字带角色配色", !!(name1 && /color\s*:\s*#62d5af/i.test(name1.getAttribute("style")||"")), name1?(name1.getAttribute("style")||""):"");
+  ok("首句头像指向 flora 半身立绘", /nsk_guide_flora_bust\.webp$/.test((img1||{}).src||""), (img1||{}).src||"none");
+  ok("首句走全息外观 .fx-holo", !!(dlg1 && dlg1.classList.contains("fx-holo")));
+  ok("首句正文不是旁白样式", !q(".dlg-text.narr"), q(".dlg-text")?q(".dlg-text").className:"none");
+  ok("进度显示 1 / 6", txt(q(".dlg-prog"))==="1 / 6", txt(q(".dlg-prog")));
+  // 图是真的存在并能解码（旧版写「目录无图必然 onerror」已过期：现在 guides/ 有 6 张）
+  await until(()=>{ const im=q(".dlg-av img"); return im && im.complete; },4000);
+  const im1=q(".dlg-av img");
+  ok("flora 立绘真实加载成功（naturalWidth>0）", !!(im1 && im1.naturalWidth>0), im1?(im1.naturalWidth+"px"):"none");
+  ok("图加载成功时容器不打 .miss", !!(av1 && !av1.classList.contains("miss")), av1?av1.className:"none");
 
-  // ---------- 场景3：有说话人 + 头像 + 缺图兜底 ----------
-  await next(); await wait(120);
-  const nameEl=q(".dlg-name"), avEl=q(".dlg-av");
-  ok("第二句显示说话人名", txt(nameEl)==="边疆登记官", txt(nameEl));
-  ok("说话人名带角色配色", !!(nameEl && /color\s*:/.test(nameEl.getAttribute("style")||"")), nameEl?(nameEl.getAttribute("style")||""):"");
-  ok("有头像 img 元素", !!q(".dlg-av img"), q(".dlg-av img")?q(".dlg-av img").getAttribute("src"):"none");
-  ok("头像路径指向引导角色", /nsk_guide_registrar_bust\.webp$/.test((q(".dlg-av img")||{}).src||""), (q(".dlg-av img")||{}).src||"");
-  const ph=q(".dlg-av .av-ph");
-  ok("缺图兜底首字母牌存在", !!ph, ph?txt(ph):"none");
-  // guides/ 目录当前无图 → 必然 onerror；给图片加载失败的传播留时间
-  await until(()=>{ const a=q(".dlg-av"); return a && a.classList.contains("miss"); },3000);
-  const missApplied=!!(avEl && avEl.classList.contains("miss"));
-  ok("图片加载失败后容器打上 .miss（露出首字母牌）", missApplied, avEl?avEl.className:"none");
+  // ---------- 场景3：第2句 = 纯旁白 ----------
+  await next(); await wait(140);
+  ok("第2句无头像容器", !q(".dlg-av"), q(".dlg-av")?"意外出现头像":"");
+  ok("第2句用斜体旁白样式", !!q(".dlg-text.narr"), q(".dlg-text")?q(".dlg-text").className:"none");
+  ok("第2句没有说话人名", !q(".dlg-name"), txt(q(".dlg-name")));
+  ok("第2句文案上屏", /装着电子眼的男人/.test(txt(q(".dlg-text"))), txt(q(".dlg-text")).slice(0,20));
+  ok("进度显示 2 / 6", txt(q(".dlg-prog"))==="2 / 6", txt(q(".dlg-prog")));
 
-  // ---------- 场景4：推进到选项句 ----------
-  let guard=0;
-  while(guard++<10 && !q(".dlg-choices")){ if(!(await next())) break; await wait(90); }
+  // ---------- 场景4：第3句 = 登记人瑞瓦肖 ----------
+  await next(); await wait(140);
+  const name3=q(".dlg-name");
+  ok("第3句说话人 = 瑞瓦肖", txt(name3)==="瑞瓦肖", txt(name3));
+  ok("瑞瓦肖名字带自己的配色", !!(name3 && /color\s*:\s*#e2bd68/i.test(name3.getAttribute("style")||"")), name3?(name3.getAttribute("style")||""):"");
+  ok("瑞瓦肖头像指向 registrar 半身像", /nsk_guide_registrar_bust\.webp$/.test((q(".dlg-av img")||{}).src||""), (q(".dlg-av img")||{}).src||"none");
+  ok("换人后不再是旁白样式", !q(".dlg-text.narr"));
+
+  // ---------- 场景5：推进到第6句（三选项） ----------
+  const gotChoices=await toChoices(8);
+  ok("能推进到选项句", gotChoices);
   const chBtns=qa(".dlg-choice");
-  ok("选项句渲染成按钮", chBtns.length===2, "按钮数 "+chBtns.length);
-  ok("选项文案上屏", /反问他/.test(txt(chBtns[1])), txt(chBtns[1]).slice(0,16));
-  ok("选项带资源增减提示", /\+150 星币/.test(txt(chBtns[1])), txt(chBtns[1]));
+  ok("选项渲染成 3 个按钮", chBtns.length===3, "按钮数 "+chBtns.length);
+  ok("选项1 文案是「家里人给的」", /家里人给的/.test(txt(chBtns[0])), txt(chBtns[0]).slice(0,18));
+  ok("选项1 带星币增减提示", /\+100000 星币/.test(txt(chBtns[0])), txt(chBtns[0]).replace(/\n/g," "));
+  ok("选项2 文案是「打拼出来的」", /打拼出来的/.test(txt(chBtns[1])), txt(chBtns[1]).slice(0,18));
+  ok("选项3 文案是「问东问西」", /问东问西/.test(txt(chBtns[2])), txt(chBtns[2]).slice(0,18));
   ok("选项句不出现「下一句」（必须先选）", !q('[data-act="story:next"]'));
 
-  // ---------- 场景5：选分支 → 跳场景 ----------
-  chBtns[1].click(); await wait(220);
-  ok("选完跳到支线场景", txt(q(".dlg-prog"))==="1 / 5", txt(q(".dlg-prog")));
-  ok("支线首句是登记官", txt(q(".dlg-name"))==="边疆登记官", txt(q(".dlg-name")));
+  // ---------- 场景6：选选项3 → 跳支线 + 加 2 名团员 ----------
+  const before=(st()&&st().members)?st().members.length:-1;
+  ok("选之前能读到名册人数", before>=0, before);
+  chBtns[2].click(); await wait(260);
+  ok("选完跳到支线场景（进度 1 / 3）", txt(q(".dlg-prog"))==="1 / 3", txt(q(".dlg-prog")));
+  ok("支线首句仍是瑞瓦肖", txt(q(".dlg-name"))==="瑞瓦肖", txt(q(".dlg-name")));
+  ok("支线首句文案是「不问就是」那句", /不问就是/.test(txt(q(".dlg-text"))), txt(q(".dlg-text")).slice(0,20));
+  const grew=await until(()=>{ const s=st(); return s && s.members && before>=0 && s.members.length===before+2; },12000);
+  const after=(st()&&st().members)?st().members.length:-1;
+  ok("special.addMembers 真的加了 2 名团员", grew, before+" → "+after);
 
-  // ---------- 场景6：播完回列表 ----------
-  guard=0;
-  while(guard++<12 && q(".dlg")){ if(!(await next())) break; await wait(90); }
-  ok("播完回到章节列表", !!q(".story-list"), q(".story-list")?"列表在":"仍在对话");
+  // ---------- 场景7：分支收尾「（继续）」→ 舰基唤醒 ----------
+  const gotCont=await toChoices(6);
+  ok("分支末句出现「（继续）」选项", gotCont && /继续/.test(txt(q(".dlg-choice"))), txt(q(".dlg-choice")));
+  q(".dlg-choice").click(); await wait(260);
+  ok("「（继续）」跳到 舰基唤醒（1 / 7）", txt(q(".dlg-prog"))==="1 / 7", txt(q(".dlg-prog")));
+  ok("舰基唤醒首句是旁白", !!q(".dlg-text.narr") && !q(".dlg-av"), q(".dlg-av")?"有头像":"纯旁白");
+  ok("舰基唤醒首句文案是「舷桥舱」", /舷桥舱/.test(txt(q(".dlg-text"))), txt(q(".dlg-text")).slice(0,18));
+
+  // ---------- 场景8：播完回列表 ----------
+  const gotEnd=await toChoices(10);
+  ok("舰基唤醒末句出现两选项", gotEnd && qa(".dlg-choice").length===2, "按钮数 "+qa(".dlg-choice").length);
+  qa(".dlg-choice")[0].click(); await wait(320);
+  ok("选「明白了。开工。」后回到章节列表", !!q(".story-list"), q(".story-list")?"列表在":"仍在对话");
   const cards=qa(".story-card");
   ok("列表只显示非隐藏章节（2 条）", cards.length===2, "卡片数 "+cards.length);
   const replay=qa(".story-card .btn, .story-card button").filter(b=>txt(b)==="重看");
   ok("已看的章节按钮变「重看」", replay.length>=1, "重看按钮 "+replay.length);
+  ok("隐藏分支不出现在列表里", !/公子哥儿|联邦打拼|不问就是|一段会算账/.test(txt(q(".story-list"))));
   ok("页签红点已消失（无进行中剧情）", !D().querySelector('[data-act="tab:story"] .tab-dot'));
 
   log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
