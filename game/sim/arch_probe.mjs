@@ -261,8 +261,10 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   const before = sb.res[gore] || 0;
   Engine.Dispatch.assign(sb, sb.members[0].id, "mine", { nodeId: node.id, bodyId: gas.id });
   Engine.Settle.settle(sb, Date.now() + 3600 * 1000);
-  ok("气云:资源表含气体类且节点有气云且采矿产气体",
-    hasGasRes && gasNodes > 0 && gasNodes < sb.starMap.nodes.length && (sb.res[gore] > before),
+  // 2026-11-01 起气云改为「每星系必有」（与采矿/考古/海盗并列的四类作业点），
+  // 所以这里锁的是 == 全量，而不是原来的「有一部分星系有即可」。
+  ok("气云:资源表含气体类且每个星系都有气云且采矿产气体",
+    hasGasRes && gasNodes === sb.starMap.nodes.length && (sb.res[gore] > before),
     "gasNodes=" + gasNodes + "/" + sb.starMap.nodes.length + " gasOre=" + gore + " +" + ((sb.res[gore] - before) || 0).toFixed(2));
 })();
 
@@ -1119,14 +1121,15 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("技能:武器→技能映射与 1 代一致",
     CM.SKILL_OF_WEAPON.laser === "combatLaser" &&
     CM.SKILL_OF_WEAPON.cannon === "combatTurret" &&
-    CM.SKILL_OF_WEAPON.missile === "command",
+    CM.SKILL_OF_WEAPON.missile === "missile",
     JSON.stringify(CM.SKILL_OF_WEAPON));
 
   const lvXp = (lv) => Math.round(((Math.pow(1.1, lv - 1) + Math.pow(1.1, lv)) / 2 - 1) * 1000);
-  function cMem(id, lvL, lvT, lvC, wid, nodeId) {
+  function cMem(id, lvL, lvT, lvM, wid, nodeId) {
     return { id, status: "idle", destroyed: false,
-      skills: { mining: 0, scanning: 0, archaeology: 0, refine: 0, manufacture: 0, invent: 0,
-                combatLaser: lvXp(lvL), combatTurret: lvXp(lvT), command: lvXp(lvC), defense: 0 },
+      skills: { mining: 0, gas: 0, archaeology: 0, refine: 0, manufacture: 0, research: 0,
+                combatLaser: lvXp(lvL), combatTurret: lvXp(lvT), missile: lvXp(lvM), defense: 0,
+                capacitor: 0, logistics: 0 },
       passion: {}, mods: { creditMult: {}, yieldMult: {}, xpMult: {}, learnMult: 1 },
       hp: { shield: 1e9, armor: 1e9, structure: 1e9 },
       fitted: { high: [wid], mid: [], low: [], rig: [] },
@@ -1145,13 +1148,13 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("技能:命中随技能等级上升（1 代 baseHit + lv×4）",
     pHi.weapons[0].hitChance > pLo.weapons[0].hitChance + 0.05,
     "Lv1=" + (pLo.weapons[0].hitChance * 100).toFixed(1) + "% Lv44=" + (pHi.weapons[0].hitChance * 100).toFixed(1) + "%");
-  ok("技能:练指挥不影响激光炮（旧的「三技能平均」已删）",
+  ok("技能:练导弹不影响激光炮（旧的「三技能平均」已删）",
     Math.abs(pCmd.dpsByType.laser - pLo.dpsByType.laser) < 1e-9,
-    "commLv44=" + pCmd.dpsByType.laser.toFixed(4) + " base=" + pLo.dpsByType.laser.toFixed(4));
+    "misLv44=" + pCmd.dpsByType.laser.toFixed(4) + " base=" + pLo.dpsByType.laser.toFixed(4));
 
   const pMisLo = probeOne(cMem("a", 1, 1, 1, "t1_light_missile_launcher", nid), nid);
   const pMisHi = probeOne(cMem("a", 1, 1, 44, "t1_light_missile_launcher", nid), nid);
-  ok("技能:导弹吃 command 技能",
+  ok("技能:导弹吃 missile 技能（2026-11-01 独立，原借 command）",
     pMisHi.dpsByType.missile > pMisLo.dpsByType.missile * 1.2,
     "Lv1=" + pMisLo.dpsByType.missile.toFixed(2) + " Lv44=" + pMisHi.dpsByType.missile.toFixed(2));
   ok("技能:weaponSkillOf 回报装配武器的技能",
@@ -1553,6 +1556,9 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     "无=" + inD0.toFixed(3) + " 有=" + inD1.toFixed(3) + "/s");
 
   const sE = mkBase(n1);
+  // 技能基线必须与 inD0 一致，否则「装配」不是唯一变量：
+  // defense 现在也进减伤（2026-11-01 技能体系），两个独立 state 的随机技能会让比较失效。
+  sE.members[0].skills = Object.assign({}, sD.members[0].skills);
   sE.members[0].fitted = { high: [], mid: ["t1_damage_control"], low: [], rig: [] };
   const inE = C.prepareNode(sE, n1).incomingDps;
   ok("减伤:损伤控制单元生效", inE < inD0,

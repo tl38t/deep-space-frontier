@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>海盗据点锚点 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 星系图「海盗据点锚点」真机自测（2026-11-01）
+// 覆盖：无据点星系不画 / 有据点星系恰画 1 个 / 不越画布 / 不压天体与标签 /
+//       不上轨（没变成 sys-body、bodies 数量不变）/ 点击开派遣弹窗 / 207 个据点全量 / 位置确定性
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||120; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+function pickSystem(nodeId){
+  const sel=D().querySelector(".sys-sel");
+  if(!sel) return false;
+  const Wn=W();
+  sel.value=nodeId;
+  sel.dispatchEvent(new Wn.Event("change",{bubbles:true}));
+  return true;
+}
+const raidEl=()=>D().querySelector(".sys-raid");
+const raidIdOf=(el)=>{ const m=/^raidOpen:(.+)$/.exec(el&&el.getAttribute("data-act")||""); return m?m[1]:null; };
+const overlap=(a,b)=>!(a.right<b.left||b.right<a.left||a.bottom<b.top||b.bottom<a.top);
+function fmtRect(r){ return [r.left,r.top,r.width,r.height].map(v=>Math.round(v)).join(","); }
+
+let BACKUP=null, KEY=null;
+
+(async function(){
+  await nav("../index.html?t="+Date.now());
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const hasCore=await until(()=>W().NSK&&W().NSK.Core&&W().NSK.Core.load,15000);
+  ok("存档接口可用", hasCore);
+  if(!hasCore){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+
+  const S=W().NSK.Narrative&&W().NSK.Narrative.Story;
+  const st0=W().NSK.Core.load();
+  if(st0){
+    st0.story=st0.story||{};
+    st0.story.seen=S?S.list().map(x=>x.id):[];
+    st0.story.cur=null;
+    st0.story.flags=st0.story.flags||{};
+    W().NSK.Core.save(st0);
+  }
+
+  // 收集未捕获错误（整个 iframe 生命周期）
+  await nav("../index.html?r="+Date.now()+"#system");
+  const b1=await until(booted,25000);
+  ok("重载后启动并停在星系页", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  const ERRS=[];
+  W().addEventListener("error", ev=>ERRS.push(String(ev.message)));
+  await until(()=>D().querySelector("g.sys-body"),15000);
+
+  const st=W().NSK.Core.load();
+  const map=st.starMap;
+  const raids=map.nodes.filter(n=>n.raid);
+  const startNode=map.nodes.find(n=>n.id===map.startId);
+  // 自 2026-11-01 起：每个星系都有据点（采矿/采气/考古/海盗四类作业点全星系齐全）
+  ok("每个星系都有据点（= 节点总数）", raids.length===map.nodes.length && map.nodes.length===207,
+    raids.length+" / "+map.nodes.length);
+  ok("起始星系也有据点（不再有「起点不放据点」的特殊规则）", !!startNode&&!!startNode.raid,
+    startNode&&startNode.raid?startNode.raid.name:"无");
+
+  // ── A. 每个已探明星系都必须画出锚点 ──────────────────────────────────
+  await until(()=>D().querySelector(".sys-sel"),15000);
+  let lackOne="", checked=0;
+  for (const n of map.nodes.filter(x=>x.discovered)) {
+    if(!pickSystem(n.id)) continue;
+    await wait(45);
+    checked++;
+    if (!D().querySelector(".sys-raid")) { lackOne=n.id+" "+n.name; break; }
+  }
+  ok("每个已探明星系都画出锚点（共 "+checked+" 个）", !lackOne, lackOne||"全部有");
+
+  // ── B. 有据点星系：恰 1 个、在画布内、不压天体与标签 ───────────────
+  const target=raids.slice().sort((a,b)=>a.raid.band-b.raid.band)[0];
+  pickSystem(target.id);
+  await wait(160);
+  const el=raidEl();
+  ok("有据点星系画出锚点", !!el);
+  if(!el){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  ok("同一星系只画 1 个锚点", D().querySelectorAll(".sys-raid").length===1,
+    "找到 "+D().querySelectorAll(".sys-raid").length+" 个");
+  ok("锚点 data-act 指向该节点", raidIdOf(el)===target.id, String(raidIdOf(el))+" vs "+target.id);
+  ok("锚点文案含据点名", (el.textContent||"").indexOf(target.raid.name)>=0, el.textContent);
+  // ⚔ 字符已在 raidAnchorSvg 里换成手绘「锁定框 + 敌舰剪影 + 信标点」，语义不变，
+  // 断言随之改为查那三个类名（只查文案会让「图标被删」这类回归漏过去）。
+  const hostile=["reticle","brackets","ship"].filter(c=>el.querySelector(".sys-raid-"+c));
+  ok("锚点带敌对标记（锁定框/准星/敌舰剪影）", hostile.length===3, hostile.join("+")||"无");
+  ok("精锐据点显示「精锐」", !target.raid.elite || (el.textContent||"").indexOf("精锐")>=0, target.raid.elite?"精锐":"常规");
+
+  // 画布内（用屏幕坐标换算回 0~400 用户单位）
+  const svg=D().querySelector(".sys-svg");
+  const sb=svg.getBoundingClientRect();
+  const sc=sb.width/400;
+  const rb=el.getBoundingClientRect();
+  const ux=(rb.left-sb.left)/sc, uy=(rb.top-sb.top)/sc;
+  const uw=rb.width/sc, uh=rb.height/sc;
+  ok("锚点在画布内（0~400）", ux>=0&&uy>=0&&ux+uw<=400.01&&uy+uh<=400.01,
+    "x "+ux.toFixed(1)+"~"+(ux+uw).toFixed(1)+" / y "+uy.toFixed(1)+"~"+(uy+uh).toFixed(1));
+  ok("锚点贴角不留半屏空白（距最近两边 ≤ 20 单位）",
+    Math.min(ux,uy,400-(ux+uw),400-(uy+uh))<=20,
+    "最近边距 "+Math.min(ux,uy,400-(ux+uw),400-(uy+uh)).toFixed(1));
+
+  // 不压天体本体：取每个 sys-body 的第一个 circle（belt 是整环，跳过）
+  const bodyRects=[];
+  D().querySelectorAll("g.sys-body").forEach(g=>{
+    if(g.classList.contains("belt")) return;
+    const c=g.querySelector("circle");
+    if(c) bodyRects.push({name:g.className.baseVal||g.className, r:c.getBoundingClientRect()});
+  });
+  const hitBody=bodyRects.filter(o=>overlap(rb,o.r));
+  ok("锚点不压任何天体本体", hitBody.length===0,
+    hitBody.length?(hitBody.map(o=>o.name).join(",")+" | 锚点 "+fmtRect(rb)):("共比对 "+bodyRects.length+" 个天体"));
+
+  const labelHits=[];
+  D().querySelectorAll(".sys-label, .sys-worker").forEach(t=>{
+    const r=t.getBoundingClientRect();
+    if(r.width>0&&r.height>0&&overlap(rb,r)) labelHits.push(t.textContent||"worker");
+  });
+  ok("锚点不压任何天体标签/在岗徽章", labelHits.length===0,
+    labelHits.length?labelHits.join(","):"标签 "+D().querySelectorAll(".sys-label").length+" 个均无重叠");
+
+  // ── C. 不上轨：没变成天体、bodies 数量不变 ─────────────────────────
+  // 注意比对的是 bodies.length 而不是「orbit>0 的天体数」——恒星 orbit=0 也算一个 sys-body。
+  const svgBodies=D().querySelectorAll("g.sys-body").length;
+  const dataBodies=(target.bodies||[]).length;
+  ok("SVG 天体数 = 数据层 bodies 数（锚点不在其中）", svgBodies===dataBodies,
+    svgBodies+" vs "+dataBodies);
+  ok("锚点不带 sys-body 类", !el.classList.contains("sys-body"), el.getAttribute("class"));
+  const kinds=[...new Set((target.bodies||[]).map(b=>b.kind))].sort();
+  ok("bodies 里没有 raid 类假天体", kinds.indexOf("raid")<0, kinds.join("/"));
+  const bodyCountBefore=(target.bodies||[]).length;
+
+  // 位置确定性：切走再切回来，transform 必须一模一样
+  const t1=el.getAttribute("transform");
+  pickSystem(startNode.id);
+  await wait(120);
+  pickSystem(target.id);
+  await wait(160);
+  const t2=(raidEl()||{}).getAttribute?raidEl().getAttribute("transform"):null;
+  ok("同一星系锚点位置确定性（切走再回来不变）", t1===t2, t1+" vs "+t2);
+  ok("切星系后 bodies 数量没变", (map.nodes.find(n=>n.id===target.id).bodies||[]).length===bodyCountBefore,
+    String((map.nodes.find(n=>n.id===target.id).bodies||[]).length)+" vs "+bodyCountBefore);
+
+  // ── D. 点击真的打开派遣弹窗 ───────────────────────────────────────
+  const el2=raidEl();
+  el2.dispatchEvent(new (W().MouseEvent)("click",{bubbles:true}));
+  await wait(200);
+  const dlg=D().getElementById("raid_dlg_body");
+  ok("点击锚点弹出派遣面板", !!dlg&&dlg.innerHTML.length>20,
+    dlg?("长度 "+dlg.innerHTML.length):"没弹窗");
+  ok("派遣面板标题是该据点", !!dlg&&(dlg.textContent||"").indexOf(target.raid.name)>=0,
+    dlg?(dlg.textContent||"").slice(0,30):"n/a");
+  // 关掉弹窗，免得挡住后面的截图与点击
+  const closeBtn=D().querySelector("[data-raidclose]");
+  if(closeBtn) closeBtn.dispatchEvent(new (W().MouseEvent)("click",{bubbles:true}));
+  await wait(120);
+
+  // ── E. 全部 207 个据点：每个都能画、都在画布内、都不压天体 ───────────
+  // ⚠️ 每次 renderView() 都会重建 innerHTML，`.sys-svg` 元素被替换，
+  //    所以画布矩形必须**每次重取**，不能复用循环外的 sb/sc（旧元素脱离文档后 rect 全 0）。
+  let allDrawn=0, allInside=0, allClean=0, offenders=[];
+  for(const n of raids){
+    if(!pickSystem(n.id)){ continue; }
+    await wait(45);
+    const g=raidEl();
+    if(!g){ offenders.push(n.name+"(没画)"); continue; }
+    allDrawn++;
+    const sb2=D().querySelector(".sys-svg").getBoundingClientRect();
+    const sc2=sb2.width/400;
+    const r=g.getBoundingClientRect();
+    const x=(r.left-sb2.left)/sc2, y=(r.top-sb2.top)/sc2, w2=r.width/sc2, h2=r.height/sc2;
+    if(x>=-0.5&&y>=-0.5&&x+w2<=400.5&&y+h2<=400.5) allInside++; else offenders.push(n.name+"(出界 "+Math.round(x)+","+Math.round(y)+")");
+    let dirty=false;
+    D().querySelectorAll("g.sys-body").forEach(bg=>{
+      if(bg.classList.contains("belt")) return;
+      const c=bg.querySelector("circle");
+      if(c&&overlap(r,c.getBoundingClientRect())) dirty=true;
+    });
+    if(!dirty) allClean++; else offenders.push(n.name+"(压天体)");
+  }
+  const TOT=raids.length;
+  ok("全部 "+TOT+" 个据点都画出锚点", allDrawn===TOT, allDrawn+"/"+TOT);
+  ok("全部锚点都在画布内", allInside===TOT, allInside+"/"+TOT);
+  ok("全部锚点都不压天体", allClean===TOT, allClean+"/"+TOT+(offenders.length?("  问题："+offenders.slice(0,4).join(" / ")):""));
+
+  // ── F. 无未捕获错误 ───────────────────────────────────────────────
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

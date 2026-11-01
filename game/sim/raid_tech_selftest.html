@@ -48,7 +48,9 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
       raidIds=W().NSK.Data.Raids.allRaids(st.starMap).map(r=>r.nodeId);
     }
   }
-  ok("读到据点清单", raidIds.length===18, "count="+raidIds.length);
+  // 自 2026-11-01 起「每个星系都有据点」，总数 = 节点总数（不再是 18）
+  const nodeTotal = hasCore ? W().NSK.Core.load().starMap.nodes.length : 0;
+  ok("每个星系都有据点（= 节点总数）", raidIds.length===nodeTotal && nodeTotal===207, "count="+raidIds.length+" / nodes="+nodeTotal);
   if(!raidIds.length){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
 
   await wait(700);
@@ -58,12 +60,14 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
   await until(()=>qa('[data-act^="nodeinfo:"]').length>0, 10000);
 
-  // 2) 星图上据点标记：⚔ 角标 + 据点名
-  const badges=qa(".nraid-badge");
+  // 2) 星图据点标记：每星系都有据点后，星图**不再画 ⚔ 角标与光环**（207 个会糊成一片），
+  //    据点名仍在 DOM 里，但默认 opacity:0，只在 hover / 当前 / 可达节点淡入。
+  ok("星图不再画 ⚔ 据点角标", qa(".nraid-badge").length===0, "count="+qa(".nraid-badge").length);
+  ok("星图不再画据点光环", qa(".raid-ring").length===0, "count="+qa(".raid-ring").length);
   const names=qa(".nraid");
-  ok("星图出现 ⚔ 据点角标", badges.length>0, "count="+badges.length);
   ok("星图出现据点名字", names.length>0 && /苍穹劫团|赤誓教团|静默集群/.test(txt(names[0])), "first="+txt(names[0]));
-  ok("据点名字数量 = 据点总数", names.length===raidIds.length, names.length+" / "+raidIds.length);
+  const discTotal = W().NSK.Core.load().starMap.nodes.filter(n=>n.discovered).length;
+  ok("据点名数量 = 已探明星系数（未探明的不画）", names.length===discTotal, names.length+" / "+discTotal);
 
   // 3) 点据点节点 → 菜单里应有名字与「派遣剿匪」
   const raidFirst=raidIds.find(id=>q('[data-act="nodeinfo:'+id+'"]'));
@@ -197,8 +201,18 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
             ok("继续研究后 active 重建", !!a2, JSON.stringify(a2));
             if(a2){
               const span=(a2.endsAt-a2.startedAt)/1000;
-              ok("只需熬剩余时长（< 全时长 70%）", span < secFull*0.7,
-                "span="+Math.round(span)+"s / full="+secFull+"s");
+              // 剩余时长 = 全时长 × (1 − 保留进度) × **研究速度系数**。
+              // 速度系数来自发明舱是否有人驻舱：无人 = UNMANNED_PENALTY(1.4)，有人按 research 技能缩短。
+              // 早期这条写死 `span < secFull*0.7`，漏了这个乘区 —— 无人驻舱时 0.6×1.4=0.84 就误报红。
+              // 改成直接锁模型：断言的应该是「公式对不对」，不是「比例小于某个拍出来的数」。
+              const TechM=W().NSK.Engine.Tech;
+              const mult=(TechM && TechM.researchSpeedMult)?TechM.researchSpeedMult(stD):1;
+              const expect=secFull*(1-(a2.base||0))*mult;
+              ok("只需熬剩余时长（= 全时长 × 剩余比例 × 研究速度系数）",
+                Math.abs(span-expect)<Math.max(3, expect*0.03),
+                "span="+Math.round(span)+"s 期望="+Math.round(expect)+"s（full="+secFull+"s base="+a2.base+" 速度系数="+mult+"）");
+              ok("继续研究比从头开始快（保留进度真的生效）", span < secFull*mult*0.95,
+                "span="+Math.round(span)+"s / 从头="+Math.round(secFull*mult)+"s");
               ok("active.base 记下保留进度", a2.base>0.3 && a2.base<0.5, "base="+a2.base);
             }
           }

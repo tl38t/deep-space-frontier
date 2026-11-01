@@ -538,13 +538,12 @@
   function raidAnchorSvg(node, bodies) {
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, node.id) : null;
     if (!raid) return "";
-    const label = "⚔ " + raid.name;
-    // 宽估算：12px 字号下中文 ≈11.5px/字，符号与西文 ≈7px/字；再留 26px 内边距。
-    // 宁可估宽 10px 也不要估窄——窄了字会顶到圆角外，宁可多留白。
-    let vw = 0;
-    for (const ch of label) vw += (ch.charCodeAt(0) > 0x2000 ? 11.5 : 7);
-    if (raid.elite) vw += 23;                       // 「精锐」两个小字
-    const w = Math.round(Math.max(78, vw + 26)), h = 22, pad = 10;
+    const engaged = state.members.some(m => !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id);
+    // 敌对锚点是战术信号而不是天体：用锁定框 + 敌舰剪影，名称留在同一枚可点击标记里。
+    let nameW = 0;
+    for (const ch of raid.name) nameW += (ch.charCodeAt(0) > 0x2000 ? 10.5 : 7);
+    const eliteW = raid.elite ? 42 : 10;
+    const w = Math.round(Math.max(116, nameW + 57 + eliteW)), h = 30, pad = 10;
     // 每个天体的占用框：本体 + 下方名字 + 上方在岗徽章，垂直方向各留一行。
     // 把它当外接矩形（而不是圆）是保守估计——宁可离远点，也别压在标签上。
     const boxes = [];
@@ -574,9 +573,21 @@
       if (!best || gap > best.gap) best = { cx: c.cx, cy: c.cy, gap: gap };
     }
     const cx = best.cx.toFixed(1), cy = best.cy.toFixed(1);
-    let s = '<g class="sys-raid click" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
-    s += '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="' + (h / 2) + '"/>';
-    s += '<text y="4">' + esc(label) + (raid.elite ? '<tspan class="sys-raid-elite" dx="4">精锐</tspan>' : "") + "</text>";
+    const markerState = (raid.elite ? " elite" : "") + (engaged ? " engaged" : "");
+    const iconX = -w / 2 + 16;
+    const textX = -w / 2 + 32;
+    let s = '<g class="sys-raid click' + markerState + '" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
+    s += '<rect class="sys-raid-frame" x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="5"/>';
+    s += '<circle class="sys-raid-reticle" cx="' + iconX + '" r="9" fill="none"/>';
+    s += '<path class="sys-raid-brackets" d="M' + (iconX - 12) + ' -5v-6h6 M' + (iconX + 12) + ' -5v-6h-6 M' + (iconX - 12) + ' 5v6h6 M' + (iconX + 12) + ' 5v6h-6" fill="none"/>';
+    s += '<path class="sys-raid-ship" d="M' + iconX + ' -6 L' + (iconX + 6) + ' 0 L' + iconX + ' 6 L' + (iconX - 5) + ' 0 Z"/>';
+    s += '<circle class="sys-raid-beacon" cx="' + (iconX + 9) + '" cy="-8" r="2.2"/>';
+    s += '<text class="sys-raid-label" x="' + textX + '" y="4">' + esc(raid.name) + '</text>';
+    if (raid.elite) {
+      const bx = w / 2 - 37;
+      s += '<rect class="sys-raid-elite-bg" x="' + bx + '" y="-8" width="30" height="16" rx="2"/>';
+      s += '<text class="sys-raid-elite" x="' + (bx + 15) + '" y="3">精锐</text>';
+    }
     s += "</g>";
     return s;
   }
@@ -705,13 +716,9 @@
     const fighting = state.members.filter(function (m) {
       return !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id;
     });
-    let html = "<h3>⚔ " + esc(raid.name) + (raid.elite ? ' <span class="tag bad">精锐</span>' : "") + "</h3>";
-    html += "<div class='panel squad-panel'>";
-    html += '<div class="row"><b>' + (pf ? esc(pf.name) : raid.faction) + " 劫掠者</b>" +
-      '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
-      fleetLevelTag(raid.band, raid.faction) + "</div>";
-    html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
-      "　参战 " + fighting.length + " / 编制 " + cap + "</div>";
+    let html = "<div class='panel squad-panel'>";
+    html += raidKeyArtHtml(node.id, raid, fighting.length > 0);
+    html += raidOverviewHtml(raid, pf ? pf.name : raid.faction, fighting.length, cap);
     // 战斗观测面板（一波 = 一支敌方编队）：左我方参战舰船三防血条，右敌方编队卡片，底部本场累计
     html += battlePanelBlock(node);
     // 参战名单（就地召回某人，不影响其他人）
@@ -723,15 +730,15 @@
         html += '<div class="row"><span>' + esc(m.name) + ' <span class="dim">' + cl + "</span></span>" +
           '<button class="sm ghost" data-act="raidOut:' + m.id + '">召回</button></div>';
       }
-    } else html += '<div class="dim">此处没有我方舰船。</div>';
+    } else html += '<div class="raid-empty">暂无己方舰船驻留。选择派遣编队后，这里会显示双方战况。</div>';
     html += "</div>";
     // 派遣 / 全部召回 / 科技提示
-    html += '<div class="row" style="margin-top:6px">';
+    html += '<div class="raid-actions">';
     html += '<button class="sm primary" data-act="raidOpen:' + node.id + '">派遣 / 调整编制</button>';
     if (fighting.length) html += '<button class="sm ghost" data-act="raidRecall:' + node.id + '">全部召回</button>';
     html += "</div>";
     if (cap < 3) {
-      html += '<div class="dim" style="margin-top:6px">编制上限 ' + cap + " 人 —— 在「科技」页研究「战斗编制」可提升到 3 人。</div>";
+      html += '<div class="raid-dispatch-note">编制上限 ' + cap + ' 人；在「科技」页研究「战斗编制」可提升到 3 人。</div>';
     }
     html += "</div>";
     return html;
@@ -1326,22 +1333,45 @@
       m.assignment.type === "combat" && m.assignment.nodeId === nodeId);
   }
 
+  function raidKeyArtHtml(nodeId, raid, engaged) {
+    const artState = engaged ? "engaged" : (raid.elite ? "elite" : "ready");
+    const artEyebrow = engaged ? "FRIENDLY FLEET ENGAGED" : (raid.elite ? "ELITE HOSTILE SIGNAL" : "HOSTILE SIGNAL");
+    return '<div class="raid-keyart ' + artState + '">'
+      + '<img src="assets/system-concepts/raid-encounter-concept.png" alt="">'
+      + '<div class="raid-keyart-stamp"><i></i><span>' + artEyebrow + '</span></div>'
+      + '<span class="raid-keyart-code">CONTACT / ' + esc(nodeId) + '</span>'
+      + '<div class="raid-keyart-title"><small>RAIDER ENCOUNTER · THREAT BAND ' + String(raid.band).padStart(2, "0") + '</small>'
+      + '<b>' + esc(raid.name) + (raid.elite ? ' <i>精锐</i>' : "") + '</b></div>'
+      + '</div>';
+  }
+
+  function raidOverviewHtml(raid, factionName, participants, cap) {
+    const tier = ["", "I", "II", "III", "IV", "V"][raid.band] || String(raid.band);
+    return '<div class="raid-site-meta"><b>' + esc(factionName) + ' · 劫掠编队</b><div class="raid-site-tags">'
+      + '<span class="tag">安全 ' + raid.secLevel + ' · ' + raid.secName + '</span>'
+      + fleetLevelTag(raid.band, raid.faction)
+      + (raid.elite ? '<span class="tag bad">精锐目标</span>' : '')
+      + '</div></div>'
+      + '<div class="raid-summary-stats">'
+      + '<div><span>敌方威胁</span><b>' + tier + '</b></div>'
+      + '<div><span>悬赏倍率</span><b>⛁ ×' + raid.iskMult + '</b><small>功勋 ×' + raid.repMult + '</small></div>'
+      + '<div><span>我方编制</span><b>' + participants + ' / ' + cap + '</b></div>'
+      + '</div>';
+  }
+
   function raidDispatchBody() {
     const nodeId = raidSel.nodeId;
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
     if (!raid) return "<div class='dim'>目标星系不存在。</div>";
+    const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(raid.faction) : null;
     const cap = Engine.Combat.squadCapacity(state);
     const sel = raidSel.ids;
     const here = raidFighting(nodeId).map(m => m.id);
 
-    let html = '<div class="row"><b>⚔ ' + esc(raid.name) + "</b>" +
-      (raid.elite ? '<span class="tag bad">精锐</span>' : "") +
-      '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
-      fleetLevelTag(raid.band, raid.faction) + "</div>";
-    html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
-      "　编制上限 " + cap + " 人</div>";
-    html += '<div class="row"><b>已选 ' + sel.length + " / " + cap + '</b>' +
-      '<span class="dim">点成员名字切换。确认后本据点人员按此名单重设。</span></div>';
+    let html = raidKeyArtHtml(nodeId, raid, here.length > 0);
+    html += raidOverviewHtml(raid, pf ? pf.name : raid.faction, sel.length, cap);
+    html += '<div class="raid-select-heading"><b>选择参战舰船</b><span>已选 ' + sel.length + ' / ' + cap +
+      ' · 确认后本据点人员按此名单重设</span></div>';
     html += '<div class="squad-roster">';
     for (const m of state.members) {
       if (m.destroyed) continue;
@@ -1360,10 +1390,10 @@
         "<span>" + stTag + "</span></div>";
     }
     html += "</div>";
-    html += '<div class="row" style="margin-top:8px">' +
+    html += '<div class="raid-actions">' +
       '<button class="sm primary" data-act="raidCommit:' + nodeId + '"' + (sel.length ? "" : " disabled") + ">确认派遣</button>" +
       '<button class="sm ghost" data-raidclose="1">取消</button></div>';
-    html += '<div class="dim" style="margin-top:6px">派往别处的人会先撤离原岗位。没有装武器的成员参战不产生任何伤害（1 代规则）。</div>';
+    html += '<div class="raid-dispatch-note">派往别处的人会先撤离原岗位；未装武器的成员不会造成伤害。</div>';
     return html;
   }
 
@@ -1389,7 +1419,7 @@
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-modal", "true");
     el.setAttribute("aria-label", "据点派遣");
-    el.innerHTML = '<div class="wh-detail recruit-hub">'
+    el.innerHTML = '<div class="wh-detail recruit-hub raid-dispatch">'
       + '<div class="npc-terminal-bar"><span><i></i> 据点派遣 <b>/ RAID DISPATCH</b></span><span>编制上限 '
       + Engine.Combat.squadCapacity(state) + ' 人</span></div>'
       + '<button class="whd-x" data-raidclose="1" aria-label="关闭">✕</button>'

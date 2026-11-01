@@ -25,7 +25,7 @@
   function defaultState(now, Data) {
     const rng = (window.NSK.Core.makeRng)((Math.random() * 4294967296) >>> 0);
     const map = Data.StarMap.generateStarMap(rng);   // 固定 207 节点全量星图
-    // 挂具名海盗据点（战斗节点）：每星域 2 个，见 data/raids.js
+    // 挂海盗据点（战斗节点）：**每个星系 1 个**（采矿/采气/考古/海盗四类作业点齐全），见 data/raids.js
     if (Data.Raids && Data.Raids.attach) Data.Raids.attach(map);
 
     // 起始 6 名成员（名册上限 20，见 §13/§14）

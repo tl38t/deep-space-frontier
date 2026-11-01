@@ -57,38 +57,44 @@ ok(bands["0.2-0.1"] === 1 && bands["0.0"] === 1, "深空/0.0 各 1 区");
 const slp = Data.StarMap.SECLEVEL_TABLE["0.0"];
 ok(slp && slp.iskMult === 3.5 && slp.repMult === 2.5 && slp.band === 5, "0.0 档 iskMult3.5/repMult2.5/band5");
 
-// 2) 具名据点：每星域 2 个（常规 + 精锐），共 18 个
+// 2) 具名据点：自 2026-11-01 起**每个星系都有**（与采矿/采气/考古并列的四类作业点）
 const all = Raids.allRaids(map);
-ok(all.length === 18, "据点总数 = 18（得 " + all.length + "）");
+ok(all.length === map.nodes.length && map.nodes.length === 207,
+  "据点总数 = 节点总数 207（得 " + all.length + "）");
 const perRegion = {};
 for (const r of all) perRegion[r.region] = (perRegion[r.region] || 0) + 1;
-ok(Object.keys(perRegion).length === 9 && Object.values(perRegion).every(v => v === 2),
-  "每星域恰好 2 个据点", JSON.stringify(perRegion));
+ok(Object.keys(perRegion).length === 9, "9 个星域都有据点", JSON.stringify(perRegion));
+// 每域据点密度必须等于该域星系数
+const nodesPerRegion = {};
+for (const n of map.nodes) nodesPerRegion[n.region] = (nodesPerRegion[n.region] || 0) + 1;
+ok(map.regions.every(r => perRegion[r.id] === nodesPerRegion[r.id]),
+  "每星域据点数 = 该域星系数");
 
-// 命名：同势力内不重名（1 代词表每势力 6 个类型词，正好覆盖 6 个据点）
-const byFaction = {};
-for (const r of all) (byFaction[r.raid.faction] = byFaction[r.raid.faction] || []).push(r.raid.name);
-let dup = null;
-for (const f in byFaction) {
-  const set = new Set(byFaction[f]);
-  if (set.size !== byFaction[f].length) dup = f + ":" + byFaction[f].join(",");
-}
-ok(!dup, "同势力据点不重名", dup || "");
+// 命名：词池 12 个/势力，星域内星系 19~27 个 → 必然循环重名（靠星系名区分）。
+// 这里只锁「同域同名不集中」：任一域任一名字最多出现 4 次（12 词循环，27 节点上限 3）。
+const dupMap = {};
+for (const r of all) { const k = r.region + "|" + r.raid.name; dupMap[k] = (dupMap[k] || 0) + 1; }
+const worstDup = Math.max(...Object.values(dupMap));
+ok(worstDup <= 3, "同域同名据点 ≤ 3 次（12 词循环）", "最大 " + worstDup + " 次");
 ok(all.every(r => r.raid.name && r.raid.name.length >= 3), "每个据点都有名字");
 
 // band：精锐 = 常规 +1（封顶 5），且全档 1~5 都出现
 const bandSet = {};
 for (const r of all) bandSet[r.raid.band] = 1;
 ok([1, 2, 3, 4, 5].every(b => bandSet[b]), "据点覆盖 band 1~5（不出现难度断层）", Object.keys(bandSet).join(","));
-const sameRegion = all.filter(r => r.region === all[0].region);
-ok(sameRegion.length === 2 && sameRegion.some(r => r.raid.elite) && sameRegion.some(r => !r.raid.elite),
-  "同星域一个常规一个精锐");
-ok(sameRegion.find(r => r.raid.elite).raid.band >= sameRegion.find(r => !r.raid.elite).raid.band,
-  "精锐 band ≥ 常规 band");
+// 每域恰好 1 个精锐，且 band 比同域常规高一档（0.0 域封顶 5，不高于 5）
+const elitePerRegion = {};
+for (const r of all) if (r.raid.elite) elitePerRegion[r.region] = (elitePerRegion[r.region] || 0) + 1;
+ok(map.regions.every(r => elitePerRegion[r.id] === 1), "每星域恰好 1 个精锐", JSON.stringify(elitePerRegion));
+const SEC_BAND_T = { "1.0-0.8": 1, "0.7-0.5": 2, "0.4-0.3": 3, "0.2-0.1": 4, "0.0": 5 };
+ok(all.every(r => {
+  const base = SEC_BAND_T[r.raid.secLevel] || 1;
+  return r.raid.band === Math.min(5, base + (r.raid.elite ? 1 : 0));
+}), "band 逐星系符合安等（精锐 +1 封顶 5）");
 
-// 3) 普通节点不可剿匪（这是本次设计的核心：战斗只发生在据点）
-const plainNode = map.nodes.find(n => !n.raid && n.discovered !== false);
-ok(!!plainNode, "存在普通节点");
+// 3) 每个节点都能剿匪（不再是「只有 18 个据点可打」）
+const everyNodeHasRaid = map.nodes.every(n => n.raid && n.raid.band >= 1);
+ok(everyNodeHasRaid, "每个节点都挂了据点");
 function mkState(cap0) {
   const st = {
     version: 8, lastSeen: Date.now() - 3600 * 1000, rngSeed: 999,
@@ -110,11 +116,17 @@ function mkMem(id) {
     fitted: { high: [], mid: [], low: [], rig: [] } };
 }
 
+// 自 2026-11-01：每个星系都有据点，所以「真实节点」一律可派战斗；
+// 门禁只剩「节点不存在」这一种情形（守卫分支仍在，防止 UI 传错 id 时静默产生幽灵战斗）。
 const stPlain = mkState(1);
 stPlain.members.push(mkMem("a"));
-const rPlain = Dispatch.assign(stPlain, "a", "combat", { nodeId: plainNode.id });
-ok(!rPlain.ok && String(rPlain.err).indexOf("据点") > -1, "普通节点派遣战斗被拒", JSON.stringify(rPlain));
-ok(Combat.prepareNode(stPlain, plainNode.id) === null, "普通节点 prepareNode = null（不产战斗）");
+ok(Dispatch.assign(stPlain, "a", "combat", { nodeId: all[0].nodeId }).ok,
+  "任意真实节点都能派战斗（不再是 18 个特例）");
+const stGhost = mkState(1);
+stGhost.members.push(mkMem("a"));
+const rGhost = Dispatch.assign(stGhost, "a", "combat", { nodeId: "node_ghost" });
+ok(!rGhost.ok && String(rGhost.err).indexOf("不存在") > -1, "不存在的节点派遣战斗被拒", JSON.stringify(rGhost));
+ok(Combat.prepareNode(stGhost, "node_ghost") === null, "不存在节点 prepareNode = null（不产战斗）");
 
 // 4) 编制容量：科技解锁 1 → 2 → 3
 const RAID_NODE = all[0].nodeId;

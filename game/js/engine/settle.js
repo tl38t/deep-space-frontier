@@ -212,14 +212,14 @@
       for (const m of state.members) {
         if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
         const nid = m.assignment.nodeId;
-        // 战斗只发生在具名据点（node.raid）。旧档若有人被派在普通节点，就地召回并提示一次，
+        // 2026-11-01 起每个星系都有据点，正常情况走不进这里；
+        // 保留分支是为了挡住「存档 nodeId 指向已不存在的节点」这类脏数据，
         // 避免「派了兵但永远零产出」的静默失效。
         if (Raids && state.starMap && !Raids.raidAt(state.starMap, nid)) {
           const nm = m.name;
           m.assignment = null;
           m.status = "idle";
-          pushReport(state, "剿匪规则变更", [nm + " 所在的星系没有海盗据点，已自动召回待命。",
-            "现在剿匪需要在星图上选中标有 ⚔ 的据点。"]);
+          pushReport(state, "剿匪目标失效", [nm + " 所在星系在星图中已不存在，已自动召回待命。"]);
           continue;
         }
         combatNodes[nid] = 1;

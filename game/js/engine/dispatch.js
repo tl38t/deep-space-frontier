@@ -92,7 +92,7 @@
       if (type === "combat") {
         const Raids = (Data && Data.Raids) ? Data.Raids : null;
         const raid = (Raids && state.starMap) ? Raids.raidAt(state.starMap, nodeId) : null;
-        if (!raid) return { ok: false, err: "该星系没有海盗据点，无法剿匪" };
+        if (!raid) return { ok: false, err: "目标星系不存在，无法剿匪" };
         const cap = squadCapOf(state);
         const already = !!(m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === nodeId);
         if (!already && fightingAt(state, nodeId) >= cap) {
