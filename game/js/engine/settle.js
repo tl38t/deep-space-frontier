@@ -83,15 +83,13 @@
     return (skillBonus(skills, "combatLaser") + skillBonus(skills, "combatTurret") + skillBonus(skills, "command")) / 3;
   }
 
-  // 数值规范：所有战斗加成统一为「独立乘区」相乘，禁止隐蔽加算。
-  // 公式统一为：产出 = baseRate × skillBonus × envMult × modMult × eff × underCL × dt
-  // - baseRate：标定常数（纯数值，无意义）
-  // - skillBonus：成员战斗技能加成（三武器等级均值）
-  // - envMult：星系环境倍率（secLevel 驱动的 iskMult / repMult）
-  // - modMult：成员/舰船/词条修正（预聚合 mods.creditMult 等）
-  // - eff：战力效率（小队战力 / 海盗战力，clamp 0.2~2.5）
-  // - underCL：等级不足惩罚（固定 ×0.5，否则 1）
-  // 未来新增任何修正，必须声明它属于上述哪一类「独立乘区」，否则判为违规。
+  // 战斗产出规范（2026-11-01 对齐现状）：
+  //   每波掉落 = DROP_CREDIT_BASE × 星系赏金倍率 × Σ成员赏金倍率
+  //   总产出   = 每波掉落 × 击杀波数          ← 击杀波数由真实伤害打空编队血量得出
+  // 战斗技能不进掉落，而进武器伤害（波变短 → 单位时间波数变多），不重复乘。
+  // ⚠️ 已删除：`eff`（小队战力/海盗战力）与 `underCL`（等级不足 ×0.5）两个乘区——
+  //    1 代没有「战力」概念，也没有把等级门槛做成软惩罚（它是硬解锁条件）。
+  //    这两个量从未参与结算，只在 UI 上承诺过效果，属自创残留。
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   // RimWorld 式经验倍率：major ×1.5 / minor ×1.0 / none ×0.35（只影响成长速度）
   // 再叠成员词条 learnMult（全局学习速度，O(1) 预聚合于 member.mods）
@@ -172,6 +170,21 @@
     return withdrawn;
   }
 
+  // 整队撤退（断弹）：该节点所有参战成员解除派遣返港待命。
+  // 与「结构被打穿」不同——船没坏，是人没弹了。战利品保留（已在逐波结算时入账）。
+  function withdrawSquad(state, nodeId, reason) {
+    const out = [];
+    for (const m of (state.members || [])) {
+      if (!m || m.destroyed) continue;
+      if (!m.assignment || m.assignment.type !== "combat" || m.assignment.nodeId !== nodeId) continue;
+      m.assignment = null;
+      m.status = "idle";
+      out.push(m.id);
+    }
+    if (out.length) pushReport(state, "战斗撤退", [reason]);
+    return out;
+  }
+
   // 主结算
   function settle(state, now) {
     const raw = Math.max(0, (now - state.lastSeen) / 1000);
@@ -179,18 +192,20 @@
     if (dt <= 0) return { dt: 0, produced: [], events: [] };
     const produced = [];
     const events = [];
-    // 精通点全局强化（O(1) 读取；combat 乘区用于作战声望/赏金）
+    // 精通点：本 tick 的工业批次发点（`M.award` 在下方批次结算后调用）
+    // ⚠️ 2026-11-01：原本这里还算过一个 masteryYield（combat 节点 +8% 赏金/级），
+    //    但从未被使用 → 已删。该节点目前**未接线**，属待决策项，不是已完成功能。
     const M = _Mastery();
-    const masteryYield = (M && M.combatYieldMult) ? M.combatYieldMult(state) : 1;
 
     // 舰基自动修复（§14）：受损成员回港后排队修复，每 tick 推进
     const Repair = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Repair : null;
     if (Repair) Repair.tick(state, dt);
 
-    // 0) 剿匪逐波结算（在线逐波 / 离线封顶外推；零分配循环，见 Engine.Combat.advance）
-    //    每个「有参战成员」的节点结算一次，产出直接累加进 state.res；成员循环内不再重复算 loot。
+    // 0) 剿匪结算：每个「有参战成员」的节点结算一次。
+    //    焦点节点（state.combatFocus）走逐轮真仿真，其余（含离线大 dt）走一次乘除闭式；
+    //    两条路共用 state.combatWaveHp（已打进当前编队的伤害），所以切页签不白打。
     const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
-    state.combatCarry = state.combatCarry || {};
+    state.combatWaveHp = state.combatWaveHp || {};
     state.battles = state.battles || {};
     if (Combat && Combat.advance) {
       const combatNodes = {};
@@ -199,9 +214,16 @@
         combatNodes[m.assignment.nodeId] = 1;
       }
       for (const nid in combatNodes) {
-        const r = Combat.advance(state, nid, dt, state.combatCarry[nid] || 0);
-        state.combatCarry[nid] = r.carry;
+        const focus = (state.combatFocus === nid);
+        const r = Combat.advance(state, nid, dt, state.combatWaveHp[nid] || 0, focus);
+        state.combatWaveHp[nid] = r.waveHp;
         if (r.credits || r.rep) { state.res.credits += r.credits; state.res.rep += r.rep; }
+        // 弹药扣除（按弹种；某弹种打空该型武器哑火，全部打空则整队撤退）
+        if (r.ammoUsed) {
+          for (const k in r.ammoUsed) {
+            state.res[k] = Math.max(0, (state.res[k] || 0) - r.ammoUsed[k]);
+          }
+        }
         // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
         if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
         // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
@@ -212,15 +234,26 @@
         if (r.waves > 0) b.lastTs = now;
         b.waveSec = r.waveSec;
         b.progress = r.progress;
-        b.squadPower = r.squadPower;
-        b.enemyPower = r.enemyPower;
-        b.clearRatio = r.clearRatio;
         b.squadDps = r.squadDps;
+        b.weaponDps = r.weaponDps;
         b.fleetDps = r.fleetDps;
-        b.band = r.fleet ? r.fleet.band : 1;
+        b.incomingDps = r.incomingDps;
+        b.repairPerSec = r.repairPerSec;
+        b.dmgReduction = r.dmgReduction;
+        b.fleetHp = r.fleetHp;
+        b.band = r.band;
+        b.simmed = r.simmed;
+        b.hits = r.hits;
+        b.misses = r.misses;
+        if (r.allDry) {
+          delete state.combatWaveHp[nid];
+          withdrawSquad(state, nid, "弹药耗尽，剿匪小队已撤离返港（保留已得战利品）。");
+          delete state.battles[nid];
+        }
       }
       // 战斗结束（节点已无参战成员）时清空该节点战报与余量，保证「本场」语义正确
-      for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; delete state.combatCarry[k]; } }
+      for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; delete state.combatWaveHp[k]; } }
+      for (const k in state.combatWaveHp) { if (!combatNodes[k]) delete state.combatWaveHp[k]; }
     }
 
     // 1) 燃料回复

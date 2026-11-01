@@ -33,10 +33,17 @@
   ];
 
   // 制造部件：矿材 → 部件（dur 秒/批）
+  // ⚠️ 2026-10-31 修复：`in` 原为字符串（"fe_alloy"），而 production.canAfford/spend 用 for...in 遍历，
+  //   遍历字符串拿到的是字符下标（"0".."7"），结果**原料一粒不扣**，还往 state.res 写入 8 个 NaN 键
+  //   ⇒ 部件可以白拿。改为对象形式，与 SMELT 消耗语义一致（每批 5 单位）。
   const COMPONENT = [
-    { id: "mk_struct", in: "fe_alloy", out: "struct", qty: 3, dur: 16 },
-    { id: "mk_prop",   in: "ni_alloy", out: "prop",   qty: 3, dur: 18 },
-    { id: "mk_weapon", in: "bo_alloy", out: "weapon", qty: 3, dur: 20 },
+    { id: "mk_struct", in: { fe_alloy: 5 }, out: "struct", qty: 3, dur: 16 },
+    { id: "mk_prop",   in: { ni_alloy: 5 }, out: "prop",   qty: 3, dur: 18 },
+    { id: "mk_weapon", in: { bo_alloy: 5 }, out: "weapon", qty: 3, dur: 20 },
+    // 弹药（2026-10-31）：与部件共用总装船坞槽位；每批 200 发，够 3 门武器打约 1 分钟
+    { id: "mk_ammo_laser",   in: { mx_alloy: 2 }, out: "ammo_laser",   qty: 200, dur: 10, cat: "ammo" },
+    { id: "mk_ammo_missile", in: { ni_alloy: 2 }, out: "ammo_missile", qty: 200, dur: 10, cat: "ammo" },
+    { id: "mk_ammo_cannon",  in: { fe_alloy: 2 }, out: "ammo_cannon",  qty: 200, dur: 10, cat: "ammo" },
   ];
 
   // 发明：部件 + 矿材 → 改装图纸（bodyLevel>=2 开放）

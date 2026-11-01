@@ -64,8 +64,9 @@
       starMap: map,
       members: members,
       squad: createDefaultSquad(),   // 玩家自行组建的剿匪小队（持久状态）
-      combatCarry: {},          // 剿匪逐波进度余量（秒）：nodeId → carry（见 engine/combat.js advance）
-      battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,squadPower,enemyPower,clearRatio}
+      combatWaveHp: {},         // 剿匪进度：nodeId → 已打进当前编队的伤害（见 combat.js advance）
+      combatFocus: null,        // 当前被玩家注视的战场节点（焦点走逐轮真仿真，其余走闭式）
+      battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,waveSec,progress,squadDps,...}
       ships: [],               // {id, shipId, name, status:'idle'|'mission', nodeId}
       factions: factions,
       reports: [

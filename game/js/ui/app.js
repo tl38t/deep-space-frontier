@@ -60,6 +60,19 @@
   // ---------- 工具 ----------
   function fmt(n) { return Core.fmtNum(Math.floor(n * 100) / 100); }
   function esc(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+  // 该档海盗编队的等级区间（直接读 1 代 ENEMY_DATABASE 的每艘敌舰 level）
+  // ⚠️ 2026-11-01：此前这里显示的是自创的「推荐战斗等级 requiredCL」（1/15/35/55/80），
+  //    与 1 代敌舰真实等级（1/20/40/60/80）不符，且从未影响任何结算。现改为显示真实编队等级。
+  function fleetLevelTag(band, faction) {
+    const P = Data.Pirates;
+    const f = (P && P.fleetFor) ? P.fleetFor(band, faction) : null;
+    if (!f || !f.ships || !f.ships.length) return "";
+    let lo = Infinity, hi = -Infinity;
+    for (const s of f.ships) { const lv = s.level || 0; if (lv < lo) lo = lv; if (lv > hi) hi = lv; }
+    if (!isFinite(lo) || !isFinite(hi)) return "";
+    return '<span class="tag">编队等级 ' + (lo === hi ? lo : lo + "–" + hi) + "</span>";
+  }
+
   function resName(id) { const m = Data.Resources.meta(id); return m ? m.name : id; }
   // 富文本图标：注册了 WebP 图标的资源（矿石/矿材）用 <img>，其余回退 emoji
   function resIcon(id) {
@@ -251,7 +264,7 @@
         const home = r.id === (Data.StarMap.nodeById(map, map.startId) || {}).region ? ' <span class="tag good">起</span>' : "";
         const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(r.pirate) : null;
         const sl = r.secLevel || "1.0-0.8";
-        const slp = (Data.StarMap.SECLEVEL_TABLE && Data.StarMap.SECLEVEL_TABLE[sl]) || { name: "高安", iskMult: 1, requiredCL: 1 };
+        const slp = (Data.StarMap.SECLEVEL_TABLE && Data.StarMap.SECLEVEL_TABLE[sl]) || { name: "高安", iskMult: 1 };
         const stageTag = r.stage === 3 ? "后期" : r.stage === 2 ? "中期" : "初期";
         const secCls = (sl === "1.0-0.8" || sl === "0.7-0.5") ? "good" : (sl === "0.4-0.3") ? "warn" : "bad";
         html += '<div class="region-chip">'
@@ -371,15 +384,15 @@
     if (_reg) {
       const _pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(_reg.pirate) : null;
       const _sl = _reg.secLevel || "1.0-0.8";
-      const _slp = (Data.StarMap.SECLEVEL_TABLE && Data.StarMap.SECLEVEL_TABLE[_sl]) || { name: "高安", iskMult: 1, repMult: 1, requiredCL: 1 };
+      const _slp = (Data.StarMap.SECLEVEL_TABLE && Data.StarMap.SECLEVEL_TABLE[_sl]) || { name: "高安", iskMult: 1, repMult: 1 };
       const _stageTag = _reg.stage === 3 ? "后期星域" : _reg.stage === 2 ? "中期星域" : "初期星域";
       const _secCls = (_sl === "1.0-0.8" || _sl === "0.7-0.5") ? "good" : (_sl === "0.4-0.3") ? "warn" : "bad";
       html += '<div class="panel map-hint"><span class="dim">所属</span><b>' + esc(_reg.name) + "</b>" +
         '<span class="tag">' + _stageTag + "</span>" +
         '<span class="tag ' + _secCls + '>安全 ' + _sl + " · " + _slp.name + "</span>" +
-        '<span class="tag">推荐战斗等级 ' + _slp.requiredCL + "</span>" +
+        fleetLevelTag(_slp.band, _reg.pirate) +
         (_pf ? '<span class="tag" style="color:' + _pf.color + '">海盗·' + esc(_pf.name) + "</span>" : "") +
-        '<span class="dim">安全越低，海盗战力越高、剿匪赏金越丰</span></div>';
+        '<span class="dim">安全越低，海盗越强、剿匪赏金越丰</span></div>';
     }
 
     // SVG 星系图（中央恒星 + 环绕天体，按种类配色；可点击派遣）
@@ -512,12 +525,36 @@
 
     let html = '<h3>战斗观测 · ' + esc(node.name) + '</h3><div class="battle-panel">';
 
+    const prep = (Engine.Combat && Engine.Combat.prepareNode) ? Engine.Combat.prepareNode(state, node.id) : null;
+
     html += '<div class="battle-head">'
       + '<span class="tag good">第 ' + fmt(Math.round(bt.waves || 0)) + ' 波</span>'
-      + (bt.waveSec ? '<span class="tag">一波 ' + (Math.round(bt.waveSec * 10) / 10) + ' 秒</span>' : '')
-      + '<span class="dim">我方火力 ' + fmt(Math.round(bt.squadDps || 0)) + '/s　敌方火力 '
-      + (Math.round((bt.fleetDps || 0) * 10) / 10) + '/s</span>'
+      + (bt.waveSec && isFinite(bt.waveSec) ? '<span class="tag">一波 ' + (Math.round(bt.waveSec * 10) / 10) + ' 秒</span>' : '')
+      + (bt.simmed ? '<span class="tag live">逐轮仿真</span>' : '<span class="tag">闭式结算</span>')
+      + '<span class="dim">我方火力 ' + fmt(Math.round(bt.squadDps || 0)) + '/s'
+      + (bt.weaponDps && bt.squadDps
+          ? '（' + fmt(Math.round(bt.weaponDps)) + ' 武器）'
+          : '')
+      + '　敌方火力 ' + (Math.round((bt.incomingDps || 0) * 10) / 10) + '/s</span>'
+      + (bt.dmgReduction ? '<span class="tag">减伤 ' + Math.round(bt.dmgReduction * 100) + '%</span>' : '')
+      + (bt.repairPerSec ? '<span class="tag">维修 ' + (Math.round(bt.repairPerSec * 10) / 10) + '/s</span>' : '')
       + '</div>';
+
+    // 弹药状态：只列本场真正在消耗的弹种（某弹种打空 → 该型武器哑火；全空 → 整队撤退）
+    if (prep && prep.weapons && prep.weapons.length) {
+      html += '<div class="battle-ammo">';
+      for (const t of Engine.Combat.AMMO_TYPES) {
+        const rate = (prep.ammoRate && prep.ammoRate[t]) || 0;
+        if (rate <= 0) continue;
+        const key = Engine.Combat.AMMO_OF[t];
+        const cur = state.res[key] || 0;
+        const sec = cur / rate;
+        html += '<span class="ammo-chip' + (cur <= 0 ? ' empty' : '') + '">'
+          + esc(Engine.Combat.AMMO_CN[t]) + ' <b>' + fmt(Math.floor(cur)) + '</b>'
+          + '<i class="dim"> · ' + (cur <= 0 ? '已断弹' : Math.floor(sec) + ' 秒') + '</i></span>';
+      }
+      html += '</div>';
+    }
 
     html += '<div class="battle-arena">';
 
@@ -559,7 +596,9 @@
 
     html += '<div class="battle-foot">'
       + '<span class="dim">本场累计 ' + fmt(Math.round(bt.waves || 0)) + ' 波'
-      + (snap ? ' · 本轮清场 ' + snap.cleared + ' 艘' : '') + '</span>'
+      + (snap ? ' · 本轮清场 ' + snap.cleared + ' 艘' : '')
+      + (bt.simmed && ((bt.hits || 0) + (bt.misses || 0)) > 0 ? ' · 本次齐射 命中 ' + bt.hits + ' / 未中 ' + bt.misses : '')
+      + '</span>'
       + '<span><b class="good">+' + fmt(Math.round(bt.credits || 0)) + ' ⛁</b>'
       + '<span class="dim">　+' + fmt(Math.round(bt.rep || 0)) + ' 功勋</span></span>'
       + '</div>';
@@ -575,25 +614,16 @@
     const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(raid.faction) : null;
     const cap = Engine.Combat.getSquadCapacity(state);
     const deployedHere = state.squad && state.squad.enabled && state.squad.targetId === node.id;
-    // 本节点实际参战战力（读 assignment，与战斗观测面板同源，避免「小队名册战力 0 但正在打」的自相矛盾）
+    // 本节点实际参战成员（读 assignment，与战斗观测面板同源，避免「名册有货但正在打的是别人」的自相矛盾）
     const fighting = state.members.filter(function (m) {
       return !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id;
     });
-    let sp = 0;
-    for (const m of fighting) {
-      sp += Engine.Settle.levelOf(m.skills.combatLaser) + Engine.Settle.levelOf(m.skills.combatTurret) + Engine.Settle.levelOf(m.skills.command);
-    }
-    const eff = Math.max(0.2, Math.min(2.5, raid.piratePower > 0 ? sp / raid.piratePower : 1));
-    const avgCL = fighting.length ? sp / fighting.length : 0;
-    const underCL = (fighting.length && avgCL < raid.requiredCL) ? '<span class="tag bad">低于推荐等级 · 效率×0.5</span>' : "";
     let html = "<h3>海盗据点 · 剿匪</h3><div class='panel squad-panel'>";
     html += '<div class="row"><b>' + (pf ? esc(pf.name) : raid.faction) + " 劫掠者</b>" +
       '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
-      '<span class="tag">推荐战斗等级 ' + raid.requiredCL + "</span>" +
-      '<span class="tag">海盗战力 ' + raid.piratePower + "</span></div>";
+      fleetLevelTag(raid.band, raid.faction) + "</div>";
     html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
-      "　本节点战力 " + sp + (fighting.length ? "（" + fighting.length + " 艘在战）" : "（暂无舰船）") +
-      "　预估效率 ×" + (fighting.length ? eff.toFixed(2) : "—") + "　" + underCL + "</div>";
+      "　在战 " + fighting.length + " 艘 / 名册 " + (state.squad.members || []).length + " / 容量 " + cap + "</div>";
     // 战斗观测面板（一波 = 一支敌方编队）：左我方参战舰船三防血条，右敌方编队卡片，底部本场累计
     html += battlePanelBlock(node);
     // 小队名册
@@ -892,7 +922,7 @@
     // 升级
     // 工业三队列
     html += queueBlock("smelt", "精炼（矿→矿材）", Data.Recipes.SMELT, plan.smelt, "out");
-    html += queueBlock("manufacture", "制造部件", Data.Recipes.COMPONENT, plan.manufacture, "out");
+    html += queueBlock("manufacture", "制造（部件 / 弹药）", Data.Recipes.COMPONENT, plan.manufacture, "out");
     if (plan.invent > 0) html += queueBlock("invent", "发明（→改装图纸）", Data.Recipes.INVENT, plan.invent, "out");
     else html += '<div class="panel dim">发明需舰基升至星堡（Lv.2）解锁。</div>';
     html += shipyardBlock();
@@ -2058,6 +2088,9 @@
   function renderView() {
     // 正在拖动舱段时冻结重绘（1Hz 定时器会打断拖拽）。pointerup/cancel 必定清空 baseDragState。
     if (baseDragState) return;
+    // 焦点战场：只有正看着星系页、且该星系里有我们在打的仗，才走逐轮真仿真；
+    // 其余一律闭式（成本与离线时长无关）。切页签时引擎会自动退回闭式，进度不丢。
+    state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
     const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
     // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，

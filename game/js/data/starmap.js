@@ -35,21 +35,26 @@
   //    pirate：主导海盗势力（复用 3 大雇佣势力 id，设定上它们也是星区劫掠者）。
   //    secLevel：EVE 式安全等级分档（复用 EVE-IDLE combat 区 schema 的 band 命名）。
   //    软进度：不硬锁后期区，但连边燃料按目的地区 stage 加价（见 addEdge），高威胁区自然劝退。
-  //    安全等级分档表（iskMult 赏金倍率 / repMult 声望倍率 / fuelMult 燃料倍率 / requiredCL 推荐战斗等级）：
+  //    安全等级分档表（iskMult 赏金倍率 / repMult 声望倍率 / fuelMult 燃料倍率 / band 敌舰强弱档）：
+  //    ⚠️ 2026-11-01 清理：删掉 requiredCL 与 PIRATE_POWER/piratePower。
+  //       前者是自创的「推荐战斗等级」序列（1/15/35/55/80，与 1 代敌舰 level 1/20/40/60/80 不符），
+  //       后者是自创的「海盗战力」标量（14/28/46/72/110），与真实编队血量/火力毫无关系。
+  //       1 代没有任何「战力」概念——敌方强弱就是编队里每艘船的 hp/hit/dodge/baseDamage 本身，
+  //       所以这里只保留 band（指向 1 代 ENEMY_DATABASE 的档位），强度一律从 pirates.fleetFor 读。
   const SECLEVEL_TABLE = {
-    "1.0-0.8": { name: "高安", iskMult: 1.0, repMult: 1.0, fuelMult: 1.0,  requiredCL: 1,  band: 1 },
-    "0.7-0.5": { name: "边境", iskMult: 1.5, repMult: 1.2, fuelMult: 1.1,  requiredCL: 15, band: 2 },
-    "0.4-0.3": { name: "低安", iskMult: 2.0, repMult: 1.5, fuelMult: 1.2,  requiredCL: 35, band: 3 },
-    "0.2-0.1": { name: "深空", iskMult: 2.5, repMult: 1.8, fuelMult: 1.35, requiredCL: 55, band: 4 },
-    "0.0":     { name: "0.0", iskMult: 3.5, repMult: 2.5, fuelMult: 1.8,  requiredCL: 80, band: 5 },
+    "1.0-0.8": { name: "高安", iskMult: 1.0, repMult: 1.0, fuelMult: 1.0,  band: 1 },
+    "0.7-0.5": { name: "边境", iskMult: 1.5, repMult: 1.2, fuelMult: 1.1,  band: 2 },
+    "0.4-0.3": { name: "低安", iskMult: 2.0, repMult: 1.5, fuelMult: 1.2,  band: 3 },
+    "0.2-0.1": { name: "深空", iskMult: 2.5, repMult: 1.8, fuelMult: 1.35, band: 4 },
+    "0.0":     { name: "0.0", iskMult: 3.5, repMult: 2.5, fuelMult: 1.8,  band: 5 },
   };
+
   // 富裕度完全由安等决定（EVE 式：高安贫瘠、低安富、0.0 最肥），不再有独立 T 评级
   const SEC_RICHNESS = { "1.0-0.8": 1, "0.7-0.5": 2, "0.4-0.3": 3, "0.2-0.1": 4, "0.0": 4 };
   function richnessOf(secLevel) { return SEC_RICHNESS[secLevel] || 1; }
   // 节点富裕度读取：新档走 richness，旧档回退 tier，再不济取 1（兼容老存档）
   function nodeRich(n) { return n.richness != null ? n.richness : (n.tier != null ? n.tier : 1); }
-  // 海盗战力仅由安等 band 决定（安等已同时表达安全度与富裕度，危险度不再叠加节点 tier）
-  const PIRATE_POWER = { 1: 14, 2: 28, 3: 46, 4: 72, 5: 110 };
+  // 海盗强度不再有独立标量：由 band → pirates.fleetFor(band, faction) 取 1 代 ENEMY_DATABASE 原值
   const REGION_DEFS = [
     { name: "苍曜星域", color: "#5ad1a0", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ax: 1420, ay: 1060, sigma: 205, size: 27 },
     { name: "霜环星域", color: "#5fb8ff", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "blood",  ax: 1700, ay: 1190, sigma: 212, size: 25 },
@@ -572,16 +577,14 @@
   }
 
   // 星系海盗据点参数（复用 EVE-IDLE combat 区 secLevel 分级 + 死亡空间 enemyPool 思路）：
-  //   - 安全等级越低（band 越大）→ 海盗战力越高、赏金/声望倍率越高（iskMult/repMult）。
-  //   - 节点 tier 越高 → 海盗战力越高（资源更肥、守卫更强）。
-  //   - requiredCL 推荐战斗等级门槛（低于则剿匪效率下降，见 settle.js）。
+  //   - 安全等级越低（band 越大）→ 赏金/声望倍率越高（iskMult/repMult），敌舰也换更高档的 1 代原值。
+  //   - 敌舰强度/推荐等级不在这里算：UI 一律从 pirates.fleetFor(band, faction) 现取。
   // O(1)，不依赖 now/调用频率（确定性）。
   function pirateRaid(map, nodeId) {
     const node = nodeById(map, nodeId);
     if (!node) return null;
     const region = (map.regions || []).find(r => r.id === node.region) || {};
     const p = SECLEVEL_TABLE[region.secLevel] || SECLEVEL_TABLE["1.0-0.8"];
-    const piratePower = PIRATE_POWER[p.band] || 14;
     return {
       faction: region.pirate || "sansha",
       secLevel: region.secLevel,
@@ -589,8 +592,6 @@
       band: p.band,
       iskMult: p.iskMult,
       repMult: p.repMult,
-      requiredCL: p.requiredCL,
-      piratePower: piratePower,
     };
   }
 

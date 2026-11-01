@@ -100,7 +100,15 @@
     bp: { id: "bp", name: "改装图纸", icon: "📐", cat: "blueprint", desc: "改装图纸，由发明产出，可自用制造可装配装备或交付势力领取奖励。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, PLANET);
+  // 弹药（2026-10-31 新增，分 3 弹种照搬 1 代）：武器每轮开火各吃自己弹种的弹药。
+  // 某弹种打空 → 该弹种武器哑火；全部弹种打空 → 整队撤退（断弹即撤，保留已得战利品）。
+  const AMMO = {
+    ammo_laser:   { id: "ammo_laser",   name: "聚能弹药", icon: "🔆", cat: "ammo", desc: "激光武器专用弹药，由晶格聚合物压制。" },
+    ammo_missile: { id: "ammo_missile", name: "制导弹药", icon: "🚀", cat: "ammo", desc: "导弹发射器专用弹药，由银镍合金加工。" },
+    ammo_cannon:  { id: "ammo_cannon",  name: "射弹装药", icon: "💥", cat: "ammo", desc: "射弹炮专用装药，由标准钛材浇铸。" },
+  };
+
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET);
 
   // 仓库初始资源
   function startingResources() {
@@ -113,6 +121,7 @@
       fe_alloy: 60, ni_alloy: 40, bo_alloy: 0, mx_alloy: 0, no_alloy: 0, zr_alloy: 0, px_alloy: 0, morph_alloy: 0,
       struct: 10, prop: 6, weapon: 4,
       bp: 0,
+      ammo_laser: 300, ammo_missile: 300, ammo_cannon: 300,
       planet_lava: 0, planet_gas: 0, planet_ice: 0, planet_plasma: 0, planet_bio: 0, planet_mag: 0,
     };
   }
@@ -123,9 +132,10 @@
     "crude_fullerene", "he_gas", "stable_fullerene", "hy_gas", "high_purity_fullerene", "poly_gas", "ultra_pure_poly_gas",
     "fe_alloy", "ni_alloy", "bo_alloy", "mx_alloy", "no_alloy", "zr_alloy", "px_alloy", "morph_alloy",
     "struct", "prop", "weapon", "bp",
+    "ammo_laser", "ammo_missile", "ammo_cannon",
     "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag"];
 
   function meta(id) { return ALL[id]; }
 
-  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, PLANET, ALL, HUD_ORDER, startingResources, meta };
+  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, ALL, HUD_ORDER, startingResources, meta };
 });

@@ -147,6 +147,25 @@
         }
       }
     } catch (e) { /* 势力迁移失败不阻断读档 */ }
+
+    // 资源键清洗（2026-10-31）：历史 bug（配方 in 曾是字符串，production.canAfford/spend 用
+    // for...in 遍历 → 拿到字符下标 "0".."7"）曾往 state.res 写入 NaN 键并随存档落盘。
+    // 这里按资源注册表白名单清掉非法键，并给新资源（弹药）补默认值，旧档可直接进新战斗系统。
+    try {
+      const R = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Resources : null;
+      if (R && R.ALL && s.res && typeof s.res === "object") {
+        for (const k in s.res) {
+          if (!R.ALL[k] || typeof s.res[k] !== "number" || !isFinite(s.res[k])) delete s.res[k];
+        }
+        for (const k in R.ALL) if (typeof s.res[k] !== "number") s.res[k] = 0;
+      }
+    } catch (e) { /* 资源清洗失败不阻断读档 */ }
+
+    // 战斗状态字段补齐（不升 STATE_VERSION：旧字段 combatCarry 语义已废弃，直接丢弃即可）
+    if (!s.combatWaveHp || typeof s.combatWaveHp !== "object") s.combatWaveHp = {};
+    if (s.combatFocus === undefined) s.combatFocus = null;
+    if (s.combatCarry !== undefined) delete s.combatCarry;
+
     return s;
   }
 

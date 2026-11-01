@@ -1,7 +1,26 @@
 // ================================================================
-// 深空星疆 —— Engine.Combat：战斗（MVP 最小占位）
-// 成员派 combat 时由 settle 直接累加声望/战利品（连续速率，见 settle.js）。
-// 本文件预留军团小队战斗力估算与未来离散战斗结算接口。
+// 深空星疆 —— Engine.Combat：齐射战斗内核
+// ----------------------------------------------------------------
+// ⚠️ 铁则：能复用 1 代就复用，禁止自创战斗机制。
+//
+// 伤害 100% 来自装配的武器。没有武器 = 没有伤害（1 代同规则）。
+//   2026-10-31 修正：此前有一个自创的「本能输出」（技能直接产生伤害、
+//   不吃弹、不需武器），它只是 Phase 2-A 时没有武器数据可读留下的占位，
+//   造成「武器只占一成伤害、弹药系统形同虚设」。已整段删除。
+//
+// 公式全部照搬 1 代 js/systems/combat.js：
+//   命中率   hit^1.4 / (hit^1.4 + dodge^1.4)          ← calcCombatDamage
+//   伤害浮动 0.90 + (r1+r2)*0.10                        ← calcCombatDamageVariance
+//   克制     目标当前最外层对应武器 ×1.25，其余 ×1.0    ← calcWeaponCounterMultiplier
+//   维修器   每轮恢复 amount 点绝对值（不乘任何系数）    ← kind:"repair" 的 amount
+//   敌舰     hp/hit/dodge/baseDamage 全部 1 代原值      ← data/pirates.js
+//
+// 唯一真相 = 血量。我方伤害打敌方编队血量，编队血空即清场 → 结算掉落 → 下一队进场。
+//
+// 两条推进路径，共用同一个状态量 state.combatWaveHp[nodeId]（已打进的伤害）：
+//   · 焦点战场（玩家正看着的节点）：逐轮真掷骰（命中/伤害浮动），1 轮 = 1 秒
+//   · 非焦点 / 离线 / 大 dt：事件驱动分段闭式（按「换层」「弹尽」切段，最多 6 段）
+//   两条路径读写同一个 waveHp 累加器，所以切页签不会白打，也不会重复结算。
 // ================================================================
 (function (root, factory) {
   const mod = factory();
@@ -18,37 +37,54 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  // 军团小队战斗力（占位：= 在战成员 三武器技能等级之和，未来接舰船/装备）
-  function squadPower(state) {
-    const Settle = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
-    let p = 0;
-    for (const m of state.members) {
-      if (m.status === "dispatched" && m.assignment && m.assignment.type === "combat" && !m.destroyed) {
-        // 三武器技能（激光/炮台/指挥）等级求和，复用 EVE-IDLE 玩家等级（无上限）
-        p += Settle ? (Settle.levelOf(m.skills.combatLaser) + Settle.levelOf(m.skills.combatTurret) + Settle.levelOf(m.skills.command)) : 3;
-      }
-    }
-    return p;
+  // ---- 常量 ----
+  // 掉落基数：星币经济是深空星疆自己标定的（1 代 isk 与本作星币不等价），
+  //   故掉落沿用本作口径，不搬 1 代 iskDrop 绝对值；敌舰 iskDrop 仅作 UI 展示参考。
+  const DROP_CREDIT_BASE = 6;    // 每波每参战成员的基础星币掉落
+  const DROP_REP_BASE = 1;       // 每波每参战成员的基础声望掉落
+  // 以下四项为 1 代原式（见文件头），不是标定值：
+  const COUNTER_MULT = 1.25;     // 1 代 calcWeaponCounterMultiplier：克制层 ×1.25
+  const HIT_EXP = 1.4;           // 1 代 calcCombatDamage：hit^1.4 / (hit^1.4 + dodge^1.4)
+  const DMG_VAR_MIN = 0.90;      // 1 代 calcCombatDamageVariance：0.90 + (r1+r2)*0.10
+  const DMG_VAR_SPAN = 0.20;     // 浮动区间宽度（三角分布）
+  // 以下为防溢出安全阀（不是数值标定，是保证不出负数/无敌）：
+  const REPAIR_CAP = 0.50;       // 维修最多抵消敌方火力的比例
+  const DMG_RED_CAP = 0.60;      // 损伤控制减伤总上限
+  const ROUND_SEC = 1;           // 一轮 = 1 秒。1 代同样是 setInterval(...,1000) 每秒一回合（js/core/tick.js:172 → combatTick）
+  const SIM_MAX_SEC = 2;         // 焦点仿真的单 tick 上限；超过即退回闭式，保证成本恒定
+  // 闭式分段的 guard 上限：3 层推进 + 1 次整波跳 + 3 层推进 + 3 次弹尽 = 10，取 14 留余量。
+  // 这个常数是「O(1) 与 dt 无关」的硬保证，不要按 dt 调大。
+  const SEG_GUARD = 14;
+
+  const AMMO_TYPES = ["laser", "missile", "cannon"];
+  const AMMO_OF = { laser: "ammo_laser", missile: "ammo_missile", cannon: "ammo_cannon" };
+  const AMMO_CN = { laser: "聚能弹药", missile: "制导弹药", cannon: "射弹装药" };
+  // 三防克制：激光打盾、导弹破甲、射弹拆结构（1 代 WEAPON_CONFIG.counterType）
+  const COUNTER_OF = { laser: "shield", missile: "armor", cannon: "structure" };
+  const LAYER_ORDER = ["shield", "armor", "structure"];
+
+  function _Data() { return (typeof window !== "undefined" && window.NSK) ? window.NSK.Data : null; }
+  function _Settle() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null; }
+  function _Arch() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Archaeology : null; }
+  function _Pirates() {
+    const D = _Data();
+    return (D && D.Pirates) ? D.Pirates : null;
+  }
+  function _Eq() {
+    const D = _Data();
+    return (D && D.Equipment) ? D.Equipment : null;
   }
 
-  // 指定星系的当前剿匪战力（= 在该节点 combat 的成员三武器等级之和）。O(1) 单次调用。
-  function squadPowerAtNode(state, nodeId) {
-    const Settle = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
-    let p = 0;
-    for (const m of state.members) {
-      if (m.status === "dispatched" && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === nodeId && !m.destroyed) {
-        p += Settle ? (Settle.levelOf(m.skills.combatLaser) + Settle.levelOf(m.skills.combatTurret) + Settle.levelOf(m.skills.command)) : 3;
-      }
-    }
-    return p;
-  }
-
-  // 小队容量（复用 EVE-IDLE 研究门禁：1→2→3 人，由 base.squadTier 升级解锁）
+  // ---- 小队名册（UI 层功能，不是战斗公式）----
+  // ⚠️ 2026-11-01 清理：删除 squadPower / squadPowerAtNode / resolveSquad。
+  //    这三个是自创的「战斗力标量」——把技能等级加起来当战力去和「海盗战力」比大小，
+  //    1 代完全没有这套概念（战力 = 编队 hp/hit/dodge/baseDamage 本身）。
+  //    其结论也从未被结算使用：真实胜负由伤害打空血量决定。
+  //    保留的只有名册容量与加入资格判定（纯 UI/派遣用）。
   function getSquadCapacity(state) {
     return 1 + (state && state.base && typeof state.base.squadTier === "number" ? state.base.squadTier : 0);
   }
 
-  // 参战资格判定（稳定 reason，不抛异常；复用 EVE-IDLE canLegionNpcJoinCombat 约定）
   function canJoinSquad(state, memberId) {
     if (!state || !state.squad) return { ok: false, reason: "no-squad" };
     const m = (state.members || []).find(x => x.id === memberId);
@@ -59,43 +95,6 @@
     if (state.squad.members.length >= cap) return { ok: false, reason: "squad-full" };
     if (m.status !== "idle") return { ok: false, reason: "busy" };
     return { ok: true, member: m };
-  }
-
-  // 离散战斗结算钩子（MVP 未启用）。
-  // 铁律（2026-10-31 修订，取代旧「禁止逐波仿真」表述）：
-  //   禁止「随离线时长线性增长」的战斗结算成本（§14.5 红线不破）；
-  //   战斗以「波」为时间单位，一波 = 一支敌方编队；一波时长由敌我强度算出（非常量），
-  //   总数 = 每秒速率 × dt，一次乘法（O(1)）；「在线逐波」= UI 按波刷新编队血条，不逐帧仿真。
-  function resolveSquad(state, enemyPower) {
-    return { win: squadPower(state) >= enemyPower, power: squadPower(state) };
-  }
-
-  // ================================================================
-  // 齐射战斗模型（一波 = 一支敌方编队）
-  // ----------------------------------------------------------------
-  // 经济锚点：每秒速率沿用旧连续速率公式（各乘区一字不改），
-  //   每波总掉落 = 基础值 × 星系倍率 × 参战人数，
-  //   一波时长   = 每波掉落 ÷ 每秒速率  ⇔  编队总血 ÷ 我方每秒伤害（两式恒等）。
-  // 恒等推导（未触发 clamp 时）：
-  //   每波掉落/速率 = (6·iskMult·N) / (0.3·iskMult·eff·skillSum) = 20P/(sp·skillAvg)
-  //   编队总血/DPS  = (P·60) / (sp·skillAvg·3)                    = 20P/(sp·skillAvg)
-  //   ⇒ 波时长两路推导完全一致；引入编队/血条/受击后每秒收益仍与改造前精确等价（经济零漂移）。
-  // 性能：prepareNode 预聚合（O(成员) 一次）+ advance 一次乘法；成本与离线时长无关（§14.5 红线不破）。
-  // 焦点战场只影响 UI 是否按波绘制编队血条，不影响结算数学。
-  // ================================================================
-  const DROP_CREDIT_BASE = 6;   // 每波每舰基础星币掉落（标定锚点，与 Pirates.HP_PER_POWER 联动）
-  const DROP_REP_BASE = 1;      // 每波每舰基础声望掉落
-  const WAVE_MIN_SEC = 2;       // 一波最短时长（敌舰进场/刷新上限：清得再快也没有下一队）
-  const WAVE_MAX_SEC = 60;      // 一波最长时长（打不动时的磨血上限）
-  const SQUAD_DPS_K = 3;        // 我方每秒伤害 = 三武器等级和 × 平均技能加成 × 该系数
-
-  function _Data() { return (typeof window !== "undefined" && window.NSK) ? window.NSK.Data : null; }
-  function _Settle() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null; }
-  function _Mastery() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Mastery : null; }
-
-  function _Pirates() {
-    const D = _Data();
-    return (D && D.Pirates) ? D.Pirates : null;
   }
 
   // 由「总剩余血量」反推三防分布（编队血条快照用）。
@@ -112,106 +111,502 @@
     return out;
   }
 
+  // ---- 1 代战斗公式（逐字照搬 js/systems/combat.js，禁止改写）----
+
+  // 命中系数：hit^1.4 / (hit^1.4 + dodge^1.4)   ← 1 代 calcCombatDamage
+  function hitCoeff(hit, dodge) {
+    const hp = Math.pow(Math.max(1, hit), HIT_EXP);
+    const dp = Math.pow(Math.max(0, dodge), HIT_EXP);
+    return hp / (hp + dp);
+  }
+
+  // 伤害浮动 0.90 + (r1+r2)*0.10   ← 1 代 calcCombatDamageVariance
+  function damageVariance() {
+    return DMG_VAR_MIN + (Math.random() + Math.random()) * (DMG_VAR_SPAN / 2);
+  }
+
+  // 当前编队打到哪一层（按 shield → armor → structure 顺序消耗）
+  // 传入「已打进本队的累计伤害」，返回当前最外层剩余的防线名。
+  function layerAt(P, waveHp) {
+    if (!P || !P.fleetHp) return "structure";
+    const remain = Math.max(0, P.fleetHp - Math.max(0, waveHp || 0));
+    const sum = P.fleetHpSum;   // { shield, armor, structure }
+    if (remain > sum.armor + sum.structure) return "shield";
+    if (remain > sum.structure) return "armor";
+    return "structure";
+  }
+
+  // 武器克制倍率：目标当前最外层对应武器 ×1.25，其余 ×1.0
+  // ← 1 代 calcWeaponCounterMultiplier（玩家与军团 NPC 共用唯一口径）
+  function counterMult(weaponType, layer) {
+    const c = COUNTER_OF[weaponType];
+    return (c && c === layer) ? COUNTER_MULT : 1.0;
+  }
+
+  // 扫某成员的装配，汇总「武器 / 维修 / 减伤」三类战斗贡献。
+  // 返回 { weapons:[{type,dmg,hitChance,ammoCost}], dpsByType, ammoRate, repair, dmgRed }
+  //   dpsByType 为「未计克制」的基础 DPS；克制按当前层在 dpsAt() 里实时乘。
+  function scanFit(m, evasion, split, skillFactor) {
+    const Eq = _Eq(), Arch = _Arch();
+    const out = {
+      weapons: [], dpsByType: { laser: 0, missile: 0, cannon: 0 },
+      ammoRate: { laser: 0, missile: 0, cannon: 0 },
+      repair: 0, dmgRed: 0,
+    };
+    const fit = m && m.fitted;
+    if (!fit) return out;
+    const slots = ["high", "mid", "low", "rig"];
+    for (const slot of slots) {
+      const arr = fit[slot] || [];
+      for (const id of arr) {
+        const eq = Eq ? Eq.byId(id) : null;
+        if (!eq || !eq.combat) continue;
+        const c = eq.combat;
+        if (c.kind === "weapon") {
+          const ht = c.baseHit || 100;
+          const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式
+          const dmg = (c.baseDamage || 0) * skillFactor;            // 1 代原值，不乘任何缩放系数
+          out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
+          out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance;
+          out.ammoRate[c.weaponType] = (out.ammoRate[c.weaponType] || 0) + (c.ammoCost || 0);
+        } else if (c.kind === "repair") {
+          out.repair += (c.amount || 0);                            // 1 代每轮恢复绝对值
+        }
+      }
+    }
+    if (Arch && Arch.fittedBonuses) {
+      const b = Arch.fittedBonuses(m);
+      out.dmgRed = b.globalDamageReduction || 0;
+    }
+    return out;
+  }
+
   // 预聚合某节点战斗参数（O(成员) 一次）。无参战成员返回 null。
-  // 每秒速率与旧 settle 连续速率逐项一致（skill / iskMult·repMult / eff / underCL / mastery）；
-  // 一波时长 = 每波掉落 ÷ 每秒速率，故随敌我强度自然变化（不再有硬编码的固定波长）。
   function prepareNode(state, nodeId) {
-    const Data = _Data(), Settle = _Settle(), M = _Mastery(), Pirates = _Pirates();
+    const Data = _Data(), Settle = _Settle(), Pirates = _Pirates();
     if (!Data || !Settle) return null;
     const raid = Data.StarMap.pirateRaid(state.starMap, nodeId);
     if (!raid) return null;
 
-    const masteryYield = (M && M.combatYieldMult) ? M.combatYieldMult(state) : 1;
-    let sp = 0, cnt = 0, skillSum = 0, skillWeighted = 0;
+    const band = raid.band || 1;
+    const fleet = Pirates ? Pirates.fleetFor(band, raid.faction) : null;
+    if (!fleet) return null;
+
+    // ⚠️ 2026-11-01：这里原本算过一个 masteryYield（精通点 combat 节点 +8% 赏金/级），
+    //    但既没乘进掉落也没别的用处 —— 纯死变量，已删。精通点 combat 节点目前**未接线**。
+    let cnt = 0;
     const members = [];
+    let dpsByType = { laser: 0, missile: 0, cannon: 0 };
+    let ammoRate = { laser: 0, missile: 0, cannon: 0 };
+    let weapons = [];
+    let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0;
+
     for (const m of state.members) {
       if (m.destroyed || !m.assignment || m.assignment.type !== "combat" || m.assignment.nodeId !== nodeId) continue;
       members.push(m);
-      sp += Settle.levelOf(m.skills.combatLaser) + Settle.levelOf(m.skills.combatTurret) + Settle.levelOf(m.skills.command);
-      const sk = (Settle.skillBonus(m.skills, "combatLaser") + Settle.skillBonus(m.skills, "combatTurret") + Settle.skillBonus(m.skills, "command")) / 3;
-      const modCredit = (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1;
-      skillSum += sk;
-      skillWeighted += sk * modCredit;
       cnt++;
+      const sk = (Settle.skillBonus(m.skills, "combatLaser") + Settle.skillBonus(m.skills, "combatTurret") + Settle.skillBonus(m.skills, "command")) / 3;
+      modCreditSum += (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1;
+
+      // 装配战斗贡献（武器伤害随该成员战斗技能小幅提升）
+      const f = scanFit(m, fleet.evasion, fleet.split, sk);
+      for (const t of AMMO_TYPES) {
+        dpsByType[t] += f.dpsByType[t] || 0;
+        ammoRate[t] += f.ammoRate[t] || 0;
+      }
+      for (const w of f.weapons) weapons.push(w);
+      repairRaw += f.repair;
+      dmgRedRaw += f.dmgRed;
     }
     if (!cnt) return null;
 
-    const avgCL = sp / cnt;
-    const underCL = (raid.requiredCL && avgCL < raid.requiredCL) ? 0.5 : 1;   // 等级不足惩罚
-    const eff = Math.max(0.2, Math.min(2.5, raid.piratePower > 0 ? sp / raid.piratePower : 1));
+    // 我方每秒伤害 = 所有装配武器的伤害之和。
+    // ⚠️ 伤害 100% 来自武器：没有武器 = 没有伤害（1 代同规则）。
+    //    此前这里有一项自创的「本能输出」，已整段删除（见文件头说明）。
+    let weaponDps = 0;
+    for (const t of AMMO_TYPES) weaponDps += dpsByType[t];
+    const squadDps = weaponDps;
 
-    // 每秒速率（与改造前连续速率公式逐项一致；声望不吃成员星币倍率）
-    const rateRep     = 0.05 * skillSum      * raid.repMult * eff * underCL * masteryYield;
-    const rateCredits = 0.30 * skillWeighted * raid.iskMult * eff * underCL * masteryYield;
+    // 我方闪避（1 代 getCombatPlayerDodgeFromState：ship.dodge）：取参战成员舰船闪避均值
+    let dodgeSum = 0;
+    for (const m of members) {
+      const shp = (Data.Ships && Data.Ships.shipById) ? Data.Ships.shipById(m.shipId) : null;
+      dodgeSum += (shp && typeof shp.dodge === "number") ? shp.dodge : 20;
+    }
+    const playerDodge = cnt > 0 ? dodgeSum / cnt : 20;
 
-    // 每波总掉落 + 一波时长（时长 = 掉落 ÷ 速率 ⇒ 随敌我强度变化）
-    const dropCredits = DROP_CREDIT_BASE * raid.iskMult * cnt;
-    const dropRep     = DROP_REP_BASE    * raid.repMult * cnt;
-    const waveRaw = rateCredits > 0 ? (dropCredits / rateCredits) : WAVE_MAX_SEC;
-    const waveSec = Math.max(WAVE_MIN_SEC, Math.min(WAVE_MAX_SEC, waveRaw));
-    // clamp 后按实际时长重算每秒速率，保证「战报上的一波时长」与「实际入账」严格一致
-    const realRateCredits = waveSec > 0 ? (dropCredits / waveSec) : rateCredits;
-    const realRateRep     = waveSec > 0 ? (dropRep / waveSec) : rateRep;
+    // 敌方每秒伤害 = Σ 每艘敌舰 baseDamage × 命中系数（1 代 calcCombatDamage 逐敌判定）
+    let incomingRaw = 0;
+    for (const s of (fleet.ships || [])) incomingRaw += s.baseDamage * hitCoeff(s.hit, playerDodge);
 
-    const skillAvg = skillSum / cnt;
-    const squadDps = sp * skillAvg * SQUAD_DPS_K * underCL * masteryYield;   // 我方每秒伤害
-    const fleet = Pirates ? Pirates.fleetFor(raid.band || 1, raid.faction) : null;
-    const fleetDps = fleet ? fleet.dps : 0;                                  // 敌方每秒伤害
+    // 敌方对我方的压力（维修器每轮恢复绝对值，1 代 kind:"repair" 的 amount 直接用）
+    const dmgReduction = Math.min(DMG_RED_CAP, dmgRedRaw);
+    const repairPerSec = Math.min(REPAIR_CAP * incomingRaw, repairRaw);
+    const incomingDps = Math.max(0, incomingRaw * (1 - dmgReduction) - repairPerSec);
+
+    // 每波掉落（成员星币倍率进掉落，声望不吃）
+    const dropCredits = DROP_CREDIT_BASE * raid.iskMult * modCreditSum;
+    const dropRep = DROP_REP_BASE * raid.repMult * cnt;
+
+    const fleetHp = fleet.totalHp;
+    // 一波真实耗时 = 盾段 + 甲段 + 构段，每段含该层克制（与 fireSegments 同一口径）。
+    // ⚠️ 旧写法 `fleetHp / squadDps` 是「无克制」的，会让 UI 的一波时长比实际偏长
+    //    （实测激光队：无克制 2.12s vs 真实 1.86s）。
+    let waveSec = 0;
+    for (const L of LAYER_ORDER) {
+      const d = layerDps(dpsByType, L, null);
+      if (!(d > 0)) { waveSec = Infinity; break; }
+      waveSec += (fleet.hpSum[L] || 0) / d;
+    }
 
     return {
       nodeId: nodeId,
       members: members,
       cnt: cnt,
-      squadPower: sp,
-      enemyPower: raid.piratePower,
-      clearRatio: eff,
-      underCL: underCL,
-      masteryYield: masteryYield,
-      rateCredits: rateCredits,           // 未 clamp 的原始每秒速率（对标旧公式）
-      rateRep: rateRep,
-      realRateCredits: realRateCredits,   // clamp 后实际入账速率
-      realRateRep: realRateRep,
-      dropCredits: dropCredits,           // 每波总掉落
-      dropRep: dropRep,
-      waveSec: waveSec,                   // 一波时长（秒）—— 由敌我强度算出，非常量
+
+      weaponDps: weaponDps,
       squadDps: squadDps,
-      fleetDps: fleetDps,
-      fleet: fleet,                       // 敌方编队模板（含每艘命名与三防）
-      band: raid.band || 1,
+      playerDodge: playerDodge,
+      fleetHpSum: fleet.hpSum,   // 三防总量（layerAt 判定当前层用）
+      dpsByType: dpsByType,
+      ammoRate: ammoRate,
+      weapons: weapons,
+      repairPerSec: repairPerSec,
+      dmgReduction: dmgReduction,
+      incomingDps: incomingDps,
+
+      dropCredits: dropCredits,
+      dropRep: dropRep,
+
+      fleet: fleet,
+      fleetHp: fleetHp,
+      fleetDps: fleet.dps,
+      evasion: fleet.evasion,
+      split: fleet.split,
+      band: band,
+      waveSec: waveSec,
     };
   }
 
-  // 结算某节点 dtSec 秒的战斗。carrySec = 上次未满一波的余量（秒）。
-  // 返回 { waves, credits, rep, carry, damage, fightSec, wiped, waveSec, progress, fleet, ... }。
-  // 一次乘法出结果（O(1)、零循环、零分配），成本与离线时长无关（§14.5）。
-  // 受击封顶（关键）：成员血池打空即撤离，故实际战斗时长 = min(dt, 血池 ÷ 敌方DPS)。
-  //   否则离线 8 小时会凭空承受 8 小时的伤害，既失真又会把「离线收益」算歪。
-  function advance(state, nodeId, dtSec, carrySec) {
-    const P = prepareNode(state, nodeId);
-    const dt = Math.max(0, dtSec || 0);
-    if (!P) {
-      return { waves: 0, credits: 0, rep: 0, carry: Math.max(0, carrySec || 0) + dt, damage: 0, fightSec: 0, wiped: false, waveSec: 0, progress: 0, fleet: null, squadPower: 0, enemyPower: 0, clearRatio: 0, squadDps: 0, fleetDps: 0 };
+  // 当前「有弹 + 该层克制」下的实际 DPS
+  //   dryMask 省略 = 全部弹种有弹（用于 prepareNode 预算「一波真实耗时」）
+  function layerDps(dpsByType, layer, dryMask) {
+    let d = 0;
+    for (const t of AMMO_TYPES) {
+      const v = dpsByType[t] || 0;
+      if (v <= 0) continue;
+      if (dryMask && dryMask[t]) continue;
+      d += v * counterMult(t, layer);
     }
+    return d;
+  }
+
+  function dpsAtLayer(P, layer, dryMask) {
+    return layerDps(P.dpsByType, layer, dryMask);
+  }
+
+  // 一整波的耗时 = 盾段 + 甲段 + 构段（每段按该层克制后的 DPS 算）。
+  // 这是闭式跳波的基础量：同一 dryMask 下它恒定，所以可以整除跳过 n 波。
+  // 任意一层无火力（不可能有武器却 dps=0，只有「一件武器都没装」）→ Infinity。
+  function fullWaveSec(P, dryMask) {
+    const hs = P.fleetHpSum || { shield: 0, armor: 0, structure: 0 };
+    let s = 0;
+    for (const L of LAYER_ORDER) {
+      const d = layerDps(P.dpsByType, L, dryMask);
+      if (!(d > 0)) return Infinity;
+      s += (hs[L] || 0) / d;
+    }
+    return s;
+  }
+
+  // ---- 闭式：把 dt 切成「换层」「某弹种打尽」「整波跳过」为界的若干段 ----
+  // 事件上限 = 3 次换层 + 1 次整波跳 + 3 次换层 + 3 次弹尽 ≈ 10 段（SEG_GUARD=14），
+  // 成本与 dt 完全无关（§14.5 红线）。
+  //
+  // ★ 2026-11-01 修「层不回卷」：旧实现在一次 dt 内 hp 单调增长且从不取模，
+  //   一旦 hp ≥ fleetHp，layerAt 里的 remain 被 Math.max(0,…) 夹成 0，
+  //   于是永久返回 "structure" —— 打穿第一支编队之后，新编队的护盾再也不会被考虑。
+  //   后果：克制对「打盾」的武器（激光/导弹）永久失效、对「打结构」的武器（射弹）永久生效。
+  //   修法两条：① 打穿一波立刻把刻度回卷（hp -= fleetHp）；
+  //             ② 波首时三段耗时是恒定的，直接整除跳过 n 波，段数仍是常数。
+  // 返回 { segs:[{sec,dps,layer,waves?}], dmg, waves, fireSec, ammoUsed, allDry, noWeapon }
+  function fireSegments(P, res, dt, waveHp) {
+    const stock = {};
+    let hasWeapon = false;
+    for (const t of AMMO_TYPES) {
+      if (P.dpsByType[t] > 0) hasWeapon = true;
+      stock[t] = Math.max(0, (res && res[AMMO_OF[t]]) || 0);
+    }
+    // 没武器 = 打不动（1 代同规则：无武器无伤害）
+    if (!hasWeapon) return { segs: [], dmg: 0, waves: 0, fireSec: 0, ammoUsed: null, allDry: false, noWeapon: true };
+    if (!(dt > 0)) return { segs: [], dmg: 0, waves: 0, fireSec: 0, ammoUsed: null, allDry: false, noWeapon: false };
+
+    const dryMask = { laser: false, missile: false, cannon: false };
+    const dryAt = {};
+    for (const t of AMMO_TYPES) {
+      const rate = P.ammoRate[t] || 0;
+      dryAt[t] = (P.dpsByType[t] > 0 && rate > 0) ? (stock[t] / rate) : Infinity;
+    }
+
+    // 三防层边界（累计伤害刻度）：shield → armor → structure
+    const b = P.fleetHpSum || { shield: 0, armor: 0, structure: 0 };
+    const hpOf = [b.shield || 0, b.armor || 0, b.structure || 0];
+    const bound = [hpOf[0], hpOf[0] + hpOf[1], P.fleetHp];
+
+    // 传入刻度已经是「本队累计伤害」，理论上应在 [0, fleetHp)；越界则先折算成完整波
+    let hp = Math.max(0, waveHp || 0);
+    let waves = 0;
+    if (P.fleetHp > 0 && hp >= P.fleetHp) {
+      const k = Math.floor(hp / P.fleetHp);
+      hp -= k * P.fleetHp;
+      waves += k;
+    }
+
+    let t = 0, dmg = 0;
+    const segs = [];
+    const usedAmmo = { laser: 0, missile: 0, cannon: 0 };
+    let allDry = false;
+
+    // 波首整波跳除：同一 dryMask 下每波耗时恒定 → 一次整除跨过任意多波
+    function skipWholeWaves() {
+      const tf = fullWaveSec(P, dryMask);
+      if (!isFinite(tf) || tf <= 1e-9) return 0;
+      let k = Math.floor((dt - t) / tf);
+      if (k < 1) return 0;
+      // 弹药约束：跳过的波不能跨过任何弹种的打空时刻
+      for (const ty of AMMO_TYPES) {
+        if (P.dpsByType[ty] > 0 && !dryMask[ty] && isFinite(dryAt[ty])) {
+          const ka = Math.floor(Math.max(0, dryAt[ty] - t) / tf);
+          if (ka < k) k = ka;
+        }
+      }
+      if (k < 1) return 0;
+      waves += k;
+      dmg += k * P.fleetHp;
+      t += k * tf;
+      for (const L of LAYER_ORDER) {
+        const d = layerDps(P.dpsByType, L, dryMask);
+        const sec = (hpOf[LAYER_ORDER.indexOf(L)] || 0) / d;
+        if (!(sec > 0)) continue;
+        segs.push({ sec: sec * k, dps: d, layer: L, waves: k });
+        for (const ty of AMMO_TYPES) {
+          if (P.dpsByType[ty] > 0 && !dryMask[ty]) usedAmmo[ty] += (P.ammoRate[ty] || 0) * sec * k;
+        }
+      }
+      // 跳完必须补做「打空翻转」：t 可能正好落在 dryAt 上，不翻的话下一段会拿已耗尽的
+      // 弹种继续开火（实测：弹药只够 3 波时会白打一段盾，开火 6.615s 而非 5.571s）。
+      for (const ty of AMMO_TYPES) {
+        if (!dryMask[ty] && isFinite(dryAt[ty]) && dryAt[ty] <= t + 1e-9) dryMask[ty] = true;
+      }
+      return k;
+    }
+
+    for (let guard = 0; guard < SEG_GUARD && t < dt - 1e-9; guard++) {
+      // A) 波首 → 尝试整波跳除
+      if (hp < 1e-9 && skipWholeWaves() > 0) continue;
+
+      const layer = layerAt(P, hp);
+      const dps = dpsAtLayer(P, layer, dryMask);
+      if (dps <= 0) { allDry = true; break; }
+
+      const li = LAYER_ORDER.indexOf(layer);
+      const needDmg = Math.max(0, bound[li] - hp);
+      // ⚠️ hp 必须吸到层边界上再继续：needDmg/dps 的除法往返会让 hp 停在边界下方 1e-12 处，
+      //    那时 layerAt 仍判「当前层」而 needDmg≈0 —— 若把 tLayer 当 Infinity，整段剩余时间都会
+      //    按这一层算。实测：dt=900 的纯导弹一场因此少算 19 波（−1.26%），段里出现 898 秒的 shield。
+      if (needDmg <= 1e-9) {
+        if (li < 2) { hp = bound[li]; continue; }   // 空层 / 贴合边界 → 跨到下一层
+        hp = 0; waves++; continue;                   // 已经打穿 → 回卷
+      }
+      const tLayer = needDmg / dps;
+
+      let tDry = Infinity;
+      for (const ty of AMMO_TYPES) {
+        if (P.dpsByType[ty] > 0 && !dryMask[ty] && isFinite(dryAt[ty]) && dryAt[ty] > t + 1e-9) {
+          if (dryAt[ty] < tDry) tDry = dryAt[ty];
+        }
+      }
+
+      const step = Math.max(0, Math.min(dt - t, tLayer, tDry - t));
+      if (step <= 1e-9) {
+        // 事件正好落在当前时刻：先结算弹尽，避免空转
+        let flipped = false;
+        for (const ty of AMMO_TYPES) {
+          if (!dryMask[ty] && isFinite(dryAt[ty]) && dryAt[ty] <= t + 1e-9) { dryMask[ty] = true; flipped = true; }
+        }
+        if (!flipped) break;
+        continue;
+      }
+
+      const d = dps * step;
+      dmg += d;
+      hp += d;
+      for (const ty of AMMO_TYPES) {
+        if (P.dpsByType[ty] > 0 && !dryMask[ty]) usedAmmo[ty] += (P.ammoRate[ty] || 0) * step;
+      }
+      segs.push({ sec: step, dps: dps, layer: layer });
+      t += step;
+
+      for (const ty of AMMO_TYPES) {
+        if (!dryMask[ty] && isFinite(dryAt[ty]) && dryAt[ty] <= t + 1e-9) dryMask[ty] = true;
+      }
+
+      // ★ 回卷：本波打穿 → 刻度归零，下一轮 layerAt 从 shield 重新开始
+      if (P.fleetHp > 0 && hp >= bound[2] - 1e-9) {
+        hp -= P.fleetHp;
+        if (hp < 1e-9) hp = 0;
+        waves++;
+      }
+    }
+
+    if (!allDry) {
+      let anyLive = false;
+      for (const ty of AMMO_TYPES) if (P.dpsByType[ty] > 0 && !dryMask[ty]) anyLive = true;
+      allDry = !anyLive;
+    }
+
+    const ammoUsed = {};
+    for (const ty of AMMO_TYPES) {
+      if (usedAmmo[ty] > 0) ammoUsed[AMMO_OF[ty]] = Math.min(stock[ty], usedAmmo[ty]);
+    }
+    return { segs: segs, dmg: dmg, waves: waves, fireSec: t, ammoUsed: ammoUsed, allDry: allDry, noWeapon: false };
+  }
+
+  // ---- 焦点战场：逐轮真掷骰（1 轮 = ROUND_SEC 秒）。成本 = 轮数 × 武器数，有封顶 ----
+  // 公式与 1 代 combatTick 一致：逐武器判命中（hit^1.4 系数）→ 乘当前层克制 → 乘伤害浮动。
+  // 与闭式同量纲：E[单轮伤害] = Σ 单发伤害 × 命中率 × 克制 = dpsByType × 克制，故两路长期收益一致。
+  function simulateVolley(P, res, sec, waveHp) {
+    const rounds = Math.max(1, Math.min(SIM_MAX_SEC, Math.ceil(sec || 1)));
+    const roundSec = (sec || 1) / rounds;      // 不足一轮时按时间比例折算
+    const stock = {};
+    for (const t of AMMO_TYPES) stock[t] = Math.max(0, (res && res[AMMO_OF[t]]) || 0);
+    let dmg = 0, hits = 0, misses = 0, hp = Math.max(0, waveHp || 0);
+    if (P.fleetHp > 0) hp %= P.fleetHp;
+    for (let r = 0; r < rounds; r++) {
+      const layer = layerAt(P, hp);
+      let roundDmg = 0;
+      for (const w of P.weapons) {
+        const t = w.type;
+        if (w.ammoCost > 0 && stock[t] < w.ammoCost) { misses++; continue; }   // 该弹种打空 → 这门炮哑火
+        if (w.ammoCost > 0) stock[t] -= w.ammoCost;
+        if (Math.random() < w.hitChance) {
+          hits++;
+          roundDmg += w.dmg * counterMult(t, layer) * damageVariance() * roundSec;
+        } else {
+          misses++;
+        }
+      }
+      dmg += roundDmg;
+      hp += roundDmg;
+      // ★ 回卷（与闭式同一规则）：打穿本波 → 刻度归零，下一轮 layerAt 从 shield 重新开始。
+      //   不修的话跨波后 layer 永远锁死 structure，焦点战场与非焦点战场会算出两套结果。
+      if (P.fleetHp > 0) {
+        hp %= P.fleetHp;
+        // 层边界吸附（同闭式）：停在边界下方会被 layerAt 判成上一层
+        const hs2 = P.fleetHpSum || {};
+        const b0 = hs2.shield || 0, b1 = b0 + (hs2.armor || 0);
+        if (Math.abs(hp - b0) < 1e-6) hp = b0;
+        else if (Math.abs(hp - b1) < 1e-6) hp = b1;
+      }
+    }
+    const ammoUsed = {};
+    for (const t of AMMO_TYPES) {
+      const before = Math.max(0, (res && res[AMMO_OF[t]]) || 0);
+      const used = before - stock[t];
+      if (used > 0) ammoUsed[AMMO_OF[t]] = used;
+    }
+    let anyLeft = false;
+    for (const t of AMMO_TYPES) if (P.ammoRate[t] > 0 && stock[t] > 0) anyLeft = true;
+    return { dmg: dmg, hits: hits, misses: misses, ammoUsed: ammoUsed, allDry: P.weapons.length > 0 && !anyLeft };
+  }
+
+  // 结算某节点 dtSec 秒的战斗。
+  // waveHp = 已打进当前这支编队的累计伤害（跨 tick 持久，切页签/离线都靠它衔接）。
+  // focus = 该节点是否正被玩家注视（真仿真）；返回 O(1)。
+  function advance(state, nodeId, dtSec, waveHp, focus) {
+    const dt = Math.max(0, dtSec || 0);
+    let wHp = Math.max(0, waveHp || 0);
+    const P = prepareNode(state, nodeId);
+    if (!P) {
+      return {
+        waves: 0, credits: 0, rep: 0, waveHp: wHp, damage: 0, fightSec: 0,
+        wiped: false, allDry: false, ammoUsed: null, simmed: false, hits: 0, misses: 0,
+        waveSec: 0, progress: 0, fleet: null, fleetHp: 0,
+        squadDps: 0, weaponDps: 0, fleetDps: 0, incomingDps: 0,
+        repairPerSec: 0, dmgReduction: 0, band: 1,
+      };
+    }
+
     // 血池：参战成员当前剩余三防总和
     let pool = 0;
     for (const m of P.members) pool += Math.max(0, (m.hp && m.hp.shield) || 0) + Math.max(0, (m.hp && m.hp.armor) || 0) + Math.max(0, (m.hp && m.hp.structure) || 0);
-    const maxFightSec = P.fleetDps > 0 ? (pool / P.fleetDps) : dt;
-    const fightSec = Math.min(dt, maxFightSec);
-    const wiped = fightSec < dt - 1e-9;   // 本轮被打空 → 剩余时间不再产出
+    const maxFightSec = P.incomingDps > 0 ? (pool / P.incomingDps) : dt;
 
-    const c = Math.max(0, carrySec || 0) + fightSec;
-    const waves = Math.floor(c / P.waveSec);
-    const carry = c - waves * P.waveSec;
-    const credits = P.dropCredits * waves;
-    const rep = P.dropRep * waves;
-    const damage = P.fleetDps * fightSec;
-    const progress = P.waveSec > 0 ? Math.max(0, Math.min(1, 1 - carry / P.waveSec)) : 1;
+    let dmg = 0, fireSec = 0, ammoUsed = null, allDry = false, hits = 0, misses = 0, simmed = false;
+    let noWeapon = false;
+
+    if (focus && dt > 0 && dt <= SIM_MAX_SEC) {
+      simmed = true;
+      const sv = simulateVolley(P, state.res, dt, wHp);
+      fireSec = P.weapons.length > 0 ? dt : 0;   // 没武器 = 打不动（1 代同规则）
+      dmg = sv.dmg;
+      ammoUsed = sv.ammoUsed;
+      allDry = sv.allDry;
+      hits = sv.hits;
+      misses = sv.misses;
+      noWeapon = P.weapons.length === 0;
+    } else {
+      const fp = fireSegments(P, state.res, dt, wHp);
+      fireSec = fp.fireSec;
+      ammoUsed = fp.ammoUsed;
+      allDry = fp.allDry;
+      noWeapon = fp.noWeapon;
+      dmg = fp.dmg;   // 精确值：整波跳按 k×fleetHp 累加，不用 segs 回乘（避免舍入少算一波）
+    }
+
+    // 血池封顶：被打穿就当场撤离，剩余时间不再产出（离线 8 小时不会凭空吃伤害）
+    const wiped = fireSec > maxFightSec + 1e-9;
+    if (wiped && fireSec > 0) {
+      const ratio = maxFightSec / fireSec;
+      dmg *= ratio;
+      fireSec = maxFightSec;
+      if (ammoUsed) for (const k in ammoUsed) ammoUsed[k] *= ratio;
+      allDry = false;                       // 这次不是弹尽，是血尽
+    }
+
+    wHp += dmg;
+    const waves = P.fleetHp > 0 ? Math.floor(wHp / P.fleetHp) : 0;
+    if (P.fleetHp > 0) wHp -= waves * P.fleetHp;
+    else wHp = 0;
+
+    const damage = P.incomingDps * fireSec;
+    const progress = P.fleetHp > 0 ? Math.max(0, Math.min(1, wHp / P.fleetHp)) : 1;
+
     return {
-      waves: waves, credits: credits, rep: rep, carry: carry, damage: damage,
-      fightSec: fightSec, wiped: wiped,
-      waveSec: P.waveSec, progress: progress, fleet: P.fleet,
-      squadPower: P.squadPower, enemyPower: P.enemyPower, clearRatio: P.clearRatio,
-      squadDps: P.squadDps, fleetDps: P.fleetDps,
+      waves: waves,
+      credits: P.dropCredits * waves,
+      rep: P.dropRep * waves,
+      waveHp: wHp,
+      damage: damage,
+      fightSec: fireSec,
+      wiped: wiped,
+      allDry: allDry,
+      noWeapon: noWeapon,
+      ammoUsed: ammoUsed,
+      simmed: simmed,
+      hits: hits,
+      misses: misses,
+      waveSec: P.waveSec,
+      progress: progress,
+      fleet: P.fleet,
+      fleetHp: P.fleetHp,
+      squadDps: P.squadDps,
+      weaponDps: P.weaponDps,
+      fleetDps: P.fleetDps,
+      incomingDps: P.incomingDps,
+      repairPerSec: P.repairPerSec,
+      dmgReduction: P.dmgReduction,
+      band: P.band,
     };
   }
 
@@ -240,8 +635,14 @@
   }
 
   return {
-    squadPower, squadPowerAtNode, getSquadCapacity, canJoinSquad, resolveSquad,
-    DROP_CREDIT_BASE, DROP_REP_BASE, WAVE_MIN_SEC, WAVE_MAX_SEC, SQUAD_DPS_K,
-    prepareNode, advance, fleetSnapshot,
+    getSquadCapacity, canJoinSquad,
+    DROP_CREDIT_BASE, DROP_REP_BASE,
+    // 1 代原式常量（不是标定值）
+    COUNTER_MULT, HIT_EXP, DMG_VAR_MIN, DMG_VAR_SPAN,
+    // 安全阀
+    REPAIR_CAP, DMG_RED_CAP, ROUND_SEC, SIM_MAX_SEC, SEG_GUARD,
+    AMMO_TYPES, AMMO_OF, AMMO_CN, COUNTER_OF, LAYER_ORDER,
+    hitCoeff, counterMult, layerAt, layerDps, fullWaveSec,
+    prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp,
   };
 });

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>realtime-combat selftest</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 真实时战斗真机自测（2026-10-31）
+//   1 首次载入取 NSK → 种一份「已配武器 + 已知弹药」的存档 → 重载
+//   2 星系页出现战斗面板，头部标注「逐轮仿真」
+//   3 我方火力拆分为「本能 ＋ 武器」，武器部分 > 0（证明装配真的进了伤害）
+//   4 弹药条按弹种渲染，数量随时间下降（证明真的在打、真的在耗弹）
+//   5 编队血条随时间下降（证明血条由真实伤害驱动，不是公式倒推）
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+// 未捕获异常会让 async IIFE 静默中断，导致日志停在中途而看不出原因 —— 必须显式抓出来
+window.addEventListener("error", e => log("[ERR] " + e.message));
+window.addEventListener("unhandledrejection", e => log("[REJ] " + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason)));
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); };
+
+(async function(){
+  // 1) 首次载入，取到 NSK
+  fr.src="../index.html";
+  const b1=await until(booted,25000);
+  ok("游戏启动完成", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const W=fr.contentWindow, NSK=W.NSK;
+  ok("可取到 window.NSK", !!NSK && !!NSK.Engine && !!NSK.Data);
+
+  // 2) 种存档：配武器 + 已知弹药 + 已在剿匪
+  let shipped={ ok:false };
+  try {
+    const st=NSK.Engine.State.defaultState(Date.now(), NSK.Data);
+    const m=st.members[0];
+    m.skills.combatLaser=20000; m.skills.combatTurret=20000; m.skills.command=20000;
+    const highN=NSK.Data.Ships.slotLayout(m.shipId).high;
+    const pool=["t1_small_laser","t1_light_missile_launcher","t1_small_cannon"];
+    const fitted=pool.slice(0, Math.max(1, Math.min(highN, pool.length)));
+    m.fitted={ high: fitted, mid: [], low: [], rig: [] };
+    st.equipment={}; for(const id of fitted) st.equipment[id]=1;
+    st.res.ammo_laser=500; st.res.ammo_missile=500; st.res.ammo_cannon=500;
+    const asg=NSK.Engine.Dispatch.assign(st, m.id, "combat", { nodeId: st.base.nodeId });
+    const saved=NSK.Core.save(st);
+    const back=NSK.Core.load();
+    shipped={ ok: (asg && asg.ok!==false), highN: highN, fitted: fitted,
+      saved: saved, hasLocal: NSK.Core.hasLocal(),
+      backCombat: back ? back.members.filter(x=>x.assignment && x.assignment.type==="combat").length : -1 };
+  } catch(e) { shipped={ ok:false, err:String(e) }; }
+  ok("种入「已配武器」存档", shipped.ok, shipped.err ||
+    ("high 槽="+shipped.highN+" 配="+JSON.stringify(shipped.fitted)
+      +" save="+shipped.saved+" hasLocal="+shipped.hasLocal+" 回读战斗成员="+shipped.backCombat));
+
+  // 3) 重载 → 进星系页
+  // ⚠️ 只改 hash（#system）不会触发文档重载，必须带查询参数强制真实导航
+  fr.src="../index.html?seed="+Date.now()+"#system";
+  const b2=await until(booted,25000);
+  ok("重载后进入游戏（读的是新存档）", b2);
+  if(!b2){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  await until(()=>D().querySelector('[data-act="tab:system"]'),8000);
+  const sysTab=D().querySelector('[data-act="tab:system"]');
+  ok("重载后页签渲染", !!sysTab, sysTab?txt(sysTab):"missing");
+  if(sysTab) sysTab.click();
+
+  // 诊断：重载后存档里是否仍有参战成员
+  try {
+    const W2=fr.contentWindow;
+    const back2=W2.NSK.Core.load();
+    const n=back2 ? back2.members.filter(x=>x.assignment && x.assignment.type==="combat").length : -1;
+    const fit=back2 && back2.members[0] && back2.members[0].fitted ? JSON.stringify(back2.members[0].fitted.high) : "-";
+    ok("重载后存档仍含参战成员与装配", n>0, "战斗成员="+n+" 高槽装配="+fit);
+  } catch(e) { ok("重载后存档仍含参战成员与装配", false, String(e)); }
+
+  const panel=await until(()=>D().querySelector(".battle-panel"),10000);
+  ok("战斗面板出现（有参战成员）", panel);
+  if(!panel){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 4) 头部：逐轮仿真 + 火力拆分含「武器」
+  const simTag=await until(()=>txt(q(".battle-head")).indexOf("逐轮仿真")>=0, 10000);
+  ok("头部标注「逐轮仿真」（焦点战场真打）", simTag, txt(q(".battle-head")).slice(0,90));
+
+  const head=txt(q(".battle-head"));
+  ok("火力标注为「武器」（自创的本能输出已删除）",
+    head.indexOf("武器")>=0 && head.indexOf("本能")<0, head.slice(0,100));
+  const wm=head.match(/我方火力\s*(\d+)\/s（(\d+)\s*武器）/);
+  ok("我方火力 = 武器火力（伤害 100% 来自装配）",
+    !!wm && parseInt(wm[1],10)>0 && parseInt(wm[1],10)===parseInt(wm[2],10),
+    wm?("总 "+wm[1]+"/s = 武器 "+wm[2]+"/s"):"未匹配我方火力");
+
+  // 5) 弹药条：弹种数 = 实际装的武器类型数
+  const chips=qa(".ammo-chip");
+  const expChips=(shipped.fitted||[]).length;
+  ok("弹药条按弹种渲染", chips.length===expChips, "chips="+chips.length+" 期望="+expChips);
+  ok("弹药条显示剩余发数", chips.length>0 && /[0-9]/.test(txt(chips[0])), chips.length?txt(chips[0]):"-");
+
+  // 6) 弹药数量随时间下降
+  const numOf=(el)=>{ const m=txt(el).match(/(\d+)/); return m?parseInt(m[1],10):-1; };
+  const a0=chips.length?numOf(chips[0]):-1;
+  const dropped=await until(()=>{ const c=qa(".ammo-chip"); return c.length && numOf(c[0])<a0; }, 20000);
+  ok("弹药数量随时间下降（真的在耗弹）", dropped,
+    "初始="+a0+" 现在="+(qa(".ammo-chip").length?numOf(qa(".ammo-chip")[0]):"-"));
+
+  // 7) 编队血条随时间下降（真实伤害驱动）
+  const enemyHp=()=>{ const s=qa(".battle-unit.enemy:not(.down) .bhp > i");
+    return Array.prototype.slice.call(s).reduce((a,el)=>a+parseFloat(el.style.width||"0"),0); };
+  const h0=enemyHp();
+  const drained=await until(()=>enemyHp()<h0-1e-6 || qa(".battle-unit.enemy.down").length>0, 20000);
+  ok("敌方血条随时间下降（血条由真实伤害驱动）", drained,
+    "初始合计="+h0.toFixed(0)+"% 现在="+enemyHp().toFixed(0)+"% 已清场="+qa(".battle-unit.enemy.down").length);
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

@@ -1108,64 +1108,102 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
 
 (function probeWaveCombat() {
   const C = Engine.Combat, S = Engine.Settle;
+
+  // 给某 state 的所有参战成员装同一把武器（1 代规则：没有武器就没有伤害）
+  function armAll(st, weaponId) {
+    for (const mm of st.members) {
+      if (mm.assignment && mm.assignment.type === "combat") {
+        mm.fitted = { high: [weaponId], mid: [], low: [], rig: [] };
+      }
+    }
+  }
+
   const sb = Engine.State.defaultState(now, Data);
   const m = sb.members[0];
-  // 抬高战斗技能，保证 sp>0、eff 有值，断言可复现
   m.skills.combatLaser = 20000; m.skills.combatTurret = 20000; m.skills.command = 20000;
   const asg = Engine.Dispatch.assign(sb, m.id, "combat", { nodeId: sb.base.nodeId });
   ok("齐射:派遣战斗成功", asg && asg.ok !== false, JSON.stringify(asg));
 
-  // 29a) 预聚合：每波掉落 / 一波时长 / 编队三要素
+  // 29a) 关键回归：未装武器 = 零伤害（自创的「本能输出」已删除，1 代同规则）
+  const Pbare = C.prepareNode(sb, sb.base.nodeId);
+  const rbare = C.advance(sb, sb.base.nodeId, 60, 0, false);
+  ok("战斗:未装武器 → 零伤害零掉落（1 代规则，无自创本能输出）",
+    !!Pbare && Pbare.squadDps === 0 && rbare.credits === 0 && rbare.damage === 0,
+    Pbare ? ("squadDps=" + Pbare.squadDps + " credits=" + rbare.credits + " damage=" + rbare.damage) : "null");
+
+  armAll(sb, "t1_small_laser");
+
+  // 29b) 物理恒等：一波时长 = 盾段 + 甲段 + 构段（每段含该层克制，不是拍脑袋的常量）
+  //      2026-11-01 修「层不回卷」时一并修正：旧口径 fleetHp/squadDps 是不含克制的，
+  //      会让 UI 的一波时长比实际偏长（激光队 2.12s vs 真实 1.86s）。
   const P = C.prepareNode(sb, sb.base.nodeId);
-  ok("齐射:prepareNode 返回每波掉落与波时长",
-    !!P && P.dropCredits > 0 && P.dropRep > 0 && P.waveSec >= C.WAVE_MIN_SEC && P.waveSec <= C.WAVE_MAX_SEC,
-    P ? ("cred/wave=" + P.dropCredits.toFixed(2) + " waveSec=" + P.waveSec.toFixed(2) + "s") : "null");
+  const waveSum = ["shield", "armor", "structure"].reduce(function (a, L) {
+    return a + P.fleetHpSum[L] / C.layerDps(P.dpsByType, L, null);
+  }, 0);
+  ok("战斗:一波时长 = 三段（盾+甲+构）之和，每段含克制",
+    !!P && P.squadDps > 0 && P.dropCredits > 0 && P.dropRep > 0 &&
+      Math.abs(P.waveSec - waveSum) < 1e-9 && P.waveSec < P.fleetHp / P.squadDps - 1e-9,
+    P ? ("fleetHp=" + P.fleetHp + " waveSec=" + P.waveSec.toFixed(3) + "s 无克制口径=" + (P.fleetHp / P.squadDps).toFixed(3) + "s") : "null");
   ok("齐射:编队含 3 艘敌舰且带三防血量",
     !!P && !!P.fleet && P.fleet.ships.length === 3 &&
       P.fleet.ships.every(s => s.maxHp.shield > 0 && s.maxHp.armor > 0 && s.maxHp.structure > 0),
     P && P.fleet ? ("fleet=" + P.fleet.ships.map(s => s.name + "(" + s.kindCn + ")").join(" / ")) : "");
-  ok("齐射:波时长 = 每波掉落 ÷ 每秒速率（两路推导一致）",
-    !!P && Math.abs(P.waveSec - (P.dropCredits / P.rateCredits)) < 1e-6,
-    P ? ("waveSec=" + P.waveSec.toFixed(4) + " drop/rate=" + (P.dropCredits / P.rateCredits).toFixed(4)) : "");
+  ok("战斗:我方伤害全部来自装配武器（squadDps ≡ weaponDps）",
+    !!P && Math.abs(P.squadDps - P.weaponDps) < 1e-9 && P.weaponDps > 0,
+    P ? ("weapon=" + P.weaponDps.toFixed(2) + " squad=" + P.squadDps.toFixed(2)) : "");
 
-  // 29b) 核心：波时长不再是硬编码常量，而是随战力变化
-  const weak = Engine.State.defaultState(now, Data);
-  const wm = weak.members[0];
-  wm.skills.combatLaser = 0; wm.skills.combatTurret = 0; wm.skills.command = 0;
-  Engine.Dispatch.assign(weak, wm.id, "combat", { nodeId: weak.base.nodeId });
-  const Pw = C.prepareNode(weak, weak.base.nodeId);
-  ok("齐射:战力越低一波越长（波时长由敌我强度算出，非常量）",
-    !!Pw && Pw.waveSec > P.waveSec * 1.5,
-    "weak=" + (Pw ? Pw.waveSec.toFixed(2) : "-") + "s vs strong=" + P.waveSec.toFixed(2) + "s");
+  // 29c) 波时长随我方战力变化：多装武器 → 打得更快
+  const sb2w = Engine.State.defaultState(now, Data);
+  for (const mm of sb2w.members) Engine.Dispatch.assign(sb2w, mm.id, "combat", { nodeId: sb2w.base.nodeId });
+  armAll(sb2w, "t1_small_laser");
+  const Pone = C.prepareNode(sb, sb.base.nodeId);      // 1 人 1 炮
+  const Pmany = C.prepareNode(sb2w, sb2w.base.nodeId); // 全员 1 炮
+  ok("齐射:武器越多一波越短（波时长由敌我强度算出，非常量）",
+    !!Pone && !!Pmany && Pmany.squadDps > Pone.squadDps && Pmany.waveSec < Pone.waveSec,
+    "1人=" + Pone.waveSec.toFixed(2) + "s " + Pmany.cnt + "人=" + Pmany.waveSec.toFixed(2) + "s");
 
-  // 29c) 经济等价：未触发 clamp 时，新模型每秒速率 == 旧连续公式速率
-  ok("齐射:每秒速率与旧连续公式等价（经济零漂移）",
-    !!P && Math.abs(P.realRateCredits - P.rateCredits) < 1e-9,
-    P ? ("real=" + P.realRateCredits.toFixed(6) + " raw=" + P.rateCredits.toFixed(6)) : "");
+  // 29d) 每秒收益完全由物理推出：每波掉落固定，波越短单位时间收益越高
+  //     （2026-11-01 清理：删掉自创的 rateCredits/rateRep 字段，它只是 drop/waveSec 的别名）
+  const rateOne = Pone.dropCredits / Pone.waveSec;
+  const rateMany = Pmany.dropCredits / Pmany.waveSec;
+  ok("战斗:单位时间收益由「波时长」推出（武器越多波越短 → 收益越高）",
+    rateMany > rateOne, "1人=" + rateOne.toFixed(3) + "/s " + Pmany.cnt + "人=" + rateMany.toFixed(3) + "/s");
 
-  // 29d) 波数换算 + 掉落 = 每波 × 波数（按实际战斗时长，受血池封顶）
-  const r1 = C.advance(sb, sb.base.nodeId, 3600, 0);
-  const expWaves1 = Math.floor(r1.fightSec / P.waveSec);
-  ok("齐射:波数 = 实际战斗时长 ÷ 波长", r1.waves === expWaves1,
-    "waves=" + r1.waves + " exp=" + expWaves1 + " fightSec=" + r1.fightSec.toFixed(1));
-  ok("齐射:掉落 = 每波掉落 × 波数", Math.abs(r1.credits - P.dropCredits * r1.waves) < 1e-6,
+  // 29e) 波数换算 + 掉落 = 每波 × 波数（按实际战斗时长，受血池封顶）
+  const r1 = C.advance(sb, sb.base.nodeId, 3600, 0, false);
+  const dealt1 = (function () { let s = 0; for (const seg of C.fireSegments(P, sb.res, r1.fightSec, 0).segs) s += seg.dps * seg.sec; return s; })();
+  const expWaves1 = P.fleetHp > 0 ? Math.floor(dealt1 / P.fleetHp) : 0;
+  ok("战斗:波数 = 打进去的伤害 ÷ 编队总血", Math.abs(r1.waves - expWaves1) <= 1,
+    "waves=" + r1.waves + " exp≈" + expWaves1 + " fightSec=" + r1.fightSec.toFixed(1));
+  ok("战斗:掉落 = 每波掉落 × 波数", Math.abs(r1.credits - P.dropCredits * r1.waves) < 1e-6,
     "cred=" + r1.credits.toFixed(2) + " exp=" + (P.dropCredits * r1.waves).toFixed(2));
 
-  // 29e) 受击封顶：血池打空后不再继续受击（离线大 dt 不失真）
-  ok("齐射:受击正比于实际战斗时长", Math.abs(r1.damage - P.fleetDps * r1.fightSec) < 1e-6,
-    "dmg=" + r1.damage.toFixed(1) + " fleetDps=" + P.fleetDps.toFixed(2));
-  let poolNow = 0;
-  for (const mm of P.members) poolNow += mm.hp.shield + mm.hp.armor + mm.hp.structure;
-  ok("齐射:超长 dt 触发血池封顶（wiped）", r1.wiped === true && r1.fightSec < 3600,
+  // 29f) 受击封顶：血池打空后不再继续受击（离线大 dt 不失真）
+  ok("战斗:受击正比于实际战斗时长", Math.abs(r1.damage - P.incomingDps * r1.fightSec) < 1e-6,
+    "dmg=" + r1.damage.toFixed(1) + " incomingDps=" + P.incomingDps.toFixed(2));
+  ok("战斗:超长 dt 触发血池封顶（wiped）", r1.wiped === true && r1.fightSec < 3600,
     "fightSec=" + r1.fightSec.toFixed(1) + "/3600 wiped=" + r1.wiped);
 
-  // 29f) carry：未满一波不结算
-  const rc0 = C.advance(sb, sb.base.nodeId, 0, 0);
-  const rc1 = C.advance(sb, sb.base.nodeId, P.waveSec * 0.4, 0);
-  ok("齐射:carry 未满一波不结算", rc1.waves === 0 && rc1.carry > 0,
-    "waves=" + rc1.waves + " carry=" + rc1.carry.toFixed(2));
+  // 29g) waveHp 累加器：未打穿编队不结算，打穿才结算（切页签/离线靠它衔接）
+  const halfSec = P.waveSec * 0.4;   // 用含克制的真实一波时长，否则跨层估算会偏
+  const rh = C.advance(sb, sb.base.nodeId, halfSec, 0, false);
+  ok("战斗:未打穿编队不结算掉落（进度累积在 waveHp）", rh.waves === 0 && rh.waveHp > 0,
+    "waves=" + rh.waves + " waveHp=" + rh.waveHp.toFixed(1) + "/" + P.fleetHp + " progress=" + rh.progress.toFixed(2));
+  const rf = (function () {
+    // 独立 state 且血量拉满：否则「打穿」会被血池封顶截断（1 人 1020 血只扛得住约 8 秒）
+    const st = Engine.State.defaultState(now, Data);
+    const mm = st.members[0];
+    Engine.Dispatch.assign(st, mm.id, "combat", { nodeId: st.base.nodeId });
+    mm.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
+    mm.hp = { shield: 1e9, armor: 1e9, structure: 1e9 };
+    st.res.ammo_laser = 1e9;
+    const PP = C.prepareNode(st, st.base.nodeId);
+    return C.advance(st, st.base.nodeId, PP.waveSec * 1.05, 0, false);
+  })();
+  ok("战斗:打穿编队结算 1 波并结余到下一队", rf.waves === 1 && rf.waveHp > 0 && rf.waveHp < P.fleetHp,
+    "waves=" + rf.waves + " waveHp=" + rf.waveHp.toFixed(1));
 
-  // 29g) 编队快照：按波内进度扣血，清场数递增
+  // 29h) 编队快照：按波内进度扣血，清场数递增
   const snap0 = C.fleetSnapshot(P.fleet, 0);
   const snap5 = C.fleetSnapshot(P.fleet, 0.5);
   const snap1 = C.fleetSnapshot(P.fleet, 1);
@@ -1175,29 +1213,40 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("齐射:进度 100% 时全部清场", !!snap1 && snap1.cleared === 3 && snap1.targetIdx === -1,
     "cleared=" + (snap1 ? snap1.cleared : "-"));
 
-  // 29h) 性能：O(1) 闭式，成本与 dt 无关
+  // 29i) 性能：O(1) 闭式，成本与 dt 无关
   const t0 = Date.now();
   for (let k = 0; k < 1000; k++) C.advance(sb, sb.base.nodeId, 86400, 0);
   const ms = Date.now() - t0;
   ok("齐射:O(1) 闭式 1000 次超大 dt < 50ms", ms < 50, ms + "ms / 1000 次");
 
-  // 29i) settle 接线：战报累计 + 掉落入账 + 成员被打穿撤离返港
-  const sb2 = Engine.State.defaultState(now, Data);
-  const m2 = sb2.members[0];
-  m2.skills.combatLaser = 20000; m2.skills.combatTurret = 20000; m2.skills.command = 20000;
-  Engine.Dispatch.assign(sb2, m2.id, "combat", { nodeId: sb2.base.nodeId });
-  const credB = sb2.res.credits, repB = sb2.res.rep;
-  Engine.Settle.settle(sb2, now + 3600 * 1000);
-  const bt = sb2.battles[sb2.base.nodeId];
+  // 29j) settle 接线：战报累计 + 掉落入账 + 成员被打穿撤离返港
+  // ⚠️ 必须全员参战：1 人 1 门炮打不过一支 3 艘编队（1 代同规则），会当场被打穿、零掉落
+  // ⚠️ 必须先把全员的舰船与血量拉平：受击是本 tick 总伤害平摊，血池封顶后 share 恰等于
+  //    「平均每人的血量」。若成员随机到不同吨位，血量高于均值的人会带伤活下来 →
+  //    「成员被打穿」这条断言会随每人随机舰船而偶发失败（曾出现 450/270 残结构）。
+  const sbS = Engine.State.defaultState(now, Data);
+  const uniHp = Data.Ships.maxHp("destroyer");
+  for (const mm of sbS.members) {
+    mm.shipId = "destroyer";
+    mm.hp = { shield: uniHp.shield, armor: uniHp.armor, structure: uniHp.structure };
+    mm.skills.combatLaser = 20000; mm.skills.combatTurret = 20000; mm.skills.command = 20000;
+    Engine.Dispatch.assign(sbS, mm.id, "combat", { nodeId: sbS.base.nodeId });
+  }
+  armAll(sbS, "t1_small_laser");
+  sbS.res.ammo_laser = 1e9;
+  const mS = sbS.members[0];
+  const credB = sbS.res.credits, repB = sbS.res.rep;
+  Engine.Settle.settle(sbS, now + 3600 * 1000);
+  const bt = sbS.battles[sbS.base.nodeId];
   ok("齐射:settle 后战报累计波次", !!bt && bt.waves > 0, bt ? ("waves=" + bt.waves + " waveSec=" + Number(bt.waveSec).toFixed(2)) : "no battle");
-  ok("齐射:settle 后星币/声望增加", sb2.res.credits > credB && sb2.res.rep > repB,
-    "cred +" + (sb2.res.credits - credB).toFixed(1) + " rep +" + (sb2.res.rep - repB).toFixed(1));
-  ok("齐射:长时间战斗后成员被打穿撤离返港", m2.assignment === null && m2.hp.structure <= 0,
-    "assign=" + JSON.stringify(m2.assignment) + " struct=" + m2.hp.structure);
+  ok("齐射:settle 后星币/声望增加", sbS.res.credits > credB && sbS.res.rep > repB,
+    "cred +" + (sbS.res.credits - credB).toFixed(1) + " rep +" + (sbS.res.rep - repB).toFixed(1));
+  ok("齐射:长时间战斗后成员被打穿撤离返港", mS.assignment === null && mS.hp.structure <= 0,
+    "assign=" + JSON.stringify(mS.assignment) + " struct=" + mS.hp.structure);
   // 再 settle 一小步，撤离者应被 Repair.tick 拉进修复泊位
-  Engine.Settle.settle(sb2, now + 3600 * 1000 + 1000);
-  const info2 = Engine.Repair.repairInfo(sb2);
-  const inQ = info2.repairing.concat(info2.waiting).some(e => e.id === m2.id);
+  Engine.Settle.settle(sbS, now + 3600 * 1000 + 1000);
+  const info2 = Engine.Repair.repairInfo(sbS);
+  const inQ = info2.repairing.concat(info2.waiting).some(e => e.id === mS.id);
   ok("齐射:撤离成员进入修复队列（接 1-E 船坞）", inQ, "used=" + info2.used + "/" + info2.bays);
 })();
 
@@ -1308,6 +1357,153 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   st4.factions.find(f => f.id === "angel").relation = 50;
   const allowed = Engine.Production.buildEquipment(st4, "angel_mining_laser");
   ok("装备:关系达标后允许制造", allowed.ok === true, "relation=50 err=" + (allowed.err || "ok"));
+})();
+
+// ================================================================
+// Block 31：真实时战斗 —— 武器伤害 / 三弹种弹药 / 克制 / 焦点仿真 vs 闭式
+// ================================================================
+(function probeRealTimeCombat() {
+  const C = Engine.Combat, EqData = Data.Equipment;
+
+  ok("弹药:3 个弹种资源已注册",
+    !!Data.Resources.ALL.ammo_laser && !!Data.Resources.ALL.ammo_missile && !!Data.Resources.ALL.ammo_cannon,
+    Object.keys(Data.Resources.ALL).filter(k => k.indexOf("ammo_") === 0).join(","));
+
+  function pickNodeByBand(st, band) {
+    for (const n of st.starMap.nodes) {
+      const raid = Data.StarMap.pirateRaid(st.starMap, n.id);
+      if (raid && (raid.band || 1) === band) return n.id;
+    }
+    return null;
+  }
+  function mkBase(nodeId) {
+    const st = Engine.State.defaultState(now, Data);
+    const mm = st.members[0];
+    mm.skills.combatLaser = 20000; mm.skills.combatTurret = 20000; mm.skills.command = 20000;
+    Engine.Dispatch.assign(st, mm.id, "combat", { nodeId: nodeId });
+    return st;
+  }
+  function fit(st, ids) {
+    st.members[0].fitted = { high: ids.slice(), mid: [], low: [], rig: [] };
+  }
+
+  const n1 = pickNodeByBand(Engine.State.defaultState(now, Data), 1);
+  const n5 = pickNodeByBand(Engine.State.defaultState(now, Data), 5);
+  ok("弹道:找到高安(band1)与深空(band5)节点", !!n1 && !!n5, "n1=" + n1 + " n5=" + n5);
+
+  // 31a) 装武器 → 武器 DPS > 0、总战力上升、波时长变短
+  const sA = mkBase(n1), PA0 = C.prepareNode(sA, n1);
+  fit(sA, ["t1_small_laser"]);
+  const PA1 = C.prepareNode(sA, n1);
+  ok("武器:装配后武器DPS>0 且总战力上升",
+    PA1.weaponDps > 0 && PA1.squadDps > PA0.squadDps,
+    "无装=" + PA0.squadDps.toFixed(1) + " 有装=" + PA1.squadDps.toFixed(1) + "（武器+" + PA1.weaponDps.toFixed(1) + "）");
+  ok("武器:伤害变高 → 波时长变短（同一支编队）",
+    PA1.waveSec < PA0.waveSec,
+    "无装=" + PA0.waveSec.toFixed(2) + "s 有装=" + PA1.waveSec.toFixed(2) + "s");
+
+  // 31b) 三防克制：1 代 calcWeaponCounterMultiplier —— 只有「当前最外层」对应武器 ×1.25，其余 ×1.0
+  const cm = (w, l) => C.counterMult(w, l);
+  ok("克制:激光对护盾层 ×1.25，其余武器 ×1.0",
+    cm("laser", "shield") === 1.25 && cm("laser", "armor") === 1 && cm("laser", "structure") === 1 &&
+    cm("missile", "armor") === 1.25 && cm("missile", "shield") === 1 &&
+    cm("cannon", "structure") === 1.25 && cm("cannon", "armor") === 1,
+    "laser/盾=" + cm("laser", "shield") + " missile/甲=" + cm("missile", "armor") + " cannon/构=" + cm("cannon", "structure"));
+
+  // 1 代命中公式：hit^1.4 / (hit^1.4 + dodge^1.4)
+  ok("命中:1 代公式 hit^1.4/(hit^1.4+dodge^1.4)",
+    Math.abs(C.hitCoeff(100, 30) - 0.8438) < 0.001 && Math.abs(C.hitCoeff(80, 30) - 0.7979) < 0.001,
+    "hit100/dodge30=" + C.hitCoeff(100, 30).toFixed(4) + " hit80/dodge30=" + C.hitCoeff(80, 30).toFixed(4));
+
+  // 换层顺序：护盾打空 → 装甲 → 结构（1 代按层扣减）
+  const fl1 = Data.Pirates.fleetFor(1, "angel");
+  const fakeP = { fleetHp: fl1.totalHp, fleetHpSum: fl1.hpSum };
+  ok("克制:编队按 盾→甲→构 顺序换层",
+    C.layerAt(fakeP, 0) === "shield" &&
+    C.layerAt(fakeP, fl1.hpSum.shield + 1) === "armor" &&
+    C.layerAt(fakeP, fl1.hpSum.shield + fl1.hpSum.armor + 1) === "structure",
+    "盾界=" + fl1.hpSum.shield + " 甲界=" + (fl1.hpSum.shield + fl1.hpSum.armor) + " 总=" + fl1.totalHp);
+
+  // 三势力三防特征（1 代原生设计，不是随安等变化）：各偏一门 → 各吃一种武器
+  const spA = Data.Pirates.fleetFor(1, "angel").split;
+  const spB = Data.Pirates.fleetFor(1, "blood").split;
+  const spS = Data.Pirates.fleetFor(1, "sansha").split;
+  ok("克制:三势力三防分布与 1 代一致（苍穹盾厚/赤誓甲厚/静默构厚）",
+    spA.shield > spA.armor && spA.shield > spA.structure &&
+    spB.armor > spB.shield && spB.armor > spB.structure &&
+    spS.structure > spS.shield && spS.structure > spS.armor,
+    "苍穹=" + (spA.shield * 100).toFixed(0) + "%盾 赤誓=" + (spB.armor * 100).toFixed(0) + "%甲 静默=" + (spS.structure * 100).toFixed(0) + "%构");
+
+  // 31c) 三弹种按武器类型分别扣弹药（各扣各的）
+  const sB = mkBase(n1);
+  fit(sB, ["t1_small_laser", "t1_light_missile_launcher", "t1_small_cannon"]);
+  const before = { l: sB.res.ammo_laser, m: sB.res.ammo_missile, c: sB.res.ammo_cannon };
+  const rB = C.advance(sB, n1, 60, 0, false);
+  ok("弹药:三种弹种均被消耗且各扣各的",
+    !!rB.ammoUsed && rB.ammoUsed.ammo_laser > 0 && rB.ammoUsed.ammo_missile > 0 && rB.ammoUsed.ammo_cannon > 0,
+    JSON.stringify(rB.ammoUsed));
+
+  // 31d) 断弹即撤退：弹药清零 → allDry
+  const sC = mkBase(n1);
+  fit(sC, ["t1_small_laser"]);
+  sC.res.ammo_laser = 0;
+  const rC = C.advance(sC, n1, 60, 0, false);
+  ok("弹药:某弹种清零 → 该型武器哑火（allDry 判定）", rC.allDry === true,
+    "allDry=" + rC.allDry + " fightSec=" + rC.fightSec.toFixed(1));
+
+  // 31e) 维修器 / 损伤控制降低敌方压到我方的火力
+  const sD = mkBase(n1);
+  const inD0 = C.prepareNode(sD, n1).incomingDps;
+  sD.members[0].fitted = { high: [], mid: ["t1_shield_booster"], low: [], rig: [] };
+  const inD1 = C.prepareNode(sD, n1).incomingDps;
+  ok("维修:护盾回充器降低敌方有效火力（封顶 50%）", inD1 < inD0,
+    "无=" + inD0.toFixed(3) + " 有=" + inD1.toFixed(3) + "/s");
+
+  const sE = mkBase(n1);
+  sE.members[0].fitted = { high: [], mid: ["t1_damage_control"], low: [], rig: [] };
+  const inE = C.prepareNode(sE, n1).incomingDps;
+  ok("减伤:损伤控制单元生效", inE < inD0,
+    "无=" + inD0.toFixed(3) + " 有=" + inE.toFixed(3) + "/s（减伤 " + (C.prepareNode(sE, n1).dmgReduction * 100).toFixed(0) + "%）");
+
+  // 31f) 焦点仿真 vs 闭式：长期收益偏差应在 20% 内（用户允许的容差）
+  //      两边都排除血池封顶干扰（否则闭式被 min(dt, 血池÷敌DPS) 截断，比的不是同一件事）
+  const sF = mkBase(n1);
+  fit(sF, ["t1_small_laser", "t1_light_missile_launcher"]);
+  sF.res.ammo_laser = 1e9; sF.res.ammo_missile = 1e9;
+  for (const mm of sF.members) mm.hp = { shield: 1e9, armor: 1e9, structure: 1e9 };
+  const sG = JSON.parse(JSON.stringify(sF));
+  const TICKS = 240;
+  let simCred = 0;
+  for (let i = 0; i < TICKS; i++) {
+    const rr = C.advance(sF, n1, 1, sF.combatWaveHp ? (sF.combatWaveHp[n1] || 0) : 0, true);
+    sF.combatWaveHp = sF.combatWaveHp || {};
+    sF.combatWaveHp[n1] = rr.waveHp;
+    simCred += rr.credits;
+  }
+  const closed = C.advance(sG, n1, TICKS, 0, false);
+  const dev = closed.credits > 0 ? Math.abs(simCred - closed.credits) / closed.credits : 1;
+  ok("焦点:逐轮仿真与闭式长期收益偏差 < 20%", dev < 0.20,
+    "仿真=" + simCred.toFixed(0) + " 闭式=" + closed.credits.toFixed(0) + " 偏差=" + (dev * 100).toFixed(1) + "%");
+
+  // 31g) 焦点仿真成本恒定（每 tick 少量掷骰，不随时长增长）
+  const sH = mkBase(n1);
+  fit(sH, ["t1_small_laser", "t1_light_missile_launcher", "t1_small_cannon"]);
+  sH.res.ammo_laser = 1e9; sH.res.ammo_missile = 1e9; sH.res.ammo_cannon = 1e9;
+  const tSim = Date.now();
+  for (let i = 0; i < 1000; i++) C.advance(sH, n1, 1, 0, true);
+  const msSim = Date.now() - tSim;
+  ok("焦点:1000 次逐轮仿真 < 100ms（成本与时长无关）", msSim < 100, msSim + "ms / 1000 次");
+
+  // 31h) 弹药耗尽 → 整队撤退返港（settle 接线）
+  const sI = Engine.State.defaultState(now, Data);
+  const mI = sI.members[0];
+  mI.skills.combatLaser = 20000; mI.skills.combatTurret = 20000; mI.skills.command = 20000;
+  mI.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
+  Engine.Dispatch.assign(sI, mI.id, "combat", { nodeId: sI.base.nodeId });
+  sI.res.ammo_laser = 0;
+  Engine.Settle.settle(sI, now + 1000);
+  ok("弹药:断弹后 settle 令小队撤退返港", mI.assignment === null,
+    "assign=" + JSON.stringify(mI.assignment) + " status=" + mI.status);
 })();
 
 console.log("\n== 架构探针结果: " + pass + " PASS / " + fail + " FAIL ==");

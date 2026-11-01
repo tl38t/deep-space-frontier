@@ -21,23 +21,80 @@ const D=()=>fr.contentDocument;
 const q=(sel)=>D().querySelector(sel);
 const qa=(sel)=>D().querySelectorAll(sel);
 const txt=(el)=>el?el.textContent.trim():"";
+// 精准导航：只改 src 后旧文档仍在，until("#nsk-tabs .tab") 会立刻在旧文档上返回 true →
+// 后续 click/读数全落在被销毁的旧 DOM 上（曾导致「我方火力 0/s」的假故障）。必须等 onload。
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
 
 (async function(){
-  fr.src="../index.html#members";
+  await nav("../index.html#members");
   const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },25000);
   ok("游戏启动完成", booted);
   if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
 
+  // 1.5) 种存档：全员配一把激光（1 代规则 —— 没有武器就没有伤害，零火力时波时长根本不存在）
+  const W=()=>fr.contentWindow;
+  const hasCore=await until(()=>W().NSK && W().NSK.Core && W().NSK.Core.load && W().NSK.Core.save, 15000);
+  if(hasCore){
+    const st=W().NSK.Core.load();
+    st.equipment={};                       // 装备拥有清单也要登记，否则装配等于悬空引用
+    for(const mm of st.members){
+      mm.fitted={high:["t1_small_laser"],mid:[],low:[],rig:[]};
+      st.equipment["t1_small_laser"]=(st.equipment["t1_small_laser"]||0)+1;
+    }
+    st.res.ammo_laser=20000;
+    W().NSK.Core.save(st);
+  }
+  ok("种入「全员配激光」存档", hasCore);
+  await wait(800);   // 存档是异步 write-through，立刻重载会读到旧档（弹药仍是默认 497）
+  // 强制真实重载（只改 hash 不会重载文档）；等 onload，避免在旧文档上继续操作
+  await nav("../index.html?seed="+Date.now()+"#members");
+  const booted2=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },25000);
+  ok("重载后游戏启动", booted2);
+  if(!booted2){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  try{
+    const W3=W(); const D3=W3.NSK.Data;
+    const chk=W3.NSK.Core.load();
+    const f=chk.members[0].fitted;
+    ok("重载后存档仍保留装配", !!(f&&f.high&&f.high.length), JSON.stringify(f)+" ammo="+chk.res.ammo_laser);
+    ok("诊断:装备表可查", !!(D3.Equipment&&D3.Equipment.byId("t1_small_laser")&&D3.Equipment.byId("t1_small_laser").combat),
+      D3.Equipment&&D3.Equipment.byId("t1_small_laser")?JSON.stringify(D3.Equipment.byId("t1_small_laser").combat):"null");
+  }catch(e){ ok("重载后存档仍保留装配", false, "err="+e.message); }
+
+  // 钩子：记录 settle 拿到的真实 state（定位「火力为什么 0」）
+  try{
+    const W4=W(); const S4=W4.NSK.Engine.Settle;
+    if(S4 && S4.settle && !S4.__hooked){
+      const orig=S4.settle;
+      S4.settle=function(st,now){
+        try{
+          const ms=(st.members||[]).filter(x=>x.assignment&&x.assignment.type==="combat");
+          W4.__dbg={ cnt:ms.length, baseNode:String(st.base&&st.base.nodeId),
+            fit:ms[0]?JSON.stringify(ms[0].fitted):"-",
+            eq:st.equipment?String(st.equipment["t1_small_laser"]):"-",
+            ammo:String(st.res&&st.res.ammo_laser) };
+        }catch(e){}
+        return orig.apply(this,arguments);
+      };
+      S4.__hooked=true;
+    }
+  }catch(e){}
+
   // 2) 成员页点「战斗」按钮（派遣到当前星系）
+  //    必须全员上：1 代规则下 1 人 1 炮的输出打不穿 3 舰编队，单人会先被清场，
+  //    永远不会出现「第 1 波」——测波数增长就成了测不到的东西。
   const btn=await (async()=>{ await until(()=>D().querySelector('[data-act$=":combat"]'),8000);
     return D().querySelector('[data-act$=":combat"]'); })();
   ok("成员页有「战斗」派遣按钮", !!btn, btn?txt(btn):"missing");
   if(!btn){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
   const before=qa('[data-act$=":combat"]').length;
-  btn.click();
-  await wait(400);
+  for(let i=0;i<24;i++){
+    const b=D().querySelector('[data-act$=":combat"]');
+    if(!b) break;
+    b.click();
+    await wait(220);
+  }
   const after=qa('[data-act$=":combat"]').length;
-  ok("点击战斗后该成员已派遣（可派遣数 -1）", after===before-1, before+" → "+after);
+  ok("点击战斗后成员已全员派遣（可派遣数归零）", after===0 && before>0, before+" → "+after);
 
   // 3) 切到星系页
   const sysTab=D().querySelector('[data-act="tab:system"]');
@@ -47,6 +104,9 @@ const txt=(el)=>el?el.textContent.trim():"";
   const panelThere=await until(()=>D().querySelector(".battle-panel"),10000);
   ok("战斗观测面板出现（焦点战场）", panelThere);
   if(!panelThere){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  // 等第一次 settle 跑完（面板火力由 state.battles 提供，刚渲染时还是空的）
+  const gotPower=await until(()=>{ const h=txt(q(".battle-head")); const m=h.match(/我方火力\s*(\d+)\/s/); return m&&parseInt(m[1],10)>0; }, 30000);
+  ok("等待 settle 后我方火力上屏", gotPower, txt(q(".battle-head")).slice(0,80)+" dbg="+JSON.stringify(W().__dbg||null));
 
   // 4) 面板结构
   const enemies=qa(".battle-unit.enemy");
@@ -75,6 +135,23 @@ const txt=(el)=>el?el.textContent.trim():"";
   const w0=waveNo();
   const gained=await until(()=>waveNo()>w0, 90000);
   ok("波数随时间增长（真的一波波在打）", gained, "第 "+w0+" 波 → 第 "+waveNo()+" 波");
+
+  // 7) 焦点战场必须由「逐轮仿真」接管（否则血条只是公式算完的倒推动画）
+  const simTag=await until(()=>txt(q(".battle-head")).indexOf("逐轮仿真")>=0, 8000);
+  ok("焦点战场进入逐轮仿真（不是闭式倒推）", simTag, txt(q(".battle-head")).slice(0,80));
+
+  // 8) 切走页签 → 退回闭式，且本场波数不倒退（回切不白打）
+  const wBefore=txt(q(".battle-head")).match(/第\s*(\d+)\s*波/);
+  const memTab=D().querySelector('[data-act="tab:members"]');
+  if(memTab) memTab.click();
+  await wait(1600);
+  const sysTab2=D().querySelector('[data-act="tab:system"]');
+  if(sysTab2) sysTab2.click();
+  await wait(600);
+  const wAfter=txt(q(".battle-head")).match(/第\s*(\d+)\s*波/);
+  ok("切页签后本场波数不倒退（进度不丢）",
+    !!wBefore && !!wAfter && parseInt(wAfter[1],10)>=parseInt(wBefore[1],10),
+    (wBefore?wBefore[0]:"-")+" → "+(wAfter?wAfter[0]:"-"));
 
   // 供截图核验：把战斗面板滚到视口内
   const bp=q(".battle-panel"); if(bp && bp.scrollIntoView) bp.scrollIntoView({block:"center"});
