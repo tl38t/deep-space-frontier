@@ -17,16 +17,16 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  // 战斗小队默认结构（复用 EVE-IDLE legion-combat-squad.createDefaultSquad 约定）：
-  //   enabled / members[](成员 id) / capacity(容量，由 base.squadTier 升级解锁 1→2→3) / targetId(出击星系)。
-  //   成员仅存引用 id；权威战斗状态在 member 本体（status/assignment/destroyed）。
-  function createDefaultSquad() {
-    return { enabled: false, members: [], capacity: 1, targetId: null };
-  }
+  // ⚠️ 2026-11-01 删除 createDefaultSquad / state.squad / base.squadTier。
+  //    原因：squad 与 member.assignment 是两套重复的「谁在打」状态，容量门禁挂在 squad 上
+  //    却管不住 assign 直派的人（实测容量 1 能派出 6 人，6 倍收益）。
+  //    现在唯一权威 = member.assignment，编制上限由 Engine.Tech.squadCapacity 提供（科技解锁）。
 
   function defaultState(now, Data) {
     const rng = (window.NSK.Core.makeRng)((Math.random() * 4294967296) >>> 0);
     const map = Data.StarMap.generateStarMap(rng);   // 固定 207 节点全量星图
+    // 挂具名海盗据点（战斗节点）：每星域 2 个，见 data/raids.js
+    if (Data.Raids && Data.Raids.attach) Data.Raids.attach(map);
 
     // 起始 6 名成员（名册上限 20，见 §13/§14）
     const members = [];
@@ -58,13 +58,14 @@
         fuel: 100,
         fuelMax: 200,
         bodyLevel: 0,          // 0=空间站(Lv1 本体)，见 ships.BODY_LEVELS
-        squadTier: 0,          // 小队协议等级（0/1/2）：容量 = 1 + squadTier，升级解锁双人/三人小队
         industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [] },
         boosters: [],          // 增强剂（整舱生效）：[{type, level, expiresAt}]，见 engine/booster.js
       }),
       starMap: map,
       members: members,
-      squad: createDefaultSquad(),   // 玩家自行组建的剿匪小队（持久状态）
+      // 科技树研究（单线队列）：levels 已完成节点 / active 正在研究的 {id,startedAt,endsAt}
+      // prog：取消研究后保留的半截进度（0~1），研究完成即清除
+      tech: { levels: {}, prog: {}, active: null },
       combatWaveHp: {},         // 剿匪进度：nodeId → 已打进当前编队的伤害（见 combat.js advance）
       combatFocus: null,        // 当前被玩家注视的战场节点（焦点走逐轮真仿真，其余走闭式）
       battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,waveSec,progress,squadDps,...}
@@ -350,19 +351,14 @@
     // 1) 取消派遣（Dispatch.recall 对 destroyed 也安全：仅置 assignment=null/status=idle）
     const Dispatch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Dispatch) || null;
     if (Dispatch && m.assignment) Dispatch.recall(state, id);
-    // 2) 从战斗小队移除 id 引用（squad.members 仅存 id，权威状态在 member 本体）
-    if (state.squad && Array.isArray(state.squad.members)) {
-      const si = state.squad.members.indexOf(id);
-      if (si >= 0) state.squad.members.splice(si, 1);
-    }
-    // 3) 从名册移除
+    // 2) 从名册移除
     state.members.splice(idx, 1);
     if (state.counters) state.counters.fired = (state.counters.fired || 0) + 1;
     return { ok: true, member: m };
   }
 
   return {
-    defaultState, freshSkills, makeMember, recruitMember, fireMember, createDefaultSquad, EMPTY_MODS, BACKSTORY_DEFS, TRAIT_DEFS,
+    defaultState, freshSkills, makeMember, recruitMember, fireMember, EMPTY_MODS, BACKSTORY_DEFS, TRAIT_DEFS,
     SKILL_KEYS, SKILL_LEVEL_CAP, SKILL_LEVEL_SUM_CAP, clampSkills, skillLevel, xpAtLevel,
   };
 });

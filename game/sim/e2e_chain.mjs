@@ -8,9 +8,10 @@ const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
   "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/ships.js", "js/data/recipes.js",
+  "js/data/raids.js", "js/data/tech.js",
   "js/data/factions.js", "js/data/names.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js",
-  "js/engine/booster.js", "js/engine/mastery.js", "js/engine/production.js",
+  "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js", "js/engine/production.js",
   "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js", "js/engine/sites.js",
   "js/narrative/events.js", "js/engine/settle.js",
 ];

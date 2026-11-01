@@ -62,6 +62,27 @@
     const EqData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
       ? window.NSK.Data.Equipment : null;
     if (EqData && EqData.grantAllBlueprints) EqData.grantAllBlueprints(s);
+
+    // —— 2026-11-01：战斗小队改为「具名据点 + 科技编制」，旧档迁移 ——
+    // ① 星图补据点（幂等重算，覆盖旧值）：raid 挂在 node.raid 上，见 data/raids.js
+    const RaidsData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
+      ? window.NSK.Data.Raids : null;
+    if (RaidsData && s.starMap) RaidsData.attach(s.starMap);
+    // ② state.squad（持久名册 + enabled/targetId）已退役，直接丢弃
+    if (s.squad !== undefined) delete s.squad;
+    // ③ base.squadTier（花钱升级的小队协议 0/1/2）折算成科技等级：
+    //    老玩家花掉的 5000/25000 星币不能白扔，按「已研究」补齐对应科技节点。
+    const TechEngine = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+      ? window.NSK.Engine.Tech : null;
+    if (TechEngine) {
+      TechEngine.ensure(s);
+      const tier = (s.base && typeof s.base.squadTier === "number") ? s.base.squadTier : 0;
+      if (tier >= 1) s.tech.levels.combat_squad_1 = 1;
+      if (tier >= 2) s.tech.levels.combat_squad_2 = 1;
+      // 只有「迁移得来的」等级才回填；如果玩家自己研究完了也保持 1（都是 1 级封顶）
+    }
+    if (s.base && s.base.squadTier !== undefined) delete s.base.squadTier;
+
     if (!Array.isArray(s.members)) return s;
     // MVP 周六/周日新增字段兜底（旧档迁移）：精通点 / 待决事件 / 成员里程碑
     if (!s.mastery || typeof s.mastery !== "object") s.mastery = { points: 0, earned: 0, spent: 0, nodes: {} };
@@ -128,15 +149,8 @@
     if (s.starMap && s.starMap.nodes && window.NSK.Data && window.NSK.Data.StarMap && window.NSK.Data.StarMap.ensureBodies) {
       window.NSK.Data.StarMap.ensureBodies(s.starMap);
     }
-    // 持久战斗小队归一化（幂等；缺字段补默认值）
-    if (!s.squad || typeof s.squad !== "object") {
-      const State = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.State : null;
-      s.squad = State && State.createDefaultSquad ? State.createDefaultSquad() : { enabled: false, members: [], capacity: 1, targetId: null };
-    }
-    if (!Array.isArray(s.squad.members)) s.squad.members = [];
-    if (typeof s.squad.capacity !== "number") s.squad.capacity = 1;
-    if (s.squad.targetId === undefined) s.squad.targetId = null;
-    if (typeof s.base.squadTier !== "number") s.base.squadTier = 0;
+    // ⚠️ 2026-11-01：持久战斗小队（s.squad）与 base.squadTier 已退役，此处不再补默认值。
+    //    迁移在上方 normalizeMembers 开头做（squadTier → 科技等级，然后删字段）。
     // 势力任务板迁移（幂等）：老档补齐新增的 questGiver 势力（questGiver:false 的野怪势力不补）。
     // 放在 normalize 里，load / 云档合并都会过这里；some() 去重保证多次调用不重复派任务。
     try {

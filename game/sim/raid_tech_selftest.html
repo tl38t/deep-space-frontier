@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>raid &amp; tech selftest</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 具名据点（战斗节点）+ 科技编制 真机自测
+// 覆盖：星图 ⚔ 标记与名字 / 节点菜单入口 / 派遣弹窗选人 / 编制门禁 / 科技页研究 / 研究完成后容量提升
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+// 星图节点是 SVG 元素，没有 .click() —— 必须真派发鼠标事件
+// 注意：不能写 `new W().MouseEvent(...)`，那会被解析成 `new (W())`（见历史踩坑）
+const hit=(el)=>{
+  if(!el) return false;
+  if(typeof el.click==="function"){ el.click(); return true; }
+  const win=W();
+  el.dispatchEvent(new win.MouseEvent("click",{bubbles:true,cancelable:true,view:win}));
+  return true;
+};
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+(async function(){
+  await nav("../index.html#starmap");
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 1) 种一个富存档（后面要领科技需要星币），并记下据点清单
+  const hasCore=await until(()=>W().NSK && W().NSK.Core && W().NSK.Core.load && W().NSK.Core.save,15000);
+  let raidIds=[];
+  if(hasCore){
+    const st=W().NSK.Core.load();
+    st.res.credits=1000000;
+    W().NSK.Core.save(st);
+    if(st.starMap && W().NSK.Data.Raids){
+      W().NSK.Data.Raids.attach(st.starMap);
+      raidIds=W().NSK.Data.Raids.allRaids(st.starMap).map(r=>r.nodeId);
+    }
+  }
+  ok("读到据点清单", raidIds.length===18, "count="+raidIds.length);
+  if(!raidIds.length){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  await wait(700);
+  await nav("../index.html?r="+Date.now()+"#starmap");
+  const b1=await until(booted,25000);
+  ok("重载后启动（富存档）", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  await until(()=>qa('[data-act^="nodeinfo:"]').length>0, 10000);
+
+  // 2) 星图上据点标记：⚔ 角标 + 据点名
+  const badges=qa(".nraid-badge");
+  const names=qa(".nraid");
+  ok("星图出现 ⚔ 据点角标", badges.length>0, "count="+badges.length);
+  ok("星图出现据点名字", names.length>0 && /苍穹劫团|赤誓教团|静默集群/.test(txt(names[0])), "first="+txt(names[0]));
+  ok("据点名字数量 = 据点总数", names.length===raidIds.length, names.length+" / "+raidIds.length);
+
+  // 3) 点据点节点 → 菜单里应有名字与「派遣剿匪」
+  const raidFirst=raidIds.find(id=>q('[data-act="nodeinfo:'+id+'"]'));
+  ok("星图上可点击的据点节点存在", !!raidFirst, raidFirst||"none");
+  if(raidFirst){
+    hit(q('[data-act="nodeinfo:'+raidFirst+'"]'));
+    await wait(400);
+    const pop=txt(q("#nsk-nodepop"));
+    ok("节点菜单显示据点名（⚔ 开头）", /⚔/.test(pop), pop.slice(0,60));
+    const raidBtn=q('[data-act="raidOpen:'+raidFirst+'"]');
+    ok("节点菜单有「派遣剿匪」按钮", !!raidBtn, txt(raidBtn));
+    if(raidBtn){
+      raidBtn.click();
+      const dlgOk=await until(()=>D().querySelector("#raid_dlg_body"),6000);
+      ok("派遣弹窗打开", dlgOk);
+      const picks=qa(".raid-pick");
+      ok("弹窗列出成员供勾选", picks.length>0, "count="+picks.length);
+      const on0=qa(".raid-pick.on").length;
+      ok("默认已选 = 该据点现有参战者（开局 0 人）", on0===0, "on="+on0);
+
+      // 4) 编制门禁：容量 1 时点第 2 个人应被拒
+      if(picks.length>=2){
+        picks[0].click(); await wait(200);
+        const on1=qa(".raid-pick.on").length;
+        ok("点第 1 人后已选 1", on1===1, "on="+on1);
+        qa(".raid-pick")[1].click(); await wait(250);
+        const on2=qa(".raid-pick.on").length;
+        ok("编制上限 1 → 第 2 人被拒（已选仍为 1）", on2===1, "on="+on2);
+      } else ok("编制上限 1 → 第 2 人被拒（已选仍为 1）", false, "picks="+picks.length);
+
+      // 5) 确认派遣
+      const commit=q('[data-act="raidCommit:'+raidFirst+'"]');
+      ok("弹窗有「确认派遣」", !!commit, txt(commit));
+      if(commit){
+        commit.click();
+        await wait(700);
+        const st2=W().NSK.Core.load();
+        const fighters=st2.members.filter(m=>m.assignment && m.assignment.type==="combat" && m.assignment.nodeId===raidFirst).length;
+        ok("确认后该据点有 1 人参战", fighters===1, "fighters="+fighters);
+        const dlgGone=!D().querySelector("#raid_dlg_body");
+        ok("确认后弹窗关闭", dlgGone);
+      }
+    }
+  }
+
+  // 6) 科技页：科技树方块渲染 → 点方块开详情 → 开始研究
+  // ⚠️ 2026-11-01 起科技页是 1 代那种「方块 + 连线 + 详情弹窗」，不再是卡片列表：
+  //    按钮在详情弹窗里，所以要先把方块点开。
+  const techTab=D().querySelector('[data-act="tab:tech"]');
+  ok("存在「科技」页签", !!techTab, txt(techTab));
+  if(techTab) techTab.click();
+  await wait(600);
+  const rtNodes=qa("#nsk-rt .rt-node");
+  ok("科技树渲染 2 个方块", rtNodes.length===2, "count="+rtNodes.length);
+  const heads=qa("#nsk-rt .rt-era-head");
+  ok("出现 3 个分类列头", heads.length===3, "count="+heads.length);
+  ok("列头写着「战斗」", /战斗/.test(txt(heads[0])), txt(heads[0]));
+  const capTag=txt(q(".panel .tag.good"));
+  ok("科技页显示当前编制上限 1 人", /1\s*人/.test(capTag), capTag);
+
+  const firstNode=q("#nsk-rt .rt-node");
+  if(firstNode) hit(firstNode);
+  await wait(400);
+  ok("点方块弹出详情弹窗", !!q("#nsk-tech-detail .rt-modal-box"), txt(q("#nsk-tech-detail .rt-d-name")));
+  const startBtn=q('#nsk-tech-detail [data-act^="techStart:"]');
+  ok("详情里有可用的「开始研究」按钮", !!startBtn && !startBtn.disabled, txt(startBtn));
+  if(startBtn){
+    startBtn.click();
+    await wait(800);
+    const st3=W().NSK.Core.load();
+    ok("开始研究后 state.tech.active 非空", !!(st3.tech && st3.tech.active), JSON.stringify(st3.tech&&st3.tech.active));
+    ok("研究扣了星币", st3.res.credits < 1000000, "credits="+Math.round(st3.res.credits));
+    ok("开始后详情弹窗自动关闭", !q("#nsk-tech-detail .rt-modal-box"));
+    const progTxt=txt(q(".research-active"));
+    ok("顶部显示进行中研究与其剩余时间", /剩余/.test(progTxt), progTxt.slice(0,80));
+    const activeNode=q("#nsk-rt .rt-node--active");
+    ok("树上方块进入「研究中」状态", !!activeNode, txt(activeNode));
+  }
+
+  // 6b) 取消研究：星币不退、进度保留、重新开始只熬剩下的
+  //     为了拿到「看得见的进度」，把 startedAt 往前挪到 40% 位置再重载（走真实存档路径）
+  {
+    const stA=W().NSK.Core.load();
+    const nodeId=(stA && stA.tech && stA.tech.active) ? stA.tech.active.id : null;
+    const nodeMeta=nodeId ? W().NSK.Data.Tech.byId(nodeId) : null;
+    const secFull=(nodeMeta && nodeMeta.sec) || 0;
+    ok("取消研究前置：确实有进行中的研究", !!(nodeId && secFull>0), JSON.stringify(stA&&stA.tech));
+    if(nodeId && secFull>0){
+      const nowMs=Date.now();
+      stA.tech.active.startedAt=nowMs - secFull*1000*0.4;
+      stA.tech.active.endsAt=stA.tech.active.startedAt + secFull*1000;
+      stA.tech.active.base=0;
+      W().NSK.Core.save(stA);
+      await nav("../index.html?r="+Date.now()+"#tech");
+      const b3=await until(booted,25000);
+      ok("重载后研究仍在进行（已走 40%）", b3);
+      if(b3){
+        await wait(600);
+        const pTxt=txt(q(".research-active"));
+        const pct=parseFloat((pTxt.match(/总进度\s*([\d.]+)%/)||[])[1]||"0");
+        ok("顶部进度条显示约 40%", pct>30 && pct<50, "pct="+pct+" | "+pTxt.slice(0,60));
+        const an=q("#nsk-rt .rt-node--active");
+        if(an) hit(an);
+        await wait(400);
+        const cancelBtn=q('#nsk-tech-detail [data-act^="techCancel:"]');
+        ok("详情里有「取消研究」按钮", !!cancelBtn, txt(cancelBtn));
+        if(cancelBtn){
+          const credBefore=W().NSK.Core.load().res.credits;
+          cancelBtn.click();
+          await wait(700);
+          const okNull=await until(()=>{ const s=W().NSK.Core.load(); return !!(s && s.tech && !s.tech.active); },12000);
+          ok("取消后没有进行中的研究（已落盘）", okNull);
+          const stB=W().NSK.Core.load();
+          ok("取消**不退**星币", Math.round(stB.res.credits)===Math.round(credBefore),
+            "before="+Math.round(credBefore)+" after="+Math.round(stB.res.credits));
+          const keep=stB.tech.prog && stB.tech.prog[nodeId];
+          ok("保留了约 40% 的进度", isFinite(keep) && keep>0.3 && keep<0.5, "keep="+keep);
+          const subTxt=txt(q("#nsk-rt .rt-node--available"));
+          ok("方块状态行显示保留的百分比", /%/.test(subTxt), subTxt);
+          const an2=q("#nsk-rt .rt-node--available");
+          if(an2) hit(an2);
+          await wait(400);
+          const resumeBtn=q('#nsk-tech-detail [data-act^="techStart:"]');
+          ok("按钮变成「继续研究」", !!resumeBtn && /继续/.test(txt(resumeBtn)), txt(resumeBtn));
+          ok("详情提示已保留的进度", /已保留/.test(txt(q("#nsk-tech-detail"))), "");
+          if(resumeBtn){
+            resumeBtn.click();
+            await wait(700);
+            const stD=W().NSK.Core.load();
+            const a2=stD.tech && stD.tech.active;
+            ok("继续研究后 active 重建", !!a2, JSON.stringify(a2));
+            if(a2){
+              const span=(a2.endsAt-a2.startedAt)/1000;
+              ok("只需熬剩余时长（< 全时长 70%）", span < secFull*0.7,
+                "span="+Math.round(span)+"s / full="+secFull+"s");
+              ok("active.base 记下保留进度", a2.base>0.3 && a2.base<0.5, "base="+a2.base);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 7) 把研究倒到已到期 → 重载 → 启动时离线结算应把它完成（走真实离线路径，不注水内存）
+  let injected=false;
+  try{
+    const st4=W().NSK.Core.load();
+    if(st4.tech && st4.tech.active){
+      st4.tech.active.endsAt=Date.now()-1000;
+      st4.tech.active.startedAt=Date.now()-999999;
+      W().NSK.Core.save(st4);
+      injected=true;
+    }
+  }catch(e){ log("[WARN] 倒计时注入失败 "+e); }
+  ok("成功把研究写入「已到期」存档", injected);
+  await nav("../index.html?r="+Date.now()+"#tech");
+  const b2=await until(booted,25000);
+  ok("重载后启动（研究已到期）", b2);
+  if(b2){
+    await wait(900);
+    // 启动结算在内存里就完成了，但落盘靠 5s 自动存档 → 轮询等它写下去（端到端验持久化）
+    const persisted=await until(()=>{
+      const s=W().NSK.Core.load();
+      return !!(s.tech && s.tech.levels && s.tech.levels.combat_squad_1 === 1);
+    }, 15000);
+    const st5=W().NSK.Core.load();
+    ok("完成后科技等级 = 1（已落盘）", persisted, JSON.stringify(st5.tech));
+    const capTxt=txt(q(".panel .tag.good"));
+    ok("编制上限升到 2 人", /2\s*人/.test(capTxt), capTxt);
+  }
+
+  // 8) 回星图：现在弹窗应能选 2 人
+  const mapTab=D().querySelector('[data-act="tab:starmap"]');
+  if(mapTab) mapTab.click();
+  await wait(500);
+  const rf2=raidIds.find(id=>q('[data-act="nodeinfo:'+id+'"]'));
+  if(rf2){
+    hit(q('[data-act="nodeinfo:'+rf2+'"]'));
+    await wait(300);
+    const rb2=q('[data-act="raidOpen:'+rf2+'"]');
+    if(rb2){
+      rb2.click();
+      await wait(500);
+      const picks2=qa(".raid-pick");
+      if(picks2.length>=2){
+        // 先把已选的取消掉，保证从 0 开始测
+        for(const el of Array.from(qa(".raid-pick.on"))){ el.click(); await wait(120); }
+        qa(".raid-pick")[0].click(); await wait(150);
+        qa(".raid-pick")[1].click(); await wait(200);
+        const on2=qa(".raid-pick.on").length;
+        ok("编制上限 2 → 可以同时选 2 人", on2===2, "on="+on2);
+        const x=q("[data-raidclose]"); if(x) x.click();
+      } else ok("编制上限 2 → 可以同时选 2 人", false, "picks="+picks2.length);
+    } else ok("编制上限 2 → 可以同时选 2 人", false, "no raid button");
+  } else ok("编制上限 2 → 可以同时选 2 人", false, "no raid node");
+
+  // 9) 普通节点不应有「派遣剿匪」
+  const stPlain=W().NSK.Core.load();
+  const plain=stPlain.starMap.nodes.find(n=>!n.raid && n.discovered && n.trialOpen!==false);
+  if(plain && q('[data-act="nodeinfo:'+plain.id+'"]')){
+    hit(q('[data-act="nodeinfo:'+plain.id+'"]'));
+    await wait(350);
+    ok("普通节点菜单没有「派遣剿匪」", !q('[data-act^="raidOpen:"]'), plain.id);
+  } else ok("普通节点菜单没有「派遣剿匪」", true, "（普通节点不在当前视图，跳过）");
+
+  // 10) 无控制台报错
+  ok("页面无未捕获异常", !window.__err, window.__err||"");
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})().catch(e=>{ log("[CRASH] "+(e&&e.stack||e)); log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); });
+window.addEventListener("error", e=>{ window.__err=String(e.message||e); });
+</script>
+</body></html>

@@ -82,26 +82,14 @@
     return (D && D.Equipment) ? D.Equipment : null;
   }
 
-  // ---- 小队名册（UI 层功能，不是战斗公式）----
-  // ⚠️ 2026-11-01 清理：删除 squadPower / squadPowerAtNode / resolveSquad。
-  //    这三个是自创的「战斗力标量」——把技能等级加起来当战力去和「海盗战力」比大小，
-  //    1 代完全没有这套概念（战力 = 编队 hp/hit/dodge/baseDamage 本身）。
-  //    其结论也从未被结算使用：真实胜负由伤害打空血量决定。
-  //    保留的只有名册容量与加入资格判定（纯 UI/派遣用）。
-  function getSquadCapacity(state) {
-    return 1 + (state && state.base && typeof state.base.squadTier === "number" ? state.base.squadTier : 0);
-  }
-
-  function canJoinSquad(state, memberId) {
-    if (!state || !state.squad) return { ok: false, reason: "no-squad" };
-    const m = (state.members || []).find(x => x.id === memberId);
-    if (!m) return { ok: false, reason: "not-found" };
-    if (m.destroyed) return { ok: false, reason: "destroyed" };
-    if (state.squad.members.includes(memberId)) return { ok: false, reason: "already-in-squad" };
-    const cap = getSquadCapacity(state);
-    if (state.squad.members.length >= cap) return { ok: false, reason: "squad-full" };
-    if (m.status !== "idle") return { ok: false, reason: "busy" };
-    return { ok: true, member: m };
+  // ---- 据点编制（不是战斗公式）----
+  // ⚠️ 2026-11-01 清理：删除 squadPower / squadPowerAtNode / resolveSquad（自创「战斗力标量」），
+  //    并删除 getSquadCapacity / canJoinSquad（配合 state.squad 一起退役）。
+  //    编制上限现在是科技解锁的：Engine.Tech.squadCapacity(state) = 1 + 已研究「战斗编制」级数。
+  //    门禁真正生效的地方在 Engine.Dispatch.assign（唯一的派遣入口），不在这里。
+  function squadCapacity(state) {
+    const Tech = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
+    return Tech ? Tech.squadCapacity(state) : 1;
   }
 
   // 由「总剩余血量」反推三防分布（编队血条快照用）。
@@ -150,11 +138,21 @@
     return (c && c === layer) ? COUNTER_MULT : 1.0;
   }
 
+  // 武器 → 技能键。1 代 WEAPON_CONFIG.skillKey（js/data/combat.js:89-91）原样：
+  //   laser → laserOps / missile → missileOperations / cannon → cannonOps
+  // 本作三个战斗技能对应：laser → combatLaser，cannon → combatTurret，missile → command。
+  // 每门炮只吃自己类型的技能，不做跨类型平均（1 代 selectors.js:2575/2603 即如此）。
+  const SKILL_OF_WEAPON = { laser: "combatLaser", missile: "command", cannon: "combatTurret" };
+
   // 扫某成员的装配，汇总「武器 / 维修 / 减伤」三类战斗贡献。
   // 返回 { weapons:[{type,dmg,hitChance,ammoCost}], dpsByType, ammoRate, repair, dmgRed }
   //   dpsByType 为「未计克制」的基础 DPS；克制按当前层在 dpsAt() 里实时乘。
-  function scanFit(m, evasion, split, skillFactor) {
-    const Eq = _Eq(), Arch = _Arch();
+  // 技能加成按 1 代原样**逐门武器取自己类型的技能**（selectors.js:2575 / 2603）：
+  //   命中 = baseHit + lv×4     伤害 = baseDamage × (1 + lv×0.02)
+  // ⚠️ 旧实现是「三技能 skillBonus 取算术平均」再统一乘到所有武器：既不按类型分，
+  //    练指挥也会让激光炮变强，与 1 代不符，已删（见架构设计「六次修订」之前的一节）。
+  function scanFit(m, evasion, split) {
+    const Eq = _Eq(), Arch = _Arch(), Settle = _Settle();
     const out = {
       weapons: [], dpsByType: { laser: 0, missile: 0, cannon: 0 },
       ammoRate: { laser: 0, missile: 0, cannon: 0 },
@@ -170,9 +168,11 @@
         if (!eq || !eq.combat) continue;
         const c = eq.combat;
         if (c.kind === "weapon") {
-          const ht = c.baseHit || 100;
-          const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式
-          const dmg = (c.baseDamage || 0) * skillFactor;            // 1 代原值（每轮伤害），不乘任何缩放系数
+          const skKey = SKILL_OF_WEAPON[c.weaponType];
+          const lv = (Settle && m.skills && skKey) ? Settle.levelOf(m.skills[skKey]) : 1;
+          const ht = (c.baseHit || 100) + lv * 4;                   // 1 代命中加值（selectors.js:2575）
+          const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式 hit^1.4/(hit^1.4+dodge^1.4)
+          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02);        // 1 代伤害乘区（selectors.js:2603）
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
           // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
           out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
@@ -189,11 +189,33 @@
     return out;
   }
 
+  // UI 用：成员装配的「主武器技能」（1 代玩家看的就是「我 laserOps 多少级」）。
+  // 按 high → mid → low → rig 找第一门武器，返回 { key, weaponType, level }；没武器返回 null。
+  function weaponSkillOf(m) {
+    const Eq = _Eq(), Settle = _Settle();
+    if (!m || !m.fitted) return null;
+    for (const slot of ["high", "mid", "low", "rig"]) {
+      for (const id of (m.fitted[slot] || [])) {
+        const eq = Eq ? Eq.byId(id) : null;
+        const c = eq && eq.combat;
+        if (!c || c.kind !== "weapon") continue;
+        const key = SKILL_OF_WEAPON[c.weaponType];
+        if (!key) continue;
+        return { key: key, weaponType: c.weaponType,
+                 level: (Settle && m.skills) ? Settle.levelOf(m.skills[key]) : 1 };
+      }
+    }
+    return null;
+  }
+
   // 预聚合某节点战斗参数（O(成员) 一次）。无参战成员返回 null。
   function prepareNode(state, nodeId) {
     const Data = _Data(), Settle = _Settle(), Pirates = _Pirates();
     if (!Data || !Settle) return null;
-    const raid = Data.StarMap.pirateRaid(state.starMap, nodeId);
+    // 战斗只发生在星图上的具名据点（node.raid，见 data/raids.js）。
+    // 普通采矿节点不再产战斗：否则「去哪个节点打」不构成决策，207 个节点等于难度自选菜单。
+    const Raids = (Data && Data.Raids) ? Data.Raids : null;
+    const raid = (Raids && state.starMap) ? Raids.raidAt(state.starMap, nodeId) : null;
     if (!raid) return null;
 
     const band = raid.band || 1;
@@ -213,11 +235,10 @@
       if (m.destroyed || !m.assignment || m.assignment.type !== "combat" || m.assignment.nodeId !== nodeId) continue;
       members.push(m);
       cnt++;
-      const sk = (Settle.skillBonus(m.skills, "combatLaser") + Settle.skillBonus(m.skills, "combatTurret") + Settle.skillBonus(m.skills, "command")) / 3;
       modCreditSum += (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1;
 
-      // 装配战斗贡献（武器伤害随该成员战斗技能小幅提升）
-      const f = scanFit(m, fleet.evasion, fleet.split, sk);
+      // 装配战斗贡献（每门武器按自己的类型取技能：命中 +lv×4、伤害 ×(1+lv×0.02)，见 scanFit）
+      const f = scanFit(m, fleet.evasion, fleet.split);
       for (const t of AMMO_TYPES) {
         dpsByType[t] += f.dpsByType[t] || 0;
         ammoRate[t] += f.ammoRate[t] || 0;
@@ -648,13 +669,14 @@
   }
 
   return {
-    getSquadCapacity, canJoinSquad,
+    squadCapacity,
     DROP_CREDIT_BASE, DROP_REP_BASE,
     // 1 代原式常量（不是标定值）
     COUNTER_MULT, HIT_EXP, DMG_VAR_MIN, DMG_VAR_SPAN,
     // 安全阀
     REPAIR_CAP, DMG_RED_CAP, ROUND_SEC, SIM_MAX_ROUNDS, SIM_MAX_SEC, SEG_GUARD,
     AMMO_TYPES, AMMO_OF, AMMO_CN, COUNTER_OF, LAYER_ORDER,
+    SKILL_OF_WEAPON, weaponSkillOf,
     hitCoeff, counterMult, layerAt, layerDps, fullWaveSec,
     prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp,
   };

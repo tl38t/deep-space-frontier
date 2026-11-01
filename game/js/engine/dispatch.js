@@ -22,6 +22,22 @@
 
   function findMember(state, id) { return state.members.find(m => m.id === id) || null; }
 
+  // 某据点当前参战人数（权威来源 = member.assignment，不是任何名册副本）
+  function fightingAt(state, nodeId) {
+    let n = 0;
+    for (const m of (state.members || [])) {
+      if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
+      if (m.assignment.nodeId === nodeId) n++;
+    }
+    return n;
+  }
+
+  // 编制上限（科技解锁 1→2→3，见 engine/tech.js）
+  function squadCapOf(state) {
+    const Tech = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
+    return Tech ? Tech.squadCapacity(state) : 1;
+  }
+
   function assign(state, memberId, type, opts) {
     const m = findMember(state, memberId);
     if (!m) return { ok: false, err: "成员不存在" };
@@ -30,6 +46,23 @@
     // develop 已退役（2026-10-27 设施化）：行星产出走 Engine.Sites 采集装置，成员不再驻留行星
     if (type === "mine" || type === "explore" || type === "combat" || type === "train" || type === "transport" || type === "logistics") {
       const nodeId = opts.nodeId || state.base.nodeId;
+
+      // 战斗 = 唯一有门禁的派遣类型（2026-11-01）：
+      //   ① 目标必须是星图上的具名据点（node.raid），普通采矿节点不能剿匪
+      //   ② 该据点参战人数不得超过编制上限（Engine.Tech.squadCapacity）
+      //   门禁放在这里而不是 UI：容量原本挂在 state.squad 上，被 assign 直派完全绕过
+      //   （实测容量 1 能派 6 人，收益 6 倍）。现在只有这一条路，绕不过去。
+      if (type === "combat") {
+        const Raids = (Data && Data.Raids) ? Data.Raids : null;
+        const raid = (Raids && state.starMap) ? Raids.raidAt(state.starMap, nodeId) : null;
+        if (!raid) return { ok: false, err: "该星系没有海盗据点，无法剿匪" };
+        const cap = squadCapOf(state);
+        const already = !!(m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === nodeId);
+        if (!already && fightingAt(state, nodeId) >= cap) {
+          return { ok: false, err: "据点编制已满（上限 " + cap + " 人，研究「战斗编制」可提升）" };
+        }
+      }
+
       m.assignment = {
         type: type,
         nodeId: nodeId,
@@ -61,63 +94,33 @@
     return { ok: true };
   }
 
-  // —— 战斗小队（复用 EVE-IDLE createDefaultSquad / 容量门禁 / 参战资格）——
-  // 玩家自行组建：在 base 把空闲成员加入 squad（容量受 base.squadTier 限制 1→2→3），
-  // 再派 squad 去某星系海盗据点剿匪（deploySquad 将全队置为 combat 派遣）。
+  // ⚠️ 2026-11-01 删除 squadUpgrade / squadAdd / squadRemove / squadDeploy / squadRecall。
+  //    那套「持久小队名册 + 部署」与 member.assignment 是两套重复状态：
+  //    容量门禁写在 squad 上，assign 直派完全绕过；recall 单人后 id 残留在名册里；
+  //    squad.targetId 与 assignment 脱节后 UI 判定「这里有小队」而实际无人。
+  //    现在唯一权威 = assignment；派多少人由据点派遣面板一次选定（见 ui/app.js raidPanel）。
 
-  // 升级小队协议（提升容量）。cost 由调用方（UI）按 tier 计算后扣费。
-  function squadUpgrade(state) {
-    if (!state.squad) state.squad = { enabled: false, members: [], capacity: 1, targetId: null };
-    if ((state.base.squadTier || 0) >= 2) return { ok: false, err: "已达最高小队协议" };
-    state.base.squadTier = (state.base.squadTier || 0) + 1;
-    state.squad.capacity = 1 + state.base.squadTier;
-    return { ok: true, tier: state.base.squadTier, capacity: state.squad.capacity };
-  }
-
-  // 加入小队（资格判定复用 Combat.canJoinSquad 稳定 reason）
-  function squadAdd(state, memberId) {
-    const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
-    if (!state.squad) state.squad = { enabled: false, members: [], capacity: 1, targetId: null };
-    const verdict = Combat ? Combat.canJoinSquad(state, memberId) : { ok: false, reason: "no-combat" };
-    if (!verdict.ok) return { ok: false, reason: verdict.reason };
-    state.squad.members.push(memberId);
-    return { ok: true, members: state.squad.members.slice() };
-  }
-
-  // 退出小队
-  function squadRemove(state, memberId) {
-    if (!state.squad) return { ok: false, err: "无小队" };
-    const i = state.squad.members.indexOf(memberId);
-    if (i < 0) return { ok: false, err: "不在小队" };
-    state.squad.members.splice(i, 1);
-    return { ok: true, members: state.squad.members.slice() };
-  }
-
-  // 派遣小队去某星系海盗据点剿匪（全队置为 combat 派遣到 nodeId）
-  function squadDeploy(state, nodeId) {
-    if (!state.squad || !state.squad.members.length) return { ok: false, err: "小队为空" };
-    let n = 0;
-    for (const id of state.squad.members) {
+  // 批量派遣到同一据点（派遣面板一次提交）：逐个走上方的 assign，任一人失败不影响其他人，
+  // 但整体若一个人都没派出去则返回失败。
+  function assignGroup(state, memberIds, nodeId) {
+    const ok = [], fail = [];
+    for (const id of (memberIds || [])) {
       const r = assign(state, id, "combat", { nodeId: nodeId });
-      if (r.ok) n++;
+      if (r.ok) ok.push(id); else fail.push({ id: id, err: r.err });
     }
-    if (n === 0) return { ok: false, err: "无可用成员（可能均在作战/阵亡）" };
-    state.squad.enabled = true;
-    state.squad.targetId = nodeId;
-    return { ok: true, deployed: n, nodeId: nodeId };
+    if (!ok.length) return { ok: false, err: (fail[0] && fail[0].err) || "无可派遣成员", fail: fail };
+    return { ok: true, assigned: ok.length, fail: fail };
   }
 
-  // 召回小队（全队回基地待命）
-  function squadRecall(state) {
-    if (!state.squad) return { ok: false, err: "无小队" };
+  // 召回该据点全部参战成员
+  function recallGroup(state, nodeId) {
     let n = 0;
-    for (const id of state.squad.members) {
-      const r = recall(state, id);
-      if (r.ok) n++;
+    for (const m of (state.members || [])) {
+      if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
+      if (m.assignment.nodeId !== nodeId) continue;
+      if (recall(state, m.id).ok) n++;
     }
-    state.squad.enabled = false;
-    state.squad.targetId = null;
-    return { ok: true, recalled: n };
+    return { ok: n > 0, recalled: n };
   }
 
   // 节点主矿（abundance 最高）— 采矿默认目标（无 bodyId 时回退）
@@ -137,5 +140,8 @@
     return n.bodies.find(b => b.id === bodyId) || null;
   }
 
-  return { assign, recall, findMember, primaryOre, bodyById, squadUpgrade, squadAdd, squadRemove, squadDeploy, squadRecall };
+  return {
+    assign, recall, findMember, primaryOre, bodyById,
+    fightingAt, squadCapOf, assignGroup, recallGroup,
+  };
 });

@@ -16,6 +16,7 @@
     { id: "warehouse", name: "仓库" },
     { id: "members", name: "成员" },
     { id: "factions", name: "势力" },
+    { id: "tech", name: "科技" },
     { id: "story", name: "剧情" },
     { id: "report", name: "日报" },
     { id: "settings", name: "设置" },
@@ -242,12 +243,24 @@
       // 已探明且未锁定节点可点弹查看；锁定节点不可点
       const actAttr = (n.discovered && !locked) ? ' data-act="nodeinfo:' + n.id + '"' : "";
       html += '<g class="' + cls + '"' + actAttr + ' transform="translate(' + n.x + "," + n.y + ')">';
+      // 据点光环：远景下 ⚔ 字形只有 2~3px、读不出来，但**环**跟着节点半径缩放，
+      // 缩到全景也能一眼扫出「哪几个星系能打」。（只画一圈描边，不挡节点的填充与点击。）
+      if (n.discovered && n.raid) html += '<circle class="raid-ring" r="' + (r + 5) + '" />';
       html += '<circle r="' + r + '" fill="' + fill + '" />';
       if (isCur) html += '<circle class="pulse" r="' + r + '" />';
       // 未探明只留雾点（不写文字，避免「?」铺屏）；已探明才标注名称
       if (n.discovered) {
-        html += '<text class="nlabel" y="' + (r + 22) + '">' + esc(n.name) + "</text>";
-        if (locked) html += '<text class="nlock" y="' + (r + 40) + '">后续版本开放</text>';
+        // 行距必须按字号算：.nlabel 18px（当前节点 20px），.nraid 12px，
+        // 加上 4px 描边，两行基线至少隔 26px 才不会糊成一坨（曾用 +12 直接叠字）。
+        const labelY = r + 22;
+        const raidY = labelY + (isCur ? 28 : 26);
+        html += '<text class="nlabel" y="' + labelY + '">' + esc(n.name) + "</text>";
+        // 海盗据点（战斗节点）：⚔ 角标 + 据点名（与节点名分两行，一眼看出这里能打谁）
+        if (n.raid) {
+          html += '<text class="nraid-badge" y="' + (-r - 8) + '">⚔</text>';
+          html += '<text class="nraid" y="' + raidY + '">' + esc(n.raid.name) + "</text>";
+        }
+        if (locked) html += '<text class="nlock" y="' + ((n.raid ? raidY : labelY) + 18) + '">后续版本开放</text>';
       } else if (locked) {
         html += '<text class="nlabel nlock" y="' + (r + 22) + '">🔒 锁定</text>';
       }
@@ -494,8 +507,8 @@
         "<div class='row'>" + actHtml + "</div></div>";
     }
     html += "</div>";
-    // 海盗据点 · 剿匪（玩家自行组建小队，复用 EVE-IDLE createDefaultSquad / 容量门禁）
-    html += viewPirateRaid(node);
+    // 海盗据点（若本星系有据点）：战斗节点面板 + 派遣入口
+    html += viewRaid(node);
     return html;
   }
   function colOf2(k) { return kindColor(k); }
@@ -607,59 +620,46 @@
     return html;
   }
 
-  // 星系海盗据点 + 剿匪小队管理面板
-  function viewPirateRaid(node) {
-    const raid = Data.StarMap.pirateRaid(state.starMap, node.id);
+  // 星系海盗据点面板（战斗节点）
+  // 2026-11-01 重写：原「持久小队名册 + 部署」已退役（state.squad 删除）。
+  // 现在参战者唯一真相 = member.assignment；派谁去打由派遣面板一次选定（openRaidDispatch）。
+  function viewRaid(node) {
+    const raid = Data.Raids ? Data.Raids.raidAt(state.starMap, node.id) : null;
     if (!raid) return "";
     const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(raid.faction) : null;
-    const cap = Engine.Combat.getSquadCapacity(state);
-    const deployedHere = state.squad && state.squad.enabled && state.squad.targetId === node.id;
-    // 本节点实际参战成员（读 assignment，与战斗观测面板同源，避免「名册有货但正在打的是别人」的自相矛盾）
+    const cap = Engine.Combat.squadCapacity(state);
     const fighting = state.members.filter(function (m) {
       return !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id;
     });
-    let html = "<h3>海盗据点 · 剿匪</h3><div class='panel squad-panel'>";
+    let html = "<h3>⚔ " + esc(raid.name) + (raid.elite ? ' <span class="tag bad">精锐</span>' : "") + "</h3>";
+    html += "<div class='panel squad-panel'>";
     html += '<div class="row"><b>' + (pf ? esc(pf.name) : raid.faction) + " 劫掠者</b>" +
       '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
       fleetLevelTag(raid.band, raid.faction) + "</div>";
     html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
-      "　在战 " + fighting.length + " 艘 / 名册 " + (state.squad.members || []).length + " / 容量 " + cap + "</div>";
+      "　参战 " + fighting.length + " / 编制 " + cap + "</div>";
     // 战斗观测面板（一波 = 一支敌方编队）：左我方参战舰船三防血条，右敌方编队卡片，底部本场累计
     html += battlePanelBlock(node);
-    // 小队名册
-    const inSquad = (state.squad.members || []).map(id => state.members.find(m => m.id === id)).filter(Boolean);
+    // 参战名单（就地召回某人，不影响其他人）
     html += '<div class="squad-roster">';
-    if (inSquad.length) {
-      for (const m of inSquad) {
-        const cl = Engine.Settle.levelOf(m.skills.combatLaser) + Engine.Settle.levelOf(m.skills.combatTurret) + Engine.Settle.levelOf(m.skills.command);
-        html += '<div class="row"><span>' + esc(m.name) + ' <span class="dim">战力 ' + cl + "</span></span>" +
-          '<button class="sm ghost" data-act="squadRemove:' + m.id + '">退出</button></div>';
+    if (fighting.length) {
+      for (const m of fighting) {
+        const ws = Engine.Combat.weaponSkillOf(m);
+        const cl = ws ? (SKILL_CN[ws.key] || ws.key) + " L" + ws.level : "无武器";
+        html += '<div class="row"><span>' + esc(m.name) + ' <span class="dim">' + cl + "</span></span>" +
+          '<button class="sm ghost" data-act="raidOut:' + m.id + '">召回</button></div>';
       }
-    } else html += '<div class="dim">小队为空，从下方空闲成员中加入。</div>';
+    } else html += '<div class="dim">此处没有我方舰船。</div>';
     html += "</div>";
-    // 候选空闲成员
-    const idle = state.members.filter(m => m.status === "idle" && !m.destroyed && !(state.squad.members || []).includes(m.id));
-    if (idle.length) {
-      html += '<div class="dim">空闲成员（容量 ' + inSquad.length + "/" + cap + "）：</div><div class='squad-roster'>";
-      for (const m of idle) {
-        const cl = Engine.Settle.levelOf(m.skills.combatLaser) + Engine.Settle.levelOf(m.skills.combatTurret) + Engine.Settle.levelOf(m.skills.command);
-        const full = inSquad.length >= cap;
-        html += '<div class="row"><span>' + esc(m.name) + ' <span class="dim">战力 ' + cl + "</span></span>" +
-          '<button class="sm" data-act="squadAdd:' + m.id + '"' + (full ? " disabled" : "") + ">加入</button></div>";
-      }
-      html += "</div>";
-    }
-    // 出击 / 召回 / 升级
+    // 派遣 / 全部召回 / 科技提示
     html += '<div class="row" style="margin-top:6px">';
-    if (deployedHere) html += '<button class="sm" data-act="squadRecall">召回小队</button>';
-    else html += '<button class="sm" data-act="squadDeploy:' + node.id + '"' + (inSquad.length ? "" : " disabled") + ">派遣小队剿匪</button>";
-    const tier = state.base.squadTier || 0;
-    if (tier < 2) {
-      const cost = tier === 0 ? 5000 : 25000;
-      const can = (state.res.credits || 0) >= cost;
-      html += '<button class="sm ghost" data-act="squadUpgrade"' + (can ? "" : " disabled") + ">升级小队协议 Lv" + (tier + 1) + " · " + cost + "⛁</button>";
-    } else html += '<span class="tag good">小队协议已满</span>';
-    html += "</div></div>";
+    html += '<button class="sm primary" data-act="raidOpen:' + node.id + '">派遣 / 调整编制</button>';
+    if (fighting.length) html += '<button class="sm ghost" data-act="raidRecall:' + node.id + '">全部召回</button>';
+    html += "</div>";
+    if (cap < 3) {
+      html += '<div class="dim" style="margin-top:6px">编制上限 ' + cap + " 人 —— 在「科技」页研究「战斗编制」可提升到 3 人。</div>";
+    }
+    html += "</div>";
     return html;
   }
 
@@ -840,7 +840,7 @@
     if (installed && slot.type === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
     if (installed && slot.type === "cargo") label = "真实库存 · 可用";
     if (installed && slot.type === "dock") label = "停泊 " + state.ships.length + " 艘";
-    if (installed && slot.type === "command") label = "小队容量 " + (1 + (state.base.squadTier || 0));
+    if (installed && slot.type === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
     if (installed && slot.type === "habitat") label = "成员 " + state.members.length + "/20";
     if (!installed && slot.type === "invent" && plan.invent <= 0) label = "核心 Lv.2 解锁";
     const special = slot.special ? " special" : "";
@@ -928,14 +928,12 @@
     html += shipyardBlock();
     html += equipCraftBlock();
     html += repairDockBlock();
-    // 小队协议升级（容量 1→2→3，复用 EVE-IDLE 研究门禁思路）
-    const tier = state.base.squadTier || 0;
-    if (tier < 2) {
-      const cost = tier === 0 ? 5000 : 25000;
-      const can = (state.res.credits || 0) >= cost;
-      html += '<div class="panel"><div class="row"><span>升级小队协议（容量 ' + (1 + tier) + "→" + (2 + tier) + "）</span>" +
-        '<button class="sm" data-act="squadUpgrade"' + (can ? "" : " disabled") + ">升级 · " + cost + "⛁</button></div></div>";
-    } else html += '<div class="panel"><span class="tag good">小队协议已满级（容量 3）</span></div>';
+    // 剿匪编制上限（科技解锁 1→2→3，见「科技」页）——原先的「花钱升级小队协议」已退役
+    const capNow = Engine.Combat.squadCapacity(state);
+    html += '<div class="panel"><div class="row"><span>剿匪编制上限 <b>' + capNow + " 人 / 据点</b></span>" +
+      '<button class="sm ghost" data-act="tab:tech">前往科技</button></div>' +
+      '<div class="dim">编制由「战斗编制」科技解锁（1 → 2 → 3）。' +
+      (capNow < 3 ? "当前还能再提升 " + (3 - capNow) + " 人。" : "已达上限。") + '</div></div>';
     // 能源电网（§1.5）：供能预算 / 负载 / 状态
     const pw = Engine.Base.powerReport(state);
     const pwPct = pw.produced ? Math.round(pw.consumed / pw.produced * 100) : 0;
@@ -1188,6 +1186,98 @@
     return html;
   }
 
+  // ---------- 据点派遣弹窗（点星图/星系里的 ⚔ 据点 → 选人 → 派）----------
+  // 取代旧的「持久小队名册 + 部署」：一次选定本次要去打的人和人数，直接写 assignment。
+  let raidDlgEl = null;
+  let raidSel = null;   // { nodeId, ids: [] }
+
+  function raidFighting(nodeId) {
+    return state.members.filter(m => !m.destroyed && m.assignment &&
+      m.assignment.type === "combat" && m.assignment.nodeId === nodeId);
+  }
+
+  function raidDispatchBody() {
+    const nodeId = raidSel.nodeId;
+    const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
+    if (!raid) return "<div class='dim'>该星系没有海盗据点。</div>";
+    const cap = Engine.Combat.squadCapacity(state);
+    const sel = raidSel.ids;
+    const here = raidFighting(nodeId).map(m => m.id);
+
+    let html = '<div class="row"><b>⚔ ' + esc(raid.name) + "</b>" +
+      (raid.elite ? '<span class="tag bad">精锐</span>' : "") +
+      '<span class="tag">安全 ' + raid.secLevel + " · " + raid.secName + "</span>" +
+      fleetLevelTag(raid.band, raid.faction) + "</div>";
+    html += '<div class="row dim">赏金 ×' + raid.iskMult + "　声望 ×" + raid.repMult +
+      "　编制上限 " + cap + " 人</div>";
+    html += '<div class="row"><b>已选 ' + sel.length + " / " + cap + '</b>' +
+      '<span class="dim">点成员名字切换。确认后本据点人员按此名单重设。</span></div>';
+    html += '<div class="squad-roster">';
+    for (const m of state.members) {
+      if (m.destroyed) continue;
+      const ws = Engine.Combat.weaponSkillOf(m);
+      // 没装武器时不要重复说两遍「无武器」：技能位留空，只留一个红色警示标签
+      const cl = ws ? (SKILL_CN[ws.key] || ws.key) + " L" + ws.level : "";
+      const picked = sel.indexOf(m.id) >= 0;
+      // 当前状态标签：本据点 / 别处任务 / 待命
+      let stTag = "";
+      if (here.indexOf(m.id) >= 0) stTag = '<span class="tag good">本据点</span>';
+      else if (m.assignment) stTag = '<span class="tag warn">' + jobName(m.assignment.type) + "·" +
+        esc((Data.StarMap.nodeById(state.starMap, m.assignment.nodeId) || {}).name || "") + "</span>";
+      const noWeapon = ws ? "" : ' <span class="tag bad">无武器</span>';
+      html += '<div class="row raid-pick' + (picked ? " on" : "") + '" data-act="raidPick:' + m.id + '">' +
+        '<span>' + (picked ? "◉ " : "○ ") + esc(m.name) + ' <span class="dim">' + cl + "</span>" + noWeapon + "</span>" +
+        "<span>" + stTag + "</span></div>";
+    }
+    html += "</div>";
+    html += '<div class="row" style="margin-top:8px">' +
+      '<button class="sm primary" data-act="raidCommit:' + nodeId + '"' + (sel.length ? "" : " disabled") + ">确认派遣</button>" +
+      '<button class="sm ghost" data-raidclose="1">取消</button></div>';
+    html += '<div class="dim" style="margin-top:6px">派往别处的人会先撤离原岗位。没有装武器的成员参战不产生任何伤害（1 代规则）。</div>';
+    return html;
+  }
+
+  function refreshRaidDlg() {
+    const body = document.getElementById("raid_dlg_body");
+    if (body) body.innerHTML = raidDispatchBody();
+  }
+
+  function openRaidDispatch(nodeId, preId) {
+    closeRaidDispatch();
+    const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
+    if (!raid) { toast("该星系没有海盗据点"); return; }
+    // 默认选中本据点现有参战者；若从成员卡点进来，把那个人也预选上
+    const ids = raidFighting(nodeId).map(m => m.id);
+    if (preId && ids.indexOf(preId) < 0) {
+      const cap = Engine.Combat.squadCapacity(state);
+      if (ids.length < cap) ids.push(preId);
+    }
+    raidSel = { nodeId: nodeId, ids: ids };
+    const el = document.createElement("div");
+    el.className = "wh-detail-mask recruit-hub-mask";
+    el.tabIndex = -1;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "据点派遣");
+    el.innerHTML = '<div class="wh-detail recruit-hub">'
+      + '<div class="npc-terminal-bar"><span><i></i> 据点派遣 <b>/ RAID DISPATCH</b></span><span>编制上限 '
+      + Engine.Combat.squadCapacity(state) + ' 人</span></div>'
+      + '<button class="whd-x" data-raidclose="1" aria-label="关闭">✕</button>'
+      + '<div id="raid_dlg_body">' + raidDispatchBody() + '</div>'
+      + "</div>";
+    document.body.appendChild(el);
+    el.addEventListener("click", function (ev) {
+      if (ev.target.closest("[data-raidclose]")) { closeRaidDispatch(); return; }
+      if (!ev.target.closest(".wh-detail")) closeRaidDispatch();
+    });
+    raidDlgEl = el;
+  }
+
+  function closeRaidDispatch() {
+    if (raidDlgEl) { raidDlgEl.remove(); raidDlgEl = null; }
+    raidSel = null;
+  }
+
   function hpBar(kind, cur, max, label) {
     const pct = Math.max(0, Math.min(100, max ? cur / max * 100 : 0));
     return '<div class="hp-row"><span class="hp-lab">' + label + '</span>'
@@ -1197,16 +1287,272 @@
 
   function jobName(t) { return { mine: "采矿中", explore: "探索中", combat: "作战中", train: "演训中", logistics: "物流调度" }[t] || t; }
 
-  // 升级小队协议：容量 1→2→3（tier 0→1 花 5000，1→2 花 25000）。扣费后调用 Dispatch.squadUpgrade。
-  function squadUpgradeCost(tier) { return tier >= 2 ? null : (tier === 0 ? 5000 : 25000); }
-  function doSquadUpgrade() {
-    const tier = state.base.squadTier || 0;
-    const cost = squadUpgradeCost(tier);
-    if (cost == null) return;
-    if ((state.res.credits || 0) >= cost) {
-      state.res.credits -= cost;
-      Engine.Dispatch.squadUpgrade(state);
+  // ---------- 科技树（引擎 Engine.Tech，数据 Data.Tech）----------
+  // 布局 / 连线 / 状态判定整套照搬 1 代研究树（EVE-IDLE js/ui/shell-render.js:3324 RT_LAYOUT、
+  // 3339 buildResearchTreeModel、3615 renderResearchNodeHtml、3635 renderResearchTree）。
+  // 只有两处不同：① 列 = 分类（1 代 = 时代 era）；② 没有科研工时货币与队列 ——
+  // 顶部只保留「进行中」一条，状态集合去掉 queued（本作单线：一个项目研究完才能开下一个）。
+  // ⚠️ 别把「方块里的三行」改成卡片：1 代的方块就是 name / 状态行 / 效果行 + 等级 pip 四层。
+  const RT = { COL_X0: 20, COL_W: 252, BOX_W: 198, BOX_H: 80, TOP: 92, ROW_H: 112, PAD_B: 30 };
+  const RT_EDGE_COLOR = { met: "#4fc4d3", unmet: "#2b4350" };
+  let techDetailId = null;   // 详情弹窗当前打开的科技 id（null = 关闭）
+
+  function fmtSpan(sec) {
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return s + " 秒";
+    const m = Math.floor(s / 60), h = Math.floor(m / 60);
+    if (m < 60) return m + " 分" + (s % 60 ? " " + (s % 60) + " 秒" : "");
+    return h + " 时" + (m % 60 ? " " + (m % 60) + " 分" : "");
+  }
+  function fmtClock(ts) {
+    const d = new Date(ts), p = n => (n < 10 ? "0" + n : "" + n);
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  // 只读模型：把 state 算成 { cols, nodes(带 x/y), edges, width, height }，不写 state
+  function techTreeModel() {
+    const T = Data.Tech;
+    const cols = (T && T.COLS) ? T.COLS : [{ cat: "combat", label: "战斗", code: "COMBAT", color: "#4a2430" }];
+    const views = Engine.Tech.list(state, Date.now());
+    const rowCursor = {};
+    const nodes = [];
+    const byId = {};
+    for (const v of views) {
+      const ci = T && T.colOf ? T.colOf(v.node) : 0;
+      const row = rowCursor[ci] || 0;
+      rowCursor[ci] = row + 1;
+      v.col = ci;
+      v.row = row;
+      v.x = RT.COL_X0 + ci * RT.COL_W + (RT.COL_W - RT.BOX_W) / 2;
+      v.y = RT.TOP + row * RT.ROW_H;
+      nodes.push(v);
+      byId[v.id] = v;
     }
+
+    // 连线：跨列用 1 代的贝塞尔（从方块右中到方块左中）；
+    // 同列用竖直短线 —— 我们的列内是竖排链，套 1 代的横向贝塞尔会绕到画布外面去，
+    // 看起来像「线从图外飞进来」。1 代没有这个问题是因为它跨列才是常规前置。
+    const edges = [];
+    for (const v of nodes) {
+      for (const req of (v.node.requires || [])) {
+        const from = byId[req.id];
+        if (!from) continue;
+        const need = req.level || 1;
+        const edgeState = from.level >= need ? "met" : "unmet";
+        if (from.col === v.col) {
+          const cx = v.x + RT.BOX_W / 2;
+          edges.push({
+            from: req.id, to: v.id, requiredLevel: need, state: edgeState,
+            path: "M " + cx + " " + (from.y + RT.BOX_H) + " L " + cx + " " + (v.y - 3),
+          });
+          continue;
+        }
+        const sx = from.x + RT.BOX_W + 2;
+        const sy = from.y + RT.BOX_H / 2;
+        const tx = v.x - 10;
+        const ty = v.y + RT.BOX_H / 2;
+        const dx = tx - sx;
+        const c1x = dx > 24 ? sx + dx * 0.45 : sx + 56;
+        const c2x = dx > 24 ? tx - dx * 0.45 : tx - 56;
+        edges.push({
+          from: req.id, to: v.id, requiredLevel: need, state: edgeState,
+          path: "M " + sx + " " + sy + " C " + c1x + " " + sy + ", " + c2x + " " + ty + ", " + tx + " " + ty,
+        });
+      }
+    }
+
+    let maxRows = 1;
+    for (const ci in rowCursor) if (rowCursor[ci] > maxRows) maxRows = rowCursor[ci];
+    return {
+      cols: cols,
+      nodes: nodes,
+      edges: edges,
+      width: RT.COL_X0 * 2 + cols.length * RT.COL_W,
+      height: RT.TOP + maxRows * RT.ROW_H + RT.PAD_B,
+    };
+  }
+
+  // 单个方块（照 1 代 renderResearchNodeHtml：徽章 / 状态旗 / 名称 / 状态行 / 效果行 / 等级 pip）
+  function rtNodeHtml(v) {
+    let cls = "rt-node rt-node--" + v.status;
+    if (v.isSingle) cls += " rt-node--single";
+    const badge = v.isSingle ? '<span class="rt-badge rt-badge--single">单级</span>' : "";
+    const flag = v.status === "active" ? '<span class="rt-flag rt-flag--active">研究中</span>' : "";
+    const levelText = v.isSingle
+      ? "单级 · " + v.level + "/" + v.maxLevel
+      : "Lv." + v.level + "/" + v.maxLevel;
+    // 取消研究留下的半截进度：挂在状态行后面（如「可研究 42%」），
+    // 方块只有 198px 宽，所以不另起一行；研究中/已完成不显示（前者旗子已经说明，后者进度无意义）
+    const keepPct = Math.round((v.savedProgress || 0) * 100);
+    const statusText = v.statusLabel + ((keepPct > 0 && v.status !== "completed" && v.status !== "active") ? " " + keepPct + "%" : "");
+    const pips = v.levelMarks.length
+      ? '<div class="rt-node-pips">' + v.levelMarks.map(m => '<span class="rt-pip rt-pip--' + m + '"></span>').join("") + "</div>"
+      : "";
+    return '<div class="' + cls + '"' +
+      ' style="left:' + v.x + "px;top:" + v.y + "px;width:" + RT.BOX_W + "px;height:" + RT.BOX_H + 'px;"' +
+      ' data-act="techOpen:' + esc(v.id) + '"' +
+      ' role="button" tabindex="0"' +
+      ' title="' + esc(v.node.name + " · " + statusText) + '">' +
+      badge + flag +
+      '<div class="rt-node-name">' + esc(v.node.name) + "</div>" +
+      '<div class="rt-node-sub">' + esc(levelText + " ｜ " + statusText) + "</div>" +
+      '<div class="rt-node-eff">' + esc(v.shortEffect) + "</div>" +
+      pips +
+      "</div>";
+  }
+
+  // 详情弹窗（照 1 代：描述 → 全等级效果（已获得绿 / 下一级蓝）→ 下一等级 → 前置✔✖ → 按钮）
+  function techDetailHtml() {
+    if (!techDetailId) return "";
+    const Tech = Engine.Tech;
+    const v = Tech.nodeView(state, techDetailId, Date.now());
+    if (!v) return "";
+    const n = v.node;
+    const effs = (n.effects && n.effects.length ? n.effects : [n.desc || "—"]).map((text, i) => {
+      const lv = i + 1;
+      let cls = "rt-d-eff-row", suffix = "";
+      if (lv <= v.level) { cls += " rt-d-eff-row--owned"; suffix = "（已获得）"; }
+      else if (lv === v.targetLevel && v.status !== "completed") {
+        cls += " rt-d-eff-row--next";
+        suffix = v.status === "active" ? "（研究中）" : "（下一等级）";
+      }
+      return '<div class="' + cls + '">' + esc((v.isSingle ? "效果" : "Lv" + lv) + " ｜ " + text + suffix) + "</div>";
+    }).join("");
+    const prereq = (n.requires || []).length
+      ? n.requires.map(r => {
+          const pn = Data.Tech.byId(r.id);
+          const own = Tech.levelOf(state, r.id);
+          const need = r.level || 1;
+          const met = own >= need;
+          return '<div class="rt-d-pre-row--' + (met ? "met" : "unmet") + '">' +
+            esc((met ? "✔ " : "✖ ") + (pn ? pn.name : r.id) + " 需 Lv" + need + " ｜ 当前 Lv" + own + " ｜ " + (met ? "已满足" : "未满足")) +
+            "</div>";
+        }).join("")
+      : '<div class="rt-d-row">无（根节点）</div>';
+
+    // 取消研究留下的进度：影响「下一等级」的时长与按钮上行提示
+    const keepPct = Math.round((v.savedProgress || 0) * 100);
+    const hasKeep = keepPct > 0 && v.status !== "completed";
+    const secText = hasKeep
+      ? fmtSpan(v.needSec) + "（已保留 " + keepPct + "%，原本 " + fmtSpan(v.sec) + "）"
+      : fmtSpan(v.sec);
+
+    let actions;
+    if (v.status === "completed") {
+      actions = '<div class="rt-d-row">该科技已全部完成</div>';
+    } else if (v.status === "active") {
+      actions = '<div class="rt-d-row">研究中 · 剩余 ' + fmtSpan(v.remainSec) + "（" + fmtClock(state.tech.active.endsAt) + " 完成）</div>" +
+        '<div class="rt-d-note">取消后<strong>不退还</strong>已花的 ' + v.cost + " 星币，但会保留当前 " +
+        Math.round(v.progress * 100) + "% 的进度，下次接着研究。</div>" +
+        '<div class="rt-d-actions"><button class="btn" type="button" data-act="techCancel:' + esc(n.id) + '">取消研究</button></div>';
+    } else {
+      actions = (hasKeep
+        ? '<div class="rt-d-note">已保留 ' + keepPct + "% 进度：这次只需再花 " + fmtSpan(v.needSec) +
+          "，但重新开始仍要支付全额 " + v.cost + " 星币（取消不退）。</div>"
+        : "") +
+        '<div class="rt-d-actions"><button class="btn primary"' + (v.canStart ? "" : " disabled") +
+        ' data-act="techStart:' + esc(n.id) + '">' + (v.canStart ? (hasKeep ? "继续研究" : "开始研究") : esc(v.reason)) + "</button></div>";
+    }
+
+    return '<div class="rt-modal-backdrop" data-act="techClose"></div>' +
+      '<div class="rt-modal-box">' +
+        '<button class="rt-modal-close" type="button" data-act="techClose" aria-label="关闭">×</button>' +
+        '<div class="rt-d-name">' + esc(n.name) + "</div>" +
+        '<div class="rt-d-meta">' + esc("分类：" + (Data.Tech.CAT_CN[n.cat] || n.cat) + " ｜ 类型：" +
+          (v.isSingle ? "基础科技 · 单级" : "数值科技 · " + v.maxLevel + " 级")) + "</div>" +
+        '<div class="rt-d-tag">' + esc("状态：" + v.statusLabel + " ｜ 等级 " + v.level + "/" + v.maxLevel) + "</div>" +
+        '<div class="rt-d-desc">' + esc(n.desc || "—") + "</div>" +
+        '<div class="rt-d-lab">全等级效果</div>' + effs +
+        '<div class="rt-d-lab">下一等级</div>' +
+        '<div class="rt-d-row">' + esc(v.status === "completed"
+          ? "—"
+          : "Lv" + v.targetLevel + " ｜ 研究时间 " + secText + " ｜ 花费 " + v.cost + " 星币") + "</div>" +
+        '<div class="rt-d-lab">前置需求</div>' + prereq +
+        actions +
+      "</div>";
+  }
+
+  function viewTech() {
+    const Tech = Engine.Tech;
+    if (!Tech) return "<h2>科技</h2><div class='panel dim'>科技模块未加载。</div>";
+    Tech.ensure(state);
+    const now = Date.now();
+    const model = techTreeModel();
+    const active = state.tech.active;
+
+    let html = "<h2>科技 · 军团研究</h2>";
+
+    // 顶部：编制总览 + 进行中（1 代这里是「科研工时余额 + 进行中 + 可折叠队列」，
+    // 本作没有工时货币、也没有队列，就只保留进行中这一条）
+    html += '<div class="panel"><div class="row"><b>剿匪编制</b>' +
+      '<span class="tag good">' + Tech.squadCapacity(state) + " 人 / 据点</span>" +
+      '<span class="dim">基础 1 人，每完成一级「战斗编制」+1</span></div>';
+    if (active) {
+      const av = Tech.nodeView(state, active.id, now);
+      const left = Math.max(0, Math.ceil((active.endsAt - now) / 1000));
+      const pct = (Tech.progress(state, now) * 100).toFixed(1);
+      const keepNote = (av && av.savedProgress > 0)
+        ? "　其中 " + Math.round(av.savedProgress * 100) + "% 是上次取消时保留的"
+        : "";
+      html += '<div class="research-active">' +
+        '<div class="research-active-top"><b>' + esc(av ? av.node.name : active.id) + "</b>" +
+        (av && !av.isSingle ? '<span class="tag">目标 Lv.' + av.targetLevel + "</span>" : "") +
+        '<span class="dim">剩余 ' + fmtSpan(left) + " · " + fmtClock(active.endsAt) + " 完成</span>" +
+        '<button class="sm" type="button" data-act="techCancel:' + esc(active.id) + '">取消研究</button></div>' +
+        '<div class="research-progress-track"><div class="research-progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="dim" style="margin-top:5px">总进度 ' + pct + "%" + keepNote +
+        "　·　取消不退星币，已走的进度会保留</div>" +
+        "</div>";
+    } else {
+      html += '<div class="research-active is-empty">当前没有进行中的研究 —— 点树上的方块，在详情里开始。</div>';
+    }
+    html += '<div class="dim" style="margin-top:6px">研究按真实时间推进，离线期间同样计入；一次只能研究一项。</div></div>';
+
+    // 科技树画布（横向分列 + 列内竖排 + 正交区域 + 贝塞尔连线；窄屏横向滚动）
+    const bands = model.cols.map((c, i) =>
+      '<div class="rt-era-band" style="left:' + (RT.COL_X0 + i * RT.COL_W) + "px;width:" + (RT.COL_W - 8) + "px;height:" + model.height + 'px;"></div>'
+    ).join("");
+    const heads = model.cols.map((c, i) => {
+      const cnt = model.nodes.filter(n => n.col === i).length;
+      return '<div class="rt-era-head" style="left:' + (RT.COL_X0 + i * RT.COL_W) + "px;top:8px;width:" + (RT.COL_W - 8) + "px;background:" + c.color + ';">' +
+        esc(c.label) + '<span class="rt-era-code">' + esc(c.code + " · " + cnt) + "</span></div>";
+    }).join("");
+    const empties = model.cols.map((c, i) => {
+      if (model.nodes.some(n => n.col === i)) return "";
+      return '<div class="rt-empty" style="left:' + (RT.COL_X0 + i * RT.COL_W + 16) + "px;top:" + (RT.TOP + 6) + "px;width:" + (RT.COL_W - 32) + 'px;">后续版本开放</div>';
+    }).join("");
+    const defs = '<defs>' + ["met", "unmet"].map(s =>
+      '<marker id="rt-arw-' + s + '" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">' +
+        '<path d="M0,0 L9,4.5 L0,9 Z" fill="' + RT_EDGE_COLOR[s] + '"></path>' +
+      "</marker>"
+    ).join("") + "</defs>";
+    const paths = model.edges.map(e =>
+      '<path class="rt-edge rt-edge--' + e.state + '" d="' + e.path + '"' +
+        ' data-from="' + esc(e.from) + '" data-to="' + esc(e.to) + '"' +
+        ' data-required-level="' + e.requiredLevel + '"' +
+        ' marker-end="url(#rt-arw-' + e.state + ')"></path>'
+    ).join("");
+
+    html += '<div class="research-tree" id="nsk-rt"><div class="rt-stage" style="width:' + model.width + "px;height:" + model.height + 'px;">' +
+      bands +
+      '<svg class="rt-edges" width="' + model.width + '" height="' + model.height + '" viewBox="0 0 ' + model.width + " " + model.height + '" aria-hidden="true">' +
+        defs + paths +
+      "</svg>" +
+      heads + empties +
+      model.nodes.map(rtNodeHtml).join("") +
+      "</div></div>";
+
+    // 图例（1 代没有图例，但本作状态少、颜色语义需要一句话点明）
+    html += '<div class="rt-legend">' +
+      '<span class="rt-lg rt-lg--available">可研究</span>' +
+      '<span class="rt-lg rt-lg--active">研究中</span>' +
+      '<span class="rt-lg rt-lg--completed">已完成</span>' +
+      '<span class="rt-lg rt-lg--locked">前置未满足</span>' +
+      '<span class="rt-lg-dim">连线亮起 = 前置已满足；暗线 = 还没修到要求等级</span>' +
+      "</div>";
+
+    html += '<div class="research-detail" id="nsk-tech-detail">' + techDetailHtml() + "</div>";
+    return html;
   }
 
   function viewFactions() {
@@ -2097,7 +2443,7 @@
     // 焦点战场：只有正看着星系页、且该星系里有我们在打的仗，才走逐轮真仿真；
     // 其余一律闭式（成本与离线时长无关）。切页签时引擎会自动退回闭式，进度不丢。
     state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
-    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, story: viewStory, report: viewReport, settings: viewSettings }[tab];
+    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
     // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，
     // 避免 207 节点 SVG 每秒销毁重建导致的整图刷新 / 脉冲重播 / 视角闪烁。
@@ -2178,11 +2524,55 @@
       hidePop();
     }
     if (cmd === "move") Engine.Settle.moveBase(state, a);
-    else if (cmd === "squadAdd") Engine.Dispatch.squadAdd(state, a);
-    else if (cmd === "squadRemove") Engine.Dispatch.squadRemove(state, a);
-    else if (cmd === "squadDeploy") Engine.Dispatch.squadDeploy(state, a);
-    else if (cmd === "squadRecall") Engine.Dispatch.squadRecall(state);
-    else if (cmd === "squadUpgrade") doSquadUpgrade();
+    // —— 据点派遣（取代旧的 squad* 命令）——
+    else if (cmd === "raidOpen") openRaidDispatch(a);
+    else if (cmd === "raidOut") { Engine.Dispatch.recall(state, a); renderView(); }
+    else if (cmd === "raidRecall") {
+      const r = Engine.Dispatch.recallGroup(state, a);
+      toast(r.ok ? "已召回 " + r.recalled + " 人" : "此处无人");
+      renderView();
+    }
+    else if (cmd === "raidPick") {
+      if (!raidSel) return;
+      const cap = Engine.Combat.squadCapacity(state);
+      const i = raidSel.ids.indexOf(a);
+      if (i >= 0) raidSel.ids.splice(i, 1);
+      else if (raidSel.ids.length >= cap) { toast("编制上限 " + cap + " 人，需先在科技页研究「战斗编制」"); return; }
+      else raidSel.ids.push(a);
+      refreshRaidDlg();
+    }
+    else if (cmd === "raidCommit") {
+      if (!raidSel) return;
+      const ids = raidSel.ids.slice();
+      // 重设编制：先撤掉本据点原有人员，再按名单派遣
+      Engine.Dispatch.recallGroup(state, a);
+      const r = Engine.Dispatch.assignGroup(state, ids, a);
+      if (r.ok) {
+        toast("已派遣 " + r.assigned + " 人");
+        if (r.fail && r.fail.length) toast(r.fail[0].err);
+        closeRaidDispatch();
+      } else toast(r.err || "派遣失败");
+      renderView();
+    }
+    else if (cmd === "techOpen") { techDetailId = a; renderView(); }
+    else if (cmd === "techClose") { techDetailId = null; renderView(); }
+    else if (cmd === "techStart") {
+      const r = Engine.Tech.start(state, a, Date.now());
+      if (!r.ok) toast(r.err || "无法开始研究");
+      else {
+        toast("开始研究「" + r.node.name + "」，" + fmtSpan(r.node.sec * (1 - (r.base || 0))) + "后完成" +
+          (r.base > 0 ? "（承接已保留的 " + Math.round(r.base * 100) + "% 进度）" : ""));
+        techDetailId = null;
+      }
+      renderView();
+    }
+    else if (cmd === "techCancel") {
+      const r = Engine.Tech.cancel(state, Date.now(), a);
+      if (!r.ok) toast(r.err || "没有可取消的研究");
+      else toast("已取消「" + (r.node ? r.node.name : r.id) + "」：保留 " +
+        Math.round(r.progress * 100) + "% 进度，星币不退");
+      renderView();
+    }
     else if (cmd === "upgrade") {
       const r = Engine.Base.upgradeCore(state);
       if (r.ok) pushReport("舰基升级 · " + r.plan.name + " Lv." + r.plan.lv,
@@ -2243,7 +2633,17 @@
         }
       }
     }
-    else if (cmd === "dispatch") Engine.Dispatch.assign(state, a, b, { nodeId: state.base.nodeId });
+    else if (cmd === "dispatch") {
+      // 剿匪只能从具名据点发起（2026-11-01）：本星系有据点就开派遣面板，否则引导去星图
+      if (b === "combat") {
+        const here = state.base.nodeId;
+        const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, here) : null;
+        if (raid) openRaidDispatch(here, a);
+        else { toast("剿匪需前往星图上标有 ⚔ 的据点"); tab = "starmap"; renderTabs(); renderView(); }
+        return;
+      }
+      Engine.Dispatch.assign(state, a, b, { nodeId: state.base.nodeId });
+    }
     else if (cmd === "recall") {
       Engine.Dispatch.recall(state, a);
       // 天体面板开着时原地刷新，避免显示过期的在岗名单
@@ -2581,7 +2981,15 @@
     const slName = region && region.secLevel ? (Data.StarMap.SECLEVEL_TABLE[region.secLevel] || {}).name : "";
     let html = '<div class="np-head"><b>' + esc(node.name) + "</b></div>";
     html += '<div class="np-sub dim">' + (region ? esc(region.name) : "") + (slName ? " · " + slName : "") + (isCur ? " · 当前所在" : "") + "</div>";
+    // 海盗据点：这是战斗节点，点开直接进派遣面板（名字在星图上标了，这里再确认一次）
+    if (node.raid) {
+      html += '<div class="np-sub"><span class="tag bad">⚔ ' + esc(node.raid.name) + "</span>" +
+        '<span class="tag">赏金 ×' + node.raid.iskMult + "</span></div>";
+    }
     html += '<div class="np-acts">';
+    if (node.raid) {
+      html += '<button class="sm primary" data-act="raidOpen:' + nodeId + '">派遣剿匪</button>';
+    }
     html += '<button class="sm" data-act="sys:' + nodeId + '">查看星系</button>';
     if (isCur) {
       html += '<button class="sm" disabled>跃迁（当前所在）</button>';

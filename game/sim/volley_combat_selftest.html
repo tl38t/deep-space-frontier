@@ -42,6 +42,14 @@ const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; 
       st.equipment["t1_small_laser"]=(st.equipment["t1_small_laser"]||0)+1;
     }
     st.res.ammo_laser=20000;
+    // 2026-11-01：战斗只发生在星图具名据点（node.raid）。把舰基移到第一个据点，
+    // 成员直接写 assignment（绕过编制上限——本文件测的是面板与结算，编制门禁由 probe_squad 覆盖）。
+    try{
+      const Raids=W().NSK.Data.Raids; if(Raids) Raids.attach(st.starMap);
+      const rn=st.starMap.nodes.find(function(n){ return !!n.raid; });
+      if(rn){ st.base.nodeId=rn.id;
+        for(const mm of st.members){ mm.assignment={type:"combat",nodeId:rn.id}; mm.status="dispatched"; } }
+    }catch(e){ log("[WARN] 据点种入失败: "+e.message); }
     W().NSK.Core.save(st);
   }
   ok("种入「全员配激光」存档", hasCore);
@@ -82,19 +90,27 @@ const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; 
   // 2) 成员页点「战斗」按钮（派遣到当前星系）
   //    必须全员上：1 代规则下 1 人 1 炮的输出打不穿 3 舰编队，单人会先被清场，
   //    永远不会出现「第 1 波」——测波数增长就成了测不到的东西。
-  const btn=await (async()=>{ await until(()=>D().querySelector('[data-act$=":combat"]'),8000);
-    return D().querySelector('[data-act$=":combat"]'); })();
-  ok("成员页有「战斗」派遣按钮", !!btn, btn?txt(btn):"missing");
-  if(!btn){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
-  const before=qa('[data-act$=":combat"]').length;
-  for(let i=0;i<24;i++){
-    const b=D().querySelector('[data-act$=":combat"]');
-    if(!b) break;
-    b.click();
-    await wait(220);
+  // 2) 成员页：已有参战成员的按钮应变成「召回」；点「战斗」应弹出据点派遣面板
+  const recallBtns=qa('[data-act^="recall:"]').length;
+  ok("成员页显示「召回」（已在据点参战）", recallBtns>0, "recall 按钮 "+recallBtns+" 个");
+  // 全员都在参战时没有「战斗」按钮（它只出现在空闲成员卡上）——召回一个让他露出按钮
+  if(!qa('[data-act$=":combat"]').length){
+    const r0=D().querySelector('[data-act^="recall:"]');
+    if(r0){ r0.click(); await wait(500); }
   }
-  const after=qa('[data-act$=":combat"]').length;
-  ok("点击战斗后成员已全员派遣（可派遣数归零）", after===0 && before>0, before+" → "+after);
+  const dispBtns=qa('[data-act$=":combat"]');
+  if(dispBtns.length){
+    dispBtns[0].click();
+    const dlg=await until(()=>D().querySelector("#raid_dlg_body"),6000);
+    ok("点「战斗」弹出据点派遣面板", dlg, dlg?"":"no dialog");
+    const picks=qa(".raid-pick");
+    ok("派遣面板列出可派成员", picks.length>0, "count="+picks.length);
+    const x=D().querySelector("[data-raidclose]");
+    if(x) x.click();
+    await wait(200);
+  } else {
+    ok("点「战斗」弹出据点派遣面板", false, "没有可点的战斗按钮");
+  }
 
   // 3) 切到星系页
   const sysTab=D().querySelector('[data-act="tab:system"]');

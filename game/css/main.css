@@ -21,6 +21,11 @@ body { background: radial-gradient(ellipse at 50% -12%,rgba(35,105,121,.13),tran
 .panel.squad-panel { border-left: 2px solid var(--bad); }
 .squad-roster { margin: 4px 0; padding: 4px 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); }
 .squad-roster .row { padding: 2px 0; }
+/* 据点派遣弹窗：可点选的成员行 */
+.raid-pick { cursor: pointer; border-radius: 6px; padding: 4px 6px !important; }
+.raid-pick:hover { background: rgba(90, 209, 160, .08); }
+.raid-pick.on { background: rgba(90, 209, 160, .16); box-shadow: inset 0 0 0 1px rgba(90, 209, 160, .45); }
+@media (hover: none) { .raid-pick:active { background: rgba(90, 209, 160, .18); } }
 
 /* ---- 首页红线声明横幅（§14.5，最醒目处） ---- */
 .redline-banner {
@@ -573,6 +578,22 @@ button.sm { padding: 5px 10px; font-size: 13px; min-height: 32px; }
   stroke: #030a10; stroke-width: 4px; font-family: "Microsoft YaHei", system-ui, sans-serif; pointer-events: none; opacity: 0; transition: opacity .16s ease; }
 .node .ntier { fill: #8ca6ae; font-size: 13px; text-anchor: middle; pointer-events: none; opacity: 0; transition: opacity .16s ease; }
 .node .nlock { fill: #8aa0a8; font-size: 11px; text-anchor: middle; pointer-events: none; letter-spacing: .5px; opacity: 0; }
+/* 海盗据点（战斗节点）：光环 + ⚔ 角标 + 据点名 */
+.node .raid-ring { fill: none; stroke: #ff8452; stroke-width: 2.2; opacity: .72; pointer-events: none;
+  transition: opacity .16s ease; }
+.node.cur .raid-ring, .node.reach .raid-ring { opacity: .9; }
+.node:hover .raid-ring { opacity: 1; stroke-width: 2.6; }
+.node .nraid-badge { fill: #ff8f6b; font-size: 16px; text-anchor: middle; pointer-events: none;
+  paint-order: stroke; stroke: #030a10; stroke-width: 3px; opacity: 0; transition: opacity .16s ease; }
+.node .nraid { fill: #ffb59c; font-size: 12px; text-anchor: middle; pointer-events: none;
+  paint-order: stroke; stroke: #030a10; stroke-width: 3.5px; letter-spacing: .3px; opacity: 0; transition: opacity .16s ease; }
+/* ⚔ 角标不受缩放门控：已探明的据点永远可见——它是「该去哪打」的唯一线索，
+   缩到全景就消失等于让玩家自己找（名字仍按 show-nodes / hover 淡入，避免糊屏）。 */
+.starmap-canvas .node:not(.hid) .nraid-badge { opacity: .85; }
+.starmap-canvas.show-nodes .node:not(.hid) .nraid { opacity: .85; }
+.node.cur .nraid-badge, .node.reach .nraid-badge { opacity: 1; }
+.node.cur .nraid, .node.reach .nraid { opacity: 1; }
+.node:hover .nraid-badge, .node:hover .nraid { opacity: 1; }
 .node.cur .nlabel, .node.reach .nlabel { opacity: 1; font-size: 20px; }
 .node.cur .ntier, .node.reach .ntier { opacity: .78; }
 .starmap-canvas.show-nodes .node:not(.hid) .nlabel { opacity: .92; }
@@ -1150,3 +1171,130 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .ammo-chip.empty b { color: #ef6b6b; }
 .tag.live { color: #6ee3b4; border-color: rgba(110,227,180,.45); background: rgba(90,209,160,.14); }
 @media (max-width: 640px) { .battle-arena { grid-template-columns: 1fr; } }
+
+/* ================================================================
+   科技树（照搬 1 代 EVE-IDLE 研究树：横向分列 + 方块节点 + 贝塞尔连线）
+   结构逐条对应 1 代 css/base.css「文明6式横向科技树画布」一节；
+   配色按本作主题换算（--acc #4fc4d3 / --good #62d5af）。
+   ⚠️ 节点是 position:absolute 的方块，不是卡片 —— 改动前先看 .rt-node 的四层结构
+      （名称 / 状态行 / 效果行 / 等级 pip）。
+   ================================================================ */
+.research-active { margin-top: 8px; padding: 10px 12px; background: #0a1620;
+  border: 1px solid var(--line); border-left: 3px solid var(--acc); border-radius: 6px; font-size: 13px; }
+.research-active.is-empty { color: var(--dim); font-style: italic; border-left-color: #2b4350; }
+.research-active-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.research-active-top b { color: #fff; }
+.research-progress-track { height: 10px; background: #060f16; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.research-progress-fill { height: 100%; background: linear-gradient(90deg, #2f7f8c, var(--acc)); transition: width .3s ease; }
+
+.research-tree { position: relative; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  margin-top: 8px;
+  background-color: #050d14;
+  background-image: linear-gradient(rgba(70,140,150,.05) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(70,140,150,.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  border: 1px solid var(--line); border-radius: 8px; }
+.rt-stage { position: relative; }
+.rt-edges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+.rt-edge { fill: none; stroke: #3a5666; stroke-width: 2; }
+.rt-edge--met { stroke: var(--acc); stroke-width: 2.4; }
+
+.rt-era-band { position: absolute; top: 0; z-index: 0; border-left: 1px dashed rgba(90,150,165,.16); }
+.rt-era-head { position: absolute; z-index: 2; text-align: center;
+  border-radius: 8px 8px 0 0; border: 1px solid rgba(255,255,255,.08); border-bottom: none;
+  padding: 7px 4px 6px; font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  color: #eaf2fb; text-shadow: 0 1px 2px rgba(0,0,0,.55); }
+.rt-era-code { display: block; font-family: var(--font-tech); font-size: 9px; font-weight: 600;
+  letter-spacing: 2px; opacity: .55; margin-top: 1px; }
+
+.rt-empty { position: absolute; z-index: 2; text-align: center; padding: 13px 0;
+  border: 1px dashed rgba(90,150,165,.18); border-radius: 8px;
+  color: #3f5a66; font-size: 11px; letter-spacing: 1px; }
+
+.rt-node { position: absolute; z-index: 5; box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer; user-select: none;
+  border: 1.5px solid #22323c; background: #0d1a22; color: #c8d6e6;
+  transition: transform .12s, box-shadow .12s, border-color .12s; }
+.rt-node:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.55); z-index: 9; }
+.rt-node:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px rgba(79,196,211,.35); z-index: 9; }
+.rt-node-name { font-size: 13px; font-weight: 600; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-node-sub { font-size: 10px; opacity: .86; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-node-eff { font-size: 10px; color: #7fa9d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-node-pips { display: flex; gap: 3px; margin-top: 2px; }
+.rt-pip { width: 16px; height: 5px; border-radius: 2px; border: 1px solid #33465c; background: transparent; }
+.rt-pip--filled { background: var(--acc); border-color: var(--acc); }
+.rt-pip--active { background: #9fd0ff; border-color: var(--acc); animation: rt-pip-blink 1.4s infinite; }
+@keyframes rt-pip-blink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+.rt-badge { position: absolute; top: -8px; left: 8px; z-index: 6; font-size: 9px;
+  padding: 1px 6px; border-radius: 8px; font-weight: 700; }
+.rt-badge--single { background: #22707a; color: #d6fffb; }
+.rt-flag { position: absolute; top: -9px; right: 8px; z-index: 6; font-size: 9px;
+  padding: 1px 6px; border-radius: 8px; font-weight: 700; }
+.rt-flag--active { background: var(--acc); color: #04222a; }
+
+.rt-node--completed { background: #103538; border-color: var(--acc); color: #d6fffb; }
+.rt-node--active { background: #0f2f3b; border-color: #6ad0ff; color: #d8f2ff; animation: rt-node-pulse 1.8s infinite; }
+.rt-node--available { background: #172530; border-color: #45697a; color: #d4e2f0; }
+.rt-node--locked { background: #0a141a; border-color: #1f313b; color: #8c9daa; }
+.rt-node--locked .rt-node-eff { color: #5d7381; }
+@keyframes rt-node-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(79,196,211,.42); } 50% { box-shadow: 0 0 0 6px rgba(79,196,211,0); } }
+
+.rt-legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 11px; color: var(--dim); }
+.rt-lg::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 5px; vertical-align: -1px; border: 1px solid; }
+.rt-lg--available::before { background: #172530; border-color: #45697a; }
+.rt-lg--active::before { background: #0f2f3b; border-color: #6ad0ff; }
+.rt-lg--completed::before { background: #103538; border-color: var(--acc); }
+.rt-lg--locked::before { background: #0a141a; border-color: #1f313b; }
+.rt-lg-dim { opacity: .7; }
+
+/* ---- 科技详情弹窗（照 1 代 #research-detail：全屏遮罩 + 居中信息框） ---- */
+#nsk-tech-detail:empty { display: none; }
+#nsk-tech-detail { position: fixed; inset: 0; z-index: 2100; display: flex;
+  align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.rt-modal-backdrop { position: absolute; inset: 0; background: rgba(3,8,12,.72); z-index: 1; }
+.rt-modal-box { position: relative; z-index: 2; width: min(480px, 92vw); max-height: 84vh;
+  overflow-y: auto; padding: 16px 18px 18px; box-sizing: border-box;
+  background: #0c1720; border: 1px solid #2a4050; border-radius: 10px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.6); font-size: 12px; color: #9fb0c2; line-height: 1.6; }
+.rt-modal-close { position: absolute; top: 8px; right: 10px; width: 26px; height: 26px; line-height: 1;
+  padding: 0; background: transparent; border: 1px solid #33465c; border-radius: 6px;
+  color: #cdd6e1; font-size: 16px; cursor: pointer; }
+.rt-modal-close:hover { background: #16262f; border-color: var(--acc); }
+.rt-d-name { font-size: 15px; font-weight: 700; color: #cfe6ff; margin-bottom: 4px; }
+.rt-d-meta { font-size: 11px; color: #7a8aa0; margin-bottom: 8px; }
+.rt-d-tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: 10px;
+  margin-bottom: 8px; border: 1px solid #2f6e8a; color: #6fc6e0; }
+.rt-d-desc { color: #aebfd2; margin-bottom: 4px; }
+.rt-d-lab { font-size: 11px; color: #6a8490; letter-spacing: 1px; margin: 10px 0 4px; }
+.rt-d-row { color: #9fb0c2; }
+.rt-d-eff-row { color: #8f9fb2; }
+.rt-d-eff-row--owned { color: var(--good); }
+.rt-d-eff-row--next { color: #9fd0ff; font-weight: 600; }
+.rt-d-pre-row--met { color: #7fe0c0; }
+.rt-d-pre-row--unmet { color: #d68a4a; }
+.rt-d-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+/* 取消研究的代价说明：琥珀色左条 —— 与「未满足前置」同色系，读作警告而不是报错 */
+.rt-d-note { margin: 8px 0 2px; padding: 7px 10px; border-left: 2px solid #d68a4a;
+  background: rgba(214, 138, 74, .07); border-radius: 0 4px 4px 0;
+  color: #c99a6c; font-size: 11px; line-height: 1.6; }
+.rt-d-note strong { color: #e9b57f; font-weight: 700; }
+.research-active-top .btn, .research-active-top .sm { margin-left: auto; }
+
+/* 手机端：画布横向滚动时露出右侧渐隐，提示「还能往右拖」 */
+@media (max-width: 900px) {
+  .rt-era-head { font-size: 13px; padding: 6px 2px 5px; }
+  .rt-legend { gap: 10px; font-size: 10.5px; }
+  .rt-modal-box { padding: 14px 14px 16px; }
+}
+
+/* 科技树横向滚动条（系统默认是浅色，在深底上很扎眼） */
+.research-tree { scrollbar-width: thin; scrollbar-color: #2c5663 transparent; }
+.research-tree::-webkit-scrollbar { height: 6px; }
+.research-tree::-webkit-scrollbar-thumb { background: #2c5663; border-radius: 3px; }
+.research-tree::-webkit-scrollbar-thumb:hover { background: #3a7a8a; }
+.research-tree::-webkit-scrollbar-track { background: transparent; }

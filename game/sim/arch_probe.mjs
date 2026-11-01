@@ -10,10 +10,10 @@ const files = [
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
-  "js/data/pirates.js",
+  "js/data/pirates.js", "js/data/raids.js", "js/data/tech.js",
   "js/data/factions.js", "js/data/names.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
-  "js/engine/booster.js", "js/engine/mastery.js",
+  "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js",   "js/engine/sites.js", "js/narrative/events.js",
   "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
 ];
@@ -21,6 +21,16 @@ const files = [
 // 构造最小 window/global 环境（UMD 走 window 分支）
 const sandbox = { console, Date, Math, JSON, Object, Array, String, Number, isNaN, parseInt, parseFloat };
 sandbox.window = sandbox;
+
+// 战斗只发生在具名据点（node.raid）：取星图里第一个据点做测试落点
+function raidIdOf(st) { const n = st.starMap.nodes.find(function (x) { return !!x.raid; }); return n ? n.id : null; }
+// 直接解锁编制科技（跳过研究时长）：测试只关心「容量门禁」本身，不测等待
+function unlockSquad(st, cap) {
+  Engine.Tech.ensure(st);
+  if (cap >= 2) st.tech.levels.combat_squad_1 = 1;
+  if (cap >= 3) st.tech.levels.combat_squad_2 = 1;
+}
+
 sandbox.self = sandbox;
 sandbox.module = undefined;
 const ctx = vm.createContext(sandbox);
@@ -1103,6 +1113,53 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   sb7.ownedBlueprints = [];
   const rFree = P.buildEquipment(sb7, "refinery_pump");
   ok("蓝图:无蓝图装备不受门禁影响", rFree.ok === true, JSON.stringify(rFree));
+
+  // 27h) 战斗技能接线（1 代 schemas：每门武器只吃自己类型技能，不跨类型平均）
+  const CM = Engine.Combat;
+  ok("技能:武器→技能映射与 1 代一致",
+    CM.SKILL_OF_WEAPON.laser === "combatLaser" &&
+    CM.SKILL_OF_WEAPON.cannon === "combatTurret" &&
+    CM.SKILL_OF_WEAPON.missile === "command",
+    JSON.stringify(CM.SKILL_OF_WEAPON));
+
+  const lvXp = (lv) => Math.round(((Math.pow(1.1, lv - 1) + Math.pow(1.1, lv)) / 2 - 1) * 1000);
+  function cMem(id, lvL, lvT, lvC, wid, nodeId) {
+    return { id, status: "idle", destroyed: false,
+      skills: { mining: 0, scanning: 0, archaeology: 0, refine: 0, manufacture: 0, invent: 0,
+                combatLaser: lvXp(lvL), combatTurret: lvXp(lvT), command: lvXp(lvC), defense: 0 },
+      passion: {}, mods: { creditMult: {}, yieldMult: {}, xpMult: {}, learnMult: 1 },
+      hp: { shield: 1e9, armor: 1e9, structure: 1e9 },
+      fitted: { high: [wid], mid: [], low: [], rig: [] },
+      assignment: { type: "combat", nodeId } };
+  }
+  const sb8 = Engine.State.defaultState(now, Data);
+  const nid = raidIdOf(sb8);
+  function probeOne(m, nd) { sb8.members = [m]; return CM.prepareNode(sb8, nd); }
+
+  const pLo = probeOne(cMem("a", 1, 1, 1, "t1_small_laser", nid), nid);
+  const pHi = probeOne(cMem("a", 44, 1, 1, "t1_small_laser", nid), nid);
+  const pCmd = probeOne(cMem("a", 1, 1, 44, "t1_small_laser", nid), nid);
+  ok("技能:激光技能提升 → 激光 DPS 上升",
+    pHi.dpsByType.laser > pLo.dpsByType.laser * 1.5,
+    "Lv1=" + pLo.dpsByType.laser.toFixed(2) + " Lv44=" + pHi.dpsByType.laser.toFixed(2));
+  ok("技能:命中随技能等级上升（1 代 baseHit + lv×4）",
+    pHi.weapons[0].hitChance > pLo.weapons[0].hitChance + 0.05,
+    "Lv1=" + (pLo.weapons[0].hitChance * 100).toFixed(1) + "% Lv44=" + (pHi.weapons[0].hitChance * 100).toFixed(1) + "%");
+  ok("技能:练指挥不影响激光炮（旧的「三技能平均」已删）",
+    Math.abs(pCmd.dpsByType.laser - pLo.dpsByType.laser) < 1e-9,
+    "commLv44=" + pCmd.dpsByType.laser.toFixed(4) + " base=" + pLo.dpsByType.laser.toFixed(4));
+
+  const pMisLo = probeOne(cMem("a", 1, 1, 1, "t1_light_missile_launcher", nid), nid);
+  const pMisHi = probeOne(cMem("a", 1, 1, 44, "t1_light_missile_launcher", nid), nid);
+  ok("技能:导弹吃 command 技能",
+    pMisHi.dpsByType.missile > pMisLo.dpsByType.missile * 1.2,
+    "Lv1=" + pMisLo.dpsByType.missile.toFixed(2) + " Lv44=" + pMisHi.dpsByType.missile.toFixed(2));
+  ok("技能:weaponSkillOf 回报装配武器的技能",
+    (function () {
+      const m = cMem("a", 1, 1, 1, "t1_small_laser", nid);
+      const w = CM.weaponSkillOf(m);
+      return w && w.key === "combatLaser" && w.weaponType === "laser" && w.level >= 1;
+    })(), JSON.stringify(CM.weaponSkillOf(cMem("a", 1, 1, 1, "t1_small_laser", nid))));
 })();
 
 (function probeFitRepair() {
@@ -1155,12 +1212,12 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   const sb = Engine.State.defaultState(now, Data);
   const m = sb.members[0];
   m.skills.combatLaser = 20000; m.skills.combatTurret = 20000; m.skills.command = 20000;
-  const asg = Engine.Dispatch.assign(sb, m.id, "combat", { nodeId: sb.base.nodeId });
+  const asg = Engine.Dispatch.assign(sb, m.id, "combat", { nodeId: raidIdOf(sb) });
   ok("齐射:派遣战斗成功", asg && asg.ok !== false, JSON.stringify(asg));
 
   // 29a) 关键回归：未装武器 = 零伤害（自创的「本能输出」已删除，1 代同规则）
-  const Pbare = C.prepareNode(sb, sb.base.nodeId);
-  const rbare = C.advance(sb, sb.base.nodeId, 60, 0, false);
+  const Pbare = C.prepareNode(sb, raidIdOf(sb));
+  const rbare = C.advance(sb, raidIdOf(sb), 60, 0, false);
   ok("战斗:未装武器 → 零伤害零掉落（1 代规则，无自创本能输出）",
     !!Pbare && Pbare.squadDps === 0 && rbare.credits === 0 && rbare.damage === 0,
     Pbare ? ("squadDps=" + Pbare.squadDps + " credits=" + rbare.credits + " damage=" + rbare.damage) : "null");
@@ -1170,7 +1227,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   // 29b) 物理恒等：一波时长 = 盾段 + 甲段 + 构段（每段含该层克制，不是拍脑袋的常量）
   //      2026-11-01 修「层不回卷」时一并修正：旧口径 fleetHp/squadDps 是不含克制的，
   //      会让 UI 的一波时长比实际偏长（激光队 2.12s vs 真实 1.86s）。
-  const P = C.prepareNode(sb, sb.base.nodeId);
+  const P = C.prepareNode(sb, raidIdOf(sb));
   const waveSum = ["shield", "armor", "structure"].reduce(function (a, L) {
     return a + P.fleetHpSum[L] / C.layerDps(P.dpsByType, L, null);
   }, 0);
@@ -1188,10 +1245,11 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
 
   // 29c) 波时长随我方战力变化：多装武器 → 打得更快
   const sb2w = Engine.State.defaultState(now, Data);
-  for (const mm of sb2w.members) Engine.Dispatch.assign(sb2w, mm.id, "combat", { nodeId: sb2w.base.nodeId });
+  unlockSquad(sb2w, 3);   // 编制上限 3（科技解锁）：容量门禁生效后不能整队 6 人上了
+  for (const mm of sb2w.members) Engine.Dispatch.assign(sb2w, mm.id, "combat", { nodeId: raidIdOf(sb2w) });
   armAll(sb2w, "t1_small_laser");
-  const Pone = C.prepareNode(sb, sb.base.nodeId);      // 1 人 1 炮
-  const Pmany = C.prepareNode(sb2w, sb2w.base.nodeId); // 全员 1 炮
+  const Pone = C.prepareNode(sb, raidIdOf(sb));      // 1 人 1 炮
+  const Pmany = C.prepareNode(sb2w, raidIdOf(sb2w)); // 全员 1 炮
   ok("齐射:武器越多一波越短（波时长由敌我强度算出，非常量）",
     !!Pone && !!Pmany && Pmany.squadDps > Pone.squadDps && Pmany.waveSec < Pone.waveSec,
     "1人=" + Pone.waveSec.toFixed(2) + "s " + Pmany.cnt + "人=" + Pmany.waveSec.toFixed(2) + "s");
@@ -1204,7 +1262,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     rateMany > rateOne, "1人=" + rateOne.toFixed(3) + "/s " + Pmany.cnt + "人=" + rateMany.toFixed(3) + "/s");
 
   // 29e) 波数换算 + 掉落 = 每波 × 波数（按实际战斗时长，受血池封顶）
-  const r1 = C.advance(sb, sb.base.nodeId, 3600, 0, false);
+  const r1 = C.advance(sb, raidIdOf(sb), 3600, 0, false);
   const dealt1 = (function () { let s = 0; for (const seg of C.fireSegments(P, sb.res, r1.fightSec, 0).segs) s += seg.dps * seg.sec; return s; })();
   const expWaves1 = P.fleetHp > 0 ? Math.floor(dealt1 / P.fleetHp) : 0;
   ok("战斗:波数 = 打进去的伤害 ÷ 编队总血", Math.abs(r1.waves - expWaves1) <= 1,
@@ -1220,19 +1278,19 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
 
   // 29g) waveHp 累加器：未打穿编队不结算，打穿才结算（切页签/离线靠它衔接）
   const halfSec = P.waveSec * 0.4;   // 用含克制的真实一波时长，否则跨层估算会偏
-  const rh = C.advance(sb, sb.base.nodeId, halfSec, 0, false);
+  const rh = C.advance(sb, raidIdOf(sb), halfSec, 0, false);
   ok("战斗:未打穿编队不结算掉落（进度累积在 waveHp）", rh.waves === 0 && rh.waveHp > 0,
     "waves=" + rh.waves + " waveHp=" + rh.waveHp.toFixed(1) + "/" + P.fleetHp + " progress=" + rh.progress.toFixed(2));
   const rf = (function () {
     // 独立 state 且血量拉满：否则「打穿」会被血池封顶截断（1 人 1020 血只扛得住约 8 秒）
     const st = Engine.State.defaultState(now, Data);
     const mm = st.members[0];
-    Engine.Dispatch.assign(st, mm.id, "combat", { nodeId: st.base.nodeId });
+    Engine.Dispatch.assign(st, mm.id, "combat", { nodeId: raidIdOf(st) });
     mm.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
     mm.hp = { shield: 1e9, armor: 1e9, structure: 1e9 };
     st.res.ammo_laser = 1e9;
-    const PP = C.prepareNode(st, st.base.nodeId);
-    return C.advance(st, st.base.nodeId, PP.waveSec * 1.05, 0, false);
+    const PP = C.prepareNode(st, raidIdOf(st));
+    return C.advance(st, raidIdOf(st), PP.waveSec * 1.05, 0, false);
   })();
   ok("战斗:打穿编队结算 1 波并结余到下一队", rf.waves === 1 && rf.waveHp > 0 && rf.waveHp < P.fleetHp,
     "waves=" + rf.waves + " waveHp=" + rf.waveHp.toFixed(1));
@@ -1249,7 +1307,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
 
   // 29i) 性能：O(1) 闭式，成本与 dt 无关
   const t0 = Date.now();
-  for (let k = 0; k < 1000; k++) C.advance(sb, sb.base.nodeId, 86400, 0);
+  for (let k = 0; k < 1000; k++) C.advance(sb, raidIdOf(sb), 86400, 0);
   const ms = Date.now() - t0;
   ok("齐射:O(1) 闭式 1000 次超大 dt < 50ms", ms < 50, ms + "ms / 1000 次");
 
@@ -1259,19 +1317,20 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   //    「平均每人的血量」。若成员随机到不同吨位，血量高于均值的人会带伤活下来 →
   //    「成员被打穿」这条断言会随每人随机舰船而偶发失败（曾出现 450/270 残结构）。
   const sbS = Engine.State.defaultState(now, Data);
+  unlockSquad(sbS, 3);    // 编制上限 3：新规则下同据点最多 3 人
   const uniHp = Data.Ships.maxHp("destroyer");
   for (const mm of sbS.members) {
     mm.shipId = "destroyer";
     mm.hp = { shield: uniHp.shield, armor: uniHp.armor, structure: uniHp.structure };
     mm.skills.combatLaser = 20000; mm.skills.combatTurret = 20000; mm.skills.command = 20000;
-    Engine.Dispatch.assign(sbS, mm.id, "combat", { nodeId: sbS.base.nodeId });
+    Engine.Dispatch.assign(sbS, mm.id, "combat", { nodeId: raidIdOf(sbS) });
   }
   armAll(sbS, "t1_small_laser");
   sbS.res.ammo_laser = 1e9;
   const mS = sbS.members[0];
   const credB = sbS.res.credits, repB = sbS.res.rep;
   Engine.Settle.settle(sbS, now + 3600 * 1000);
-  const bt = sbS.battles[sbS.base.nodeId];
+  const bt = sbS.battles[raidIdOf(sbS)];
   ok("齐射:settle 后战报累计波次", !!bt && bt.waves > 0, bt ? ("waves=" + bt.waves + " waveSec=" + Number(bt.waveSec).toFixed(2)) : "no battle");
   ok("齐射:settle 后星币/声望增加", sbS.res.credits > credB && sbS.res.rep > repB,
     "cred +" + (sbS.res.credits - credB).toFixed(1) + " rep +" + (sbS.res.rep - repB).toFixed(1));
@@ -1403,10 +1462,10 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     !!Data.Resources.ALL.ammo_laser && !!Data.Resources.ALL.ammo_missile && !!Data.Resources.ALL.ammo_cannon,
     Object.keys(Data.Resources.ALL).filter(k => k.indexOf("ammo_") === 0).join(","));
 
+  // 战斗只发生在具名据点：按 band 找据点节点（2026-11-01 起普通节点不产战斗）
   function pickNodeByBand(st, band) {
     for (const n of st.starMap.nodes) {
-      const raid = Data.StarMap.pirateRaid(st.starMap, n.id);
-      if (raid && (raid.band || 1) === band) return n.id;
+      if (n.raid && (n.raid.band || 1) === band) return n.id;
     }
     return null;
   }

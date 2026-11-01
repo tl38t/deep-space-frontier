@@ -78,10 +78,9 @@
     return 1 + Math.floor(Math.log(x / 1000 + 1) / Math.log(1.1));
   }
   function skillBonus(skills, key) { return 1 + levelOf(skills[key]) * 0.02; }
-  // 战斗综合加成：三武器技能（激光/炮台/指挥）等级取平均 → 平滑替代单一 attack。
-  function combatBonus(skills) {
-    return (skillBonus(skills, "combatLaser") + skillBonus(skills, "combatTurret") + skillBonus(skills, "command")) / 3;
-  }
+  // ⚠️ 已删 combatBonus()（三技能 skillBonus 的算术平均）：无调用方，且与 1 代不符。
+  //    1 代是每门武器按自己的 skillKey 取技能（命中 +lv×4、伤害 ×(1+lv×0.02)），
+  //    见 engine/combat.js scanFit / SKILL_OF_WEAPON。这里保留注释，防有人再把它加回来。
 
   // 战斗产出规范（2026-11-01 对齐现状）：
   //   每波掉落 = DROP_CREDIT_BASE × 星系赏金倍率 × Σ成员赏金倍率
@@ -201,17 +200,29 @@
     const Repair = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Repair : null;
     if (Repair) Repair.tick(state, dt);
 
-    // 0) 剿匪结算：每个「有参战成员」的节点结算一次。
+    // 0) 剿匪结算：每个「有参战成员」的据点结算一次。
     //    焦点节点（state.combatFocus）走逐轮真仿真，其余（含离线大 dt）走一次乘除闭式；
     //    两条路共用 state.combatWaveHp（已打进当前编队的伤害），所以切页签不白打。
     const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
+    const Raids = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Raids : null;
     state.combatWaveHp = state.combatWaveHp || {};
     state.battles = state.battles || {};
     if (Combat && Combat.advance) {
       const combatNodes = {};
       for (const m of state.members) {
         if (m.destroyed || !m.assignment || m.assignment.type !== "combat") continue;
-        combatNodes[m.assignment.nodeId] = 1;
+        const nid = m.assignment.nodeId;
+        // 战斗只发生在具名据点（node.raid）。旧档若有人被派在普通节点，就地召回并提示一次，
+        // 避免「派了兵但永远零产出」的静默失效。
+        if (Raids && state.starMap && !Raids.raidAt(state.starMap, nid)) {
+          const nm = m.name;
+          m.assignment = null;
+          m.status = "idle";
+          pushReport(state, "剿匪规则变更", [nm + " 所在的星系没有海盗据点，已自动召回待命。",
+            "现在剿匪需要在星图上选中标有 ⚔ 的据点。"]);
+          continue;
+        }
+        combatNodes[nid] = 1;
       }
       for (const nid in combatNodes) {
         const focus = (state.combatFocus === nid);
@@ -254,6 +265,16 @@
       // 战斗结束（节点已无参战成员）时清空该节点战报与余量，保证「本场」语义正确
       for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; delete state.combatWaveHp[k]; } }
       for (const k in state.combatWaveHp) { if (!combatNodes[k]) delete state.combatWaveHp[k]; }
+    }
+
+    // 0.5) 科技研究推进（单线队列，绝对时间戳 endsAt，离线同样完成）
+    const Tech = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
+    if (Tech) {
+      const done = Tech.advance(state, now);
+      if (done) {
+        pushReport(state, "科技完成 · " + done.node.name,
+          [done.node.desc || "", "编制上限现为 " + Tech.squadCapacity(state) + " 人/据点"].filter(Boolean));
+      }
     }
 
     // 1) 燃料回复

@@ -48,6 +48,11 @@ const booted=()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); }
     m.fitted={ high: fitted, mid: [], low: [], rig: [] };
     st.equipment={}; for(const id of fitted) st.equipment[id]=1;
     st.res.ammo_laser=500; st.res.ammo_missile=500; st.res.ammo_cannon=500;
+    // 2026-11-01：战斗只在星图具名据点（node.raid）。把舰基移到第一个据点再派遣，
+    // 否则 Dispatch.assign 会以「该星系没有海盗据点」拒绝。
+    if (NSK.Data.Raids) NSK.Data.Raids.attach(st.starMap);
+    const rn = st.starMap.nodes.find(function (n) { return !!n.raid; });
+    if (rn) st.base.nodeId = rn.id;
     const asg=NSK.Engine.Dispatch.assign(st, m.id, "combat", { nodeId: st.base.nodeId });
     const saved=NSK.Core.save(st);
     const back=NSK.Core.load();

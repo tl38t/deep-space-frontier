@@ -26,6 +26,9 @@ require(base + "data/equipment.js");
 require(base + "data/starmap.js");
 window.NSK.Data = window.NSK.Data || {};
 window.NSK.Data.Pirates = require(base + "data/pirates.js");
+window.NSK.Data.Raids = require(base + "data/raids.js");
+window.NSK.Data.Tech = require(base + "data/tech.js");
+require(base + "engine/tech.js");
 require(base + "narrative/events.js");
 require(base + "engine/mastery.js");
 require(base + "engine/combat.js");
@@ -43,7 +46,10 @@ const ok = (c, m, d) => {
 };
 
 const map = Data.StarMap.generateStarMap(window.NSK.Core.makeRng(2071900));
-const nid = map.startId;
+// 战斗只发生在具名据点（node.raid），见 data/raids.js
+Data.Raids.attach(map);
+const RAID_NODE = map.nodes.find(n => n.raid);
+const nid = RAID_NODE.id;
 const LASER = "t1_small_laser", MISSILE = "t1_light_missile_launcher", CANNON = "t1_small_cannon";
 const FITS = [
   ["纯激光", [LASER]],
@@ -57,8 +63,8 @@ function mk(weapons, ammo) {
   const st = {
     version: 8, lastSeen: Date.now(), rngSeed: 9, starMap: map,
     res: { credits: 0, rep: 0, ammo_laser: 0, ammo_missile: 0, ammo_cannon: 0 },
-    base: { nodeId: nid, fuel: 200, fuelMax: 200, squadTier: 0, industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [] }, repairQueue: [] },
-    members: [], squad: { enabled: false, members: [], capacity: 20, targetId: null },
+    base: { nodeId: nid, fuel: 200, fuelMax: 200, industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [] }, repairQueue: [] },
+    members: [], tech: { levels: {}, active: null },
     factions: [], reports: [], battles: {}, combatWaveHp: {}, combatFocus: null,
     equipment: { [LASER]: 999, [MISSILE]: 999, [CANNON]: 999 },
   };
@@ -72,7 +78,10 @@ function mk(weapons, ammo) {
     fitted: { high: weapons.slice(), mid: [], low: [], rig: [] },
     hp: { shield: 1e12, armor: 1e12, structure: 1e12 },
   });
-  st.members.forEach(m => Dispatch.assign(st, m.id, "combat", { nodeId: nid }));
+  // ⚠️ 直接写 assignment，不走 Dispatch.assign：本文件测的是「结算数学与 dt 粒度无关」，
+  //    需要在同一据点上放 6 个人做火力叠加。编制上限（科技 1→2→3）是玩法门禁，
+  //    由 arch_probe 单独断言，混进来只会让这里量到的不是结算误差。
+  st.members.forEach(m => { m.assignment = { type: "combat", nodeId: nid }; m.status = "dispatched"; });
   return st;
 }
 
