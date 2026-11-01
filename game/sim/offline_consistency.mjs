@@ -154,7 +154,7 @@ console.log("[4] O(1)");
   const P = Combat.prepareNode(st, nid);
   const segsByDt = {};
   const msByDt = {};
-  for (const dt of [1, 60, 3600, 86400]) {
+  for (const dt of [1, 300, 3600, 86400]) {
     let r;
     const t0 = process.hrtime.bigint();
     for (let i = 0; i < 300; i++) r = Combat.fireSegments(P, st.res, dt, 0);
@@ -164,12 +164,17 @@ console.log("[4] O(1)");
   ok(Math.max(...Object.values(segsByDt)) <= Combat.SEG_GUARD,
     "段数恒 ≤ SEG_GUARD(" + Combat.SEG_GUARD + ")",
     JSON.stringify(segsByDt));
-  ok(segsByDt[86400] - segsByDt[1] <= 4,
-    "dt 放大 86400 倍后段数只多 " + (segsByDt[86400] - segsByDt[1]) + " 段",
-    "dt=1:" + segsByDt[1] + " dt=86400:" + segsByDt[86400]);
-  const ratio = msByDt[86400] / Math.max(msByDt[1], 1e-9);
-  ok(ratio < 3, "单次耗时与 dt 无关（86400s ÷ 1s = " + ratio.toFixed(2) + " 倍，O(dt) 会是 86400 倍）",
-    "dt=1:" + msByDt[1].toFixed(4) + "ms dt=86400:" + msByDt[86400].toFixed(4) + "ms");
+  // 段数只由「三次换层（整波跳）+ 三次换层（余量）」决定，与 dt 的量级无关：
+  //   结构上界 = 3 层 × 2 个阶段 = 6 段；有弹尽再 +3，仍在 SEG_GUARD=14 内。dt 再大也不会更多。
+  const STRUCT_CAP = 6;
+  ok(Math.max(...Object.values(segsByDt)) <= STRUCT_CAP,
+    "段数恒 ≤ " + STRUCT_CAP + "（3 层整波跳 + 3 层余量），不随 dt 增长",
+    JSON.stringify(segsByDt));
+  ok(segsByDt[1] <= 3, "dt 不足一波时只切在单层（≤3 段）", "dt=1:" + segsByDt[1]);
+  const ratio = msByDt[86400] / Math.max(msByDt[3600], 1e-9);
+  ok(ratio < 3, "单次耗时与 dt 无关（86400s ÷ 3600s = " + ratio.toFixed(2) + " 倍，O(dt) 会是 24 倍）",
+    "dt=3600:" + msByDt[3600].toFixed(4) + "ms(" + segsByDt[3600] + "段) dt=86400:" + msByDt[86400].toFixed(4) + "ms(" + segsByDt[86400] + "段)");
+  ok(msByDt[86400] < 0.2, "离线 24h 单次闭式 < 0.2ms", msByDt[86400].toFixed(4) + "ms");
 }
 
 // ---------- 5) 弹药约束不被整波跳除绕过 ----------
@@ -194,33 +199,35 @@ console.log("[5] 弹药约束");
 // ---------- 6) 焦点路径（逐轮掷骰）也必须回卷 ----------
 console.log("[6] 焦点 / 非焦点同规则");
 {
-  // 从「本波还剩 5% 结构」起步打 2 秒 = 2 轮（1 轮 = 1 秒）：
+  // 从「本波还剩 5% 结构」起步打 2 轮（1 轮 = ROUND_SEC 秒）：
   //   第 1 轮在 structure 层，打穿后必须回卷到 shield，第 2 轮才吃得到激光的盾克制。
-  //   不回卷的话两轮都锁在 structure，2 秒伤害 = structure × 2。
+  //   不回卷的话两轮都锁在 structure，伤害 = structure × 2。
   const st = mk([LASER]);
   const P = Combat.prepareNode(st, nid);
+  const DT = Combat.ROUND_SEC * 2;      // 恰好 2 轮，与时基解耦
+  const RD = Combat.ROUND_SEC;          // 每轮 = RD 秒的「每秒」量
   const startHp = P.fleetHp * 0.95;
   const dShield = Combat.layerDps(P.dpsByType, "shield", null);
   const dStruct = Combat.layerDps(P.dpsByType, "structure", null);
-  const expect = dStruct + dShield;      // 第 1 轮结构 + 第 2 轮回盾
+  // 每轮伤害 = 该层「每秒」dps × RD；2 轮 = 结构 1 轮 + 盾 1 轮
+  const expect = (dStruct + dShield) * RD;
 
   const N = 4000;
   let sum = 0;
-  for (let i = 0; i < N; i++) sum += Combat.simulateVolley(P, st.res, 2, startHp).dmg;
+  for (let i = 0; i < N; i++) sum += Combat.simulateVolley(P, st.res, DT, startHp).dmg;
   const simAvg = sum / N;
 
   ok(Math.abs(simAvg - expect) / expect < 0.03,
-    "逐轮仿真跨波后回到 shield（= 结构 1 秒 + 盾 1 秒）",
+    "逐轮仿真跨波后回到 shield（= 结构 1 轮 + 盾 1 轮）",
     "实测=" + simAvg.toFixed(1) + " 期望=" + expect.toFixed(1) + " 偏差=" + (Math.abs(simAvg - expect) / expect * 100).toFixed(2) + "%");
-  ok(simAvg > dStruct * 2 * 1.05,
-    "不是「2 秒都锁在 structure」（那是旧实现的结果）",
-    "实测=" + simAvg.toFixed(1) + " 锁死值=" + (dStruct * 2).toFixed(1));
+  ok(simAvg > dStruct * 2 * RD * 1.05,
+    "不是「两轮都锁在 structure」（那是旧实现的结果）",
+    "实测=" + simAvg.toFixed(1) + " 锁死值=" + (dStruct * 2 * RD).toFixed(1));
 
   // 闭式同场景解析解：先补完本波剩余 5% 结构，剩下的时间按「整波 + 余量打盾」走
-  //   （2 秒 > 0.106s 余量 + 1.857s 一整波，所以会打完一整波再回来打盾）
-  const closed = Combat.fireSegments(P, st.res, 2, startHp).dmg;
+  const closed = Combat.fireSegments(P, st.res, DT, startHp).dmg;
   const tRem = (P.fleetHp * 0.05) / dStruct;
-  let rest = 2 - tRem;
+  let rest = DT - tRem;
   const tf2 = Combat.fullWaveSec(P, null);
   const whole = Math.floor(rest / tf2);
   rest -= whole * tf2;
@@ -246,5 +253,44 @@ for (const [label, ws] of FITS) {
     "新=" + P.waveSec.toFixed(3) + " 旧口径=" + oldStyle.toFixed(3));
 }
 
-console.log("\n======== RESULT: PASS=" + pass + " FAIL=" + fail + " ========");
-if (fail > 0) process.exitCode = 1;
+// ---------- 8) 弹耗与伤害必须同步缩放（焦点路径按「零点几轮」折算时两者都要乘 roundSec） ----------
+//   曾经：伤害按 roundSec 折算、弹耗扣整发 → 同一场战斗在 4Hz 下弹药消耗是 1Hz 的 4 倍。
+//   ROUND_SEC=3 后这个口子会把弹耗放大 3 倍（1Hz 每 tick 只打 1/3 轮却扣一整发），必须钉死。
+console.log("[8] 弹耗与伤害同步缩放");
+{
+  const st = mk([LASER, MISSILE, CANNON]);
+  const P = Combat.prepareNode(st, nid);
+  const TOT = 600;                                     // 同 600 秒，两种结算粒度
+  const ammoStart = 1e9;
+
+  // A) 焦点路径：1 秒一 tick（每 tick 只够 ROUND_SEC 分之一轮）
+  const sa = mk([LASER, MISSILE, CANNON]);
+  sa.res.ammo_laser = sa.res.ammo_missile = sa.res.ammo_cannon = ammoStart;
+  for (const m of sa.members) m.hp = { shield: 1e12, armor: 1e12, structure: 1e12 };
+  let wHpA = 0;
+  for (let i = 0; i < TOT; i++) {
+    const r = Combat.advance(sa, nid, 1, wHpA, true);
+    wHpA = r.waveHp;
+    for (const k in (r.ammoUsed || {})) sa.res[k] -= r.ammoUsed[k];
+  }
+  const usedA = ammoStart - sa.res.ammo_laser;
+
+  // B) 闭式：一次 600 秒
+  const sb = mk([LASER, MISSILE, CANNON]);
+  sb.res.ammo_laser = sb.res.ammo_missile = sb.res.ammo_cannon = ammoStart;
+  for (const m of sb.members) m.hp = { shield: 1e12, armor: 1e12, structure: 1e12 };
+  const rB = Combat.advance(sb, nid, TOT, 0, false);
+  const usedB = (rB.ammoUsed || {}).ammo_laser || 0;
+
+  const dev = Math.abs(usedA - usedB) / Math.max(usedB, 1e-9);
+  ok(dev < 0.03, "焦点 1s/tick 与闭式的弹药消耗一致（同一段真实时间）",
+    "逐tick=" + usedA.toFixed(1) + " 发 闭式=" + usedB.toFixed(1) + " 发 偏差=" + (dev * 100).toFixed(2) + "%");
+
+  // 弹耗 = 每秒弹耗 × 秒数。若还在「每 tick 扣整发」，1s tick 会得到 3 倍（ROUND_SEC）的量。
+  const expectA = P.ammoRate.laser * TOT;
+  ok(Math.abs(usedA - expectA) / Math.max(expectA, 1e-9) < 0.05,
+    "弹耗 = ammoRate(每秒) × 秒数（不随 tick 频率翻倍）",
+    "实测=" + usedA.toFixed(1) + " 期望=" + expectA.toFixed(1));
+}
+
+console.log("\n======== RESULT: PASS=" + pass + " FAIL=" + fail + " ========");if (fail > 0) process.exitCode = 1;

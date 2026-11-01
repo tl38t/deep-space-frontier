@@ -18,7 +18,7 @@
 // 唯一真相 = 血量。我方伤害打敌方编队血量，编队血空即清场 → 结算掉落 → 下一队进场。
 //
 // 两条推进路径，共用同一个状态量 state.combatWaveHp[nodeId]（已打进的伤害）：
-//   · 焦点战场（玩家正看着的节点）：逐轮真掷骰（命中/伤害浮动），1 轮 = 1 秒
+//   · 焦点战场（玩家正看着的节点）：逐轮真掷骰（命中/伤害浮动），1 轮 = ROUND_SEC 秒
 //   · 非焦点 / 离线 / 大 dt：事件驱动分段闭式（按「换层」「弹尽」切段，最多 6 段）
 //   两条路径读写同一个 waveHp 累加器，所以切页签不会白打，也不会重复结算。
 // ================================================================
@@ -50,8 +50,15 @@
   // 以下为防溢出安全阀（不是数值标定，是保证不出负数/无敌）：
   const REPAIR_CAP = 0.50;       // 维修最多抵消敌方火力的比例
   const DMG_RED_CAP = 0.60;      // 损伤控制减伤总上限
-  const ROUND_SEC = 1;           // 一轮 = 1 秒。1 代同样是 setInterval(...,1000) 每秒一回合（js/core/tick.js:172 → combatTick）
-  const SIM_MAX_SEC = 2;         // 焦点仿真的单 tick 上限；超过即退回闭式，保证成本恒定
+  // ★ 时基：一轮 = 几秒。这是全文件唯一的时间刻度，改它等于整体时间膨胀。
+  //   1 代 = setInterval(runScheduledGameTick, 1000) 每秒一回合（js/core/tick.js:172 → combatTick）。
+  //   本作按「放慢到 1 代 1/3 节奏」的要求改成 3 秒一轮：
+  //   单发伤害 / 命中 / 克制 / 浮动 / 维修绝对值 / 每轮弹耗 全部照 1 代原值一字不动，
+  //   只是「一秒里能开几轮」变成 1/3 ⇒ 一波耗时 ×3、双方火力/秒 ÷3、弹耗/秒 ÷3、每波收益不变。
+  //   ⚠️ 想再调快慢只改这一个数，不要另外乘任何伤害系数（那会同时改掉弹药经济）。
+  const ROUND_SEC = 3;
+  const SIM_MAX_ROUNDS = 2;      // 焦点仿真单 tick 最多掷几轮（成本封顶，与秒数无关）
+  const SIM_MAX_SEC = ROUND_SEC * SIM_MAX_ROUNDS;   // = 6s；dt 超过它就退回闭式，保证成本恒定
   // 闭式分段的 guard 上限：3 层推进 + 1 次整波跳 + 3 层推进 + 3 次弹尽 = 10，取 14 留余量。
   // 这个常数是「O(1) 与 dt 无关」的硬保证，不要按 dt 调大。
   const SEG_GUARD = 14;
@@ -165,12 +172,13 @@
         if (c.kind === "weapon") {
           const ht = c.baseHit || 100;
           const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式
-          const dmg = (c.baseDamage || 0) * skillFactor;            // 1 代原值，不乘任何缩放系数
+          const dmg = (c.baseDamage || 0) * skillFactor;            // 1 代原值（每轮伤害），不乘任何缩放系数
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
-          out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance;
-          out.ammoRate[c.weaponType] = (out.ammoRate[c.weaponType] || 0) + (c.ammoCost || 0);
+          // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
+          out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
+          out.ammoRate[c.weaponType] = (out.ammoRate[c.weaponType] || 0) + (c.ammoCost || 0) / ROUND_SEC;
         } else if (c.kind === "repair") {
-          out.repair += (c.amount || 0);                            // 1 代每轮恢复绝对值
+          out.repair += (c.amount || 0) / ROUND_SEC;                // 1 代每轮恢复绝对值 → 每秒
         }
       }
     }
@@ -236,8 +244,9 @@
     const playerDodge = cnt > 0 ? dodgeSum / cnt : 20;
 
     // 敌方每秒伤害 = Σ 每艘敌舰 baseDamage × 命中系数（1 代 calcCombatDamage 逐敌判定）
+    //   baseDamage 是「每轮」量，一轮 ROUND_SEC 秒 ⇒ 除 ROUND_SEC 得每秒。
     let incomingRaw = 0;
-    for (const s of (fleet.ships || [])) incomingRaw += s.baseDamage * hitCoeff(s.hit, playerDodge);
+    for (const s of (fleet.ships || [])) incomingRaw += s.baseDamage * hitCoeff(s.hit, playerDodge) / ROUND_SEC;
 
     // 敌方对我方的压力（维修器每轮恢复绝对值，1 代 kind:"repair" 的 amount 直接用）
     const dmgReduction = Math.min(DMG_RED_CAP, dmgRedRaw);
@@ -251,7 +260,7 @@
     const fleetHp = fleet.totalHp;
     // 一波真实耗时 = 盾段 + 甲段 + 构段，每段含该层克制（与 fireSegments 同一口径）。
     // ⚠️ 旧写法 `fleetHp / squadDps` 是「无克制」的，会让 UI 的一波时长比实际偏长
-    //    （实测激光队：无克制 2.12s vs 真实 1.86s）。
+    //    （ROUND_SEC=1 时实测激光队：无克制 2.12s vs 真实 1.86s；改时基后两者同比例放大）。
     let waveSec = 0;
     for (const L of LAYER_ORDER) {
       const d = layerDps(dpsByType, L, null);
@@ -476,8 +485,10 @@
   // 公式与 1 代 combatTick 一致：逐武器判命中（hit^1.4 系数）→ 乘当前层克制 → 乘伤害浮动。
   // 与闭式同量纲：E[单轮伤害] = Σ 单发伤害 × 命中率 × 克制 = dpsByType × 克制，故两路长期收益一致。
   function simulateVolley(P, res, sec, waveHp) {
-    const rounds = Math.max(1, Math.min(SIM_MAX_SEC, Math.ceil(sec || 1)));
-    const roundSec = (sec || 1) / rounds;      // 不足一轮时按时间比例折算
+    const span = Math.max(0, sec || 0);
+    const roundsF = span / ROUND_SEC;                                  // 这段时长等于多少轮
+    const rounds = Math.max(1, Math.min(SIM_MAX_ROUNDS, Math.ceil(roundsF)));
+    const roundSec = roundsF / rounds;         // 每轮实际占比（<1 = 本 tick 只够打零点几轮）
     const stock = {};
     for (const t of AMMO_TYPES) stock[t] = Math.max(0, (res && res[AMMO_OF[t]]) || 0);
     let dmg = 0, hits = 0, misses = 0, hp = Math.max(0, waveHp || 0);
@@ -487,8 +498,10 @@
       let roundDmg = 0;
       for (const w of P.weapons) {
         const t = w.type;
-        if (w.ammoCost > 0 && stock[t] < w.ammoCost) { misses++; continue; }   // 该弹种打空 → 这门炮哑火
-        if (w.ammoCost > 0) stock[t] -= w.ammoCost;
+        // 一轮打一发；本 tick 只覆盖零点几轮时，伤害与弹耗都按 roundSec 折算（两者同步，弹药经济不漂）
+        const cost = (w.ammoCost || 0) * roundSec;
+        if (cost > 1e-12 && stock[t] < cost) { misses++; continue; }   // 该弹种打空 → 这门炮哑火
+        if (cost > 1e-12) stock[t] -= cost;
         if (Math.random() < w.hitChance) {
           hits++;
           roundDmg += w.dmg * counterMult(t, layer) * damageVariance() * roundSec;
@@ -640,7 +653,7 @@
     // 1 代原式常量（不是标定值）
     COUNTER_MULT, HIT_EXP, DMG_VAR_MIN, DMG_VAR_SPAN,
     // 安全阀
-    REPAIR_CAP, DMG_RED_CAP, ROUND_SEC, SIM_MAX_SEC, SEG_GUARD,
+    REPAIR_CAP, DMG_RED_CAP, ROUND_SEC, SIM_MAX_ROUNDS, SIM_MAX_SEC, SEG_GUARD,
     AMMO_TYPES, AMMO_OF, AMMO_CN, COUNTER_OF, LAYER_ORDER,
     hitCoeff, counterMult, layerAt, layerDps, fullWaveSec,
     prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp,
