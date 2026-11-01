@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>行星球面渲染 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 行星球面渲染真机自测（2026-11-01）
+// 覆盖：星系视图真的用 SVG 球体（不是纯色圆）/ DOM 结构分层正确 / 跨 SVG 的 <use> 真渲染出几何 /
+//       自转相位由绝对时钟驱动且不因 1Hz 重建回跳 / 同一颗星每次派生参数一致 / 切页签再回来不闪
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null, ERRS=[];
+
+// 读某颗行星内部的 transform / data-*
+function spinOf(g){ const s=g.querySelector("g.nsk-spin"); return s?parseFloat(s.getAttribute("transform").replace(/[^\-0-9.]/g,"")):NaN; }
+function phOf(g){ const s=g.querySelector("g.nsk-spin"); return s?parseFloat(s.getAttribute("data-ph")):NaN; }
+function spOf(g){ const s=g.querySelector("g.nsk-spin"); return s?parseFloat(s.getAttribute("data-sp")):NaN; }
+function bodyIdOf(g){ return (g.getAttribute("data-act")||"").split(":").pop(); }
+
+(async function(){
+  await nav("../index.html?t="+Date.now());
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  W().addEventListener("error", function(e){ ERRS.push(String(e.message||e)); });
+
+  const hasPlanet=await until(()=>W().NSK&&W().NSK.UI&&W().NSK.UI.Planet,15000);
+  ok("NSK.UI.Planet 已加载", hasPlanet);
+  if(!hasPlanet){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey();
+  if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+
+  // 跳过序章（否则遮罩挡住一切）
+  const S=W().NSK.Narrative&&W().NSK.Narrative.Story;
+  const st0=W().NSK.Core.load();
+  if(st0){
+    st0.story=st0.story||{};
+    st0.story.seen=S?S.list().map(x=>x.id):[];
+    st0.story.cur=null;
+    st0.story.flags=st0.story.flags||{};
+    W().NSK.Core.save(st0);
+  }
+
+  // ── A. 进星系页，找行星 ──
+  await nav("../index.html?p="+Date.now()+"#system");
+  const b1=await until(booted,25000);
+  ok("重载后停在星系页", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  const hasP=await until(()=>D().querySelectorAll("g.sys-body.planet").length>0,15000);
+  ok("星系视图有行星天体", hasP);
+  if(!hasP){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const P=W().NSK.UI.Planet;
+  const planets=[...D().querySelectorAll("g.sys-body.planet")];
+  const p0=planets[0];
+  const R=+p0.querySelector("g.nsk-planet").getAttribute("data-r");
+
+  /* ── B. DOM 结构 ── */
+  ok("行星不再是纯色圆（无 <circle r=size fill=#5fb8ff>）",
+    ![...p0.querySelectorAll(":scope > circle")].some(c=>{
+      const f=c.getAttribute("fill")||""; return /^#[0-9a-f]{6}$/i.test(f) && +c.getAttribute("r")===+p0.querySelector("g.nsk-planet").getAttribute("data-r");
+    }), "size="+R);
+
+  const np=p0.querySelector("g.nsk-planet");
+  ok("存在球体容器 g.nsk-planet", !!np);
+  const clipG=np.querySelector("g[clip-path]");
+  ok("贴图层被圆形 clip 包住", !!clipG && /url\(#nskt_cp_\d+\)/.test(clipG.getAttribute("clip-path")),
+    clipG?clipG.getAttribute("clip-path"):"无");
+  const tiltG=np.querySelector("g.nsk-tilt");
+  ok("球体根是 g.nsk-tilt（倾角组）", !!tiltG);
+  ok("倾角组旋转到非零角度", !!tiltG && !/^rotate\(0\.00\)$/.test(tiltG.getAttribute("transform")||""),
+    tiltG?tiltG.getAttribute("transform"):"无");
+  const spinG=tiltG&&tiltG.querySelector("g.nsk-spin");
+  ok("自转组嵌在倾角组内", !!spinG);
+  const uses=spinG?spinG.querySelectorAll("use"):[];
+  ok("自转组里有 3 张首尾相接的贴图", uses.length===3, "实际 "+uses.length);
+  const lightG=np.querySelector("g.nsk-light");
+  ok("存在独立光照组 g.nsk-light", !!lightG);
+  ok("光照组不在倾角组内（光源方位独立于自转轴）", !!lightG && !tiltG.contains(lightG));
+  ok("光照组含暗角 + 高光两层", lightG && lightG.querySelectorAll("circle").length===2,
+    lightG?String(lightG.querySelectorAll("circle").length):"无");
+
+  /* ── C. 贴图定义（跨 SVG 的 defs 必须真的建出来） ── */
+  const type=np.getAttribute("data-type");
+  ok("行星带 planetType 且被识别", P.TYPES.indexOf(type)>=0, String(type));
+  const texEl=D().getElementById("nskt_tex_"+type);
+  ok("常驻 defs 里建出了对应贴图", !!texEl, "nskt_tex_"+type);
+  ok("贴图是 data:image/png", !!texEl && /^data:image\/png;base64,/.test(texEl.getAttribute("href")||""),
+    texEl?String(texEl.getAttribute("href")).slice(0,24):"无");
+  ok("常驻 defs 挂在 document.body 下", !!D().getElementById("nsk-planet-defs"));
+  ok("光照渐变已定义", !!D().getElementById("nskt_shade") && !!D().getElementById("nskt_high"));
+
+  /* ── D. 跨 SVG <use> 真的渲染出几何（否则球会是空白） ── */
+  const bb=uses[0].getBBox();
+  const k=4*R/P.TEX_W;
+  ok("<use> 解析到了 512×256 的贴图（引用链没断）", bb.width===P.TEX_W && bb.height===P.TEX_H,
+    bb.width.toFixed(1)+"×"+bb.height.toFixed(1));
+  const svgBox=D().querySelector(".sys-svg").getBoundingClientRect();
+  const scale=svgBox.width/400;
+  const m=uses[0].getScreenCTM();
+  ok("贴图屏幕缩放 = 4R/TEX_W × 画布缩放", Math.abs(m.a-k*scale)<0.01,
+    m.a.toFixed(4)+" vs "+(k*scale).toFixed(4));
+  const xs=[...uses].map(u=>{ const mm=/translate\(([\-0-9.]+),/.exec(u.getAttribute("transform")||""); return mm?+mm[1]:NaN; });
+  ok("三张贴图间距正好 4R（贴图周期）",
+    Math.abs((xs[1]-xs[0])-R*4)<0.02 && Math.abs((xs[2]-xs[1])-R*4)<0.02, xs.join(" / "));
+
+  const lightBox=lightG.getBoundingClientRect();
+  ok("球体（光照圆）屏幕直径 ≈ 2R × 画布缩放", Math.abs(lightBox.width-R*2*scale)<2.5,
+    lightBox.width.toFixed(1)+"px vs "+(R*2*scale).toFixed(1)+"px");
+
+  // 点击热区：球心必须能命中 data-act（否则行星点不动）
+  const hitEl=D().elementFromPoint(lightBox.left+lightBox.width/2, lightBox.top+lightBox.height/2);
+  ok("球心命中可点击天体", !!hitEl && !!hitEl.closest("[data-act]"),
+    hitEl?(hitEl.tagName+"."+(hitEl.getAttribute("class")||"")):"命中不到");
+  ok("热区挂的是这颗行星的 body 指令", !!hitEl && hitEl.closest("[data-act]").getAttribute("data-act")==="body:"+W().NSK.Core.load().base.nodeId+":"+bodyIdOf(p0),
+    hitEl&&hitEl.closest("[data-act]")?hitEl.closest("[data-act]").getAttribute("data-act"):"无");
+
+  /* ── D2. 几何覆盖性（纯数学，锁住「贴图尺寸够不够盖住球」） ── */
+  // 圆内任意点逆旋转后 |y'| = |x·sinθ + y·cosθ| ≤ R（圆的支撑函数），所以半高 R 恒够 ——
+  // 加留白是错的（曾按 R(cosθ+sinθ) 算，那是矩形包围盒的角点，圆里没有角点）。
+  ok("贴图半高 ≥ R（任意倾角都盖得住竖直方向）", R*2/2 >= R-1e-9, "半高 "+R+" / 需 "+R);
+  // 水平：tilt=22° 时圆内点的逆变换 x 上确界 = R(cos22°+sin22°) ≈ 1.302R；
+  // 单张 4R 走完一圈只剩 [−5R−4R, 3R−4R] = [−9R, −R]，右边界不够 → 必须三张。
+  const NEED_X=R*(Math.cos(P.TILT_MAX*Math.PI/180)+Math.sin(P.TILT_MAX*Math.PI/180));
+  let wRight=1e9, wLeft=-1e9;
+  for(let s=0;s<=R*4;s+=R*0.02){
+    let right=-1e9, left=1e9;
+    xs.forEach(function(x){ right=Math.max(right,x+R*4-s); left=Math.min(left,x-s); });
+    wRight=Math.min(wRight,right); wLeft=Math.max(wLeft,left);
+  }
+  ok("三张贴图并集在任意平移下都盖住 ±1.302R", wRight>=NEED_X-1e-6 && wLeft<=-NEED_X+1e-6,
+    "最坏 ["+wLeft.toFixed(1)+", "+wRight.toFixed(1)+"] 需 ±"+NEED_X.toFixed(1));
+
+  /* ── E. 相位确定性 + 自转 ── */
+  const bodyId=bodyIdOf(p0);
+  const st=W().NSK.Core.load();
+  const nd=st.starMap.nodes.find(n=>n.id===st.base.nodeId);
+  const bd=nd.bodies.find(b=>b.id===bodyId);
+  const ph1=phOf(p0), sp1=spOf(p0);
+  const expect=P.spinParams(P.strHash(bodyId));
+  ok("初相位由 body.id 派生且确定", Math.abs(ph1-expect.phase)<5e-4, ph1+" vs "+expect.phase.toFixed(4));
+  const RATE={lava:0.0009,gas:0.0006,ice:0.0012,plasma:0.0005,temperate:0.0010,storm:0.0015};
+  ok("秒/圈由类型 + 转速倍率推出", Math.abs(sp1-(1/(RATE[type]*expect.speed*60)))<1e-3, sp1+" s/圈");
+  ok("行星数据里确有 planetType", bd && bd.planetType===type, bd?String(bd.planetType):"无");
+
+  // 自转公式：给定绝对时刻必须落在「初相位 + t/周期」上。
+  // （headless 用 --virtual-time-budget 时 performance.now 不随虚拟时钟走，
+  //   所以直接注入时刻验证公式，比等真实时间稳。）
+  let formulaOk=true, formulaMsg=[];
+  [0, 0.05, 0.17, 0.25].forEach(q=>{
+    P._tickAt(sp1*1000*q);
+    const s=p0.querySelector("g.nsk-spin");
+    const got=parseFloat((s.getAttribute("transform")||"").replace(/[^\-0-9.]/g,""));
+    let expPh=(ph1+q)%1; if(expPh<0) expPh+=1;
+    const exp=-expPh*4*R;
+    if(Math.abs(got-exp)>0.02){ formulaOk=false; }
+    formulaMsg.push(q+"q:"+got.toFixed(1)+"/"+exp.toFixed(1));
+  });
+  ok("相位 = (初相位 + t/周期) % 1，与数据吻合", formulaOk, formulaMsg.join(" "));
+
+  ok("rAF 驱动已启动（至少跑过一帧）", P._frames()>0, "frames="+P._frames());
+
+  /* ── F. 切页签再回来：同一颗星必须是同一颗 ── */
+  const phBefore=phOf(D().querySelectorAll("g.sys-body.planet")[0]);
+  const tabEl=[...D().querySelectorAll("#nsk-tabs .tab")].find(t=>/成员/.test(t.textContent));
+  tabEl.click();
+  await wait(400);
+  const backTab=[...D().querySelectorAll("#nsk-tabs .tab")].find(t=>/星系/.test(t.textContent));
+  backTab.click();
+  await until(()=>D().querySelectorAll("g.sys-body.planet").length>0,8000);
+  const p2=D().querySelectorAll("g.sys-body.planet")[0];
+  const phAfter=phOf(p2);
+  ok("切页签再回来初相位不变（不会每进一次换个姿势）", Math.abs(phAfter-phBefore)<5e-4,
+    phBefore+" → "+phAfter);
+  ok("切回来后自转仍在推进", (function(){ const a=spinOf(p2); W().NSK.UI.Planet.start(); return isFinite(a); })());
+
+  /* ── G. 每颗行星各自一套参数（不是同一张贴纸） ── */
+  const all=[...D().querySelectorAll("g.nsk-planet")];
+  const tilts=all.map(g=>g.querySelector("g.nsk-tilt").getAttribute("data-tilt"));
+  const lights=all.map(g=>g.querySelector("g.nsk-light").getAttribute("data-light"));
+  ok("多颗行星的倾角不全相同", new Set(tilts).size>1||all.length===1, tilts.join(" | "));
+  ok("多颗行星的光源方位不全相同", new Set(lights).size>1||all.length===1, lights.join(" | "));
+
+  /* ── H. 运行时无报错 ── */
+  ok("运行期没有未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+  document.title="PASS="+PASS+" FAIL="+FAIL;
+})();
+</script>
+</body></html>

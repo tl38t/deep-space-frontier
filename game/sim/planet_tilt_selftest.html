@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>行星倾斜 / 随机光照 · 自测</title>
+<style>
+  :root{ --bg:#0a0e14; --panel:#111823; --line:#1e2a38; --fg:#c8d4e2; --dim:#6b7c90; --acc:#5ad1a0; --bad:#e8695a; }
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 24px 60px;background:var(--bg);color:var(--fg);
+    font:13px/1.65 -apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+  h1{font-size:16px;margin:0 0 4px;font-weight:600}
+  h2{font-size:12px;margin:22px 0 8px;color:var(--acc);font-weight:600;
+    border-bottom:1px solid var(--line);padding-bottom:5px}
+  #log{font:12px/1.7 ui-monospace,Consolas,monospace;background:var(--panel);
+    border:1px solid var(--line);border-radius:6px;padding:10px 13px;white-space:pre-wrap}
+  .pass{color:var(--acc)} .fail{color:var(--bad);font-weight:600}
+  .res{margin-top:10px;font-weight:600}
+  .row{display:flex;flex-wrap:wrap;gap:4px;align-items:flex-end;margin-top:6px}
+  .item{text-align:center}
+  .cap{font-size:10px;color:var(--dim);line-height:1.35;margin-top:2px}
+  iframe{position:absolute;left:-9999px;width:4px;height:4px;border:0}
+</style>
+</head>
+<body>
+
+<h1>行星倾斜 / 随机光照 自测（原型）</h1>
+<p style="color:#e8b45a;margin:0 0 2px">⚠ 本页测的是 <code>planet_demo.html</code> 里的 SVG 原型（<code>svgApprox</code>），
+用于定型「倾角 + 独立光源」这套结构。实装进游戏的是 <code>js/ui/planet-svg.js</code>，
+对应的集成自测是 <code>planet_render_selftest.html</code>。改本体不必指望本页变红。</p>
+<p style="color:#6b7c90;margin:0 0 2px">同一个 temperate 贴图，只改倾角与光源方位。下面 96px 放大，肉眼可直接核对「8 颗球朝向各不相同、且没有一颗被切掉一块」。</p>
+
+<h2>96px 放大（① 按 body.id 派生 ② 倾角梯度 −22°…+22° ③ 同上但换成气态+星环）</h2>
+<div id="gallery"></div>
+
+<h2>断言</h2>
+<div id="log">running…</div>
+
+<iframe id="fr" src="planet_demo.html?freeze=0.3"></iframe>
+
+<script>
+"use strict";
+const L = [];
+function ok(name, cond, detail){
+  L.push((cond ? "PASS" : "FAIL") + "  " + name + (detail ? "  [" + detail + "]" : ""));
+  return cond;
+}
+function flush(){
+  const pass = L.filter(s => s.startsWith("PASS")).length;
+  const fail = L.length - pass;
+  document.getElementById("log").innerHTML =
+    L.map(s => '<span class="' + (s.startsWith("PASS") ? "pass" : "fail") + '">' + s + "</span>").join("\n")
+    + '\n<span class="res">RESULT: PASS=' + pass + " FAIL=" + fail + "</span>";
+  document.title = "PASS=" + pass + " FAIL=" + fail;
+}
+
+const fr = document.getElementById("fr");
+let started = false;
+
+fr.addEventListener("load", boot);
+setTimeout(function(){ if (!started) boot(); }, 1200);   // 兜底：load 已过也能启动
+
+function boot(){
+  if (started) return;
+  started = true;
+  setTimeout(run, 120);
+}
+
+function run(){
+  const W = fr.contentWindow;
+  if (!ok("demo 页已加载，svgApprox 可用", W && typeof W.svgApprox === "function")) { flush(); return; }
+
+  const TILT_MAX = 22;
+
+  /* ---------- 1. 参数派生 ---------- */
+  const p1 = W.spinParams(W.strHash("node_3_b5"));
+  const p2 = W.spinParams(W.strHash("node_3_b5"));
+  ok("同一 id 两次派生完全一致（每次进游戏长相不变）",
+    JSON.stringify(p1) === JSON.stringify(p2), JSON.stringify(p1));
+
+  const pOther = W.spinParams(W.strHash("node_3_b6"));
+  ok("不同 id 派生出不同参数",
+    p1.tilt !== pOther.tilt || p1.light !== pOther.light, "tilt " + p1.tilt.toFixed(1) + " vs " + pOther.tilt.toFixed(1));
+
+  let tMin = 1e9, tMax = -1e9, lMin = 1e9, lMax = -1e9, sMin = 1e9, sMax = -1e9, phMin = 1e9, phMax = -1e9;
+  let tiltSpread = 0;
+  for (let i = 0; i < 400; i++) {
+    const p = W.spinParams(W.strHash("body_" + i));
+    tMin = Math.min(tMin, p.tilt); tMax = Math.max(tMax, p.tilt);
+    lMin = Math.min(lMin, p.light); lMax = Math.max(lMax, p.light);
+    sMin = Math.min(sMin, p.speed); sMax = Math.max(sMax, p.speed);
+    phMin = Math.min(phMin, p.phase); phMax = Math.max(phMax, p.phase);
+  }
+  tiltSpread = tMax - tMin;
+  ok("400 个 id 的倾角都在 ±22° 内", tMin >= -TILT_MAX - 1e-9 && tMax <= TILT_MAX + 1e-9,
+    tMin.toFixed(1) + "° ~ " + tMax.toFixed(1) + "°");
+  ok("倾角确实铺开到接近满量程（不是常数）", tiltSpread > TILT_MAX * 1.6, "跨度 " + tiltSpread.toFixed(1) + "°");
+  ok("光源方位在 0~360° 内", lMin >= 0 && lMax < 360, lMin.toFixed(0) + "° ~ " + lMax.toFixed(0) + "°");
+  ok("转速倍率在 0.7~1.3 内", sMin >= 0.7 - 1e-9 && sMax <= 1.3 + 1e-9, sMin.toFixed(2) + " ~ " + sMax.toFixed(2));
+  ok("初始相位在 0~1 内", phMin >= 0 && phMax < 1, phMin.toFixed(2) + " ~ " + phMax.toFixed(2));
+
+  /* ---------- 2. DOM 结构 ---------- */
+  const S = 96;
+  const html = W.svgApprox("temperate", S, { tilt: 15, light: 210, speed: 1, phase: 0.3 });
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  const svg = box.querySelector("svg");
+  ok("生成了 SVG", !!svg);
+
+  const tiltG = svg && svg.querySelector("g.nsk-tilt");
+  ok("存在倾角组 g.nsk-tilt", !!tiltG);
+  ok("倾角值写进了 rotate", tiltG && /rotate\(15\.00,48,48\)/.test(tiltG.getAttribute("transform")),
+    tiltG ? tiltG.getAttribute("transform") : "无");
+
+  const spinG = tiltG && tiltG.querySelector("g.nsk-spin");
+  ok("自转组嵌在倾角组内部（改 translate 不会覆盖倾角）", !!spinG);
+
+  const imgs = spinG ? spinG.querySelectorAll("image") : [];
+  ok("自转组里有 3 张贴图（第三张兜住最坏平移位置）", imgs.length === 3, "实际 " + imgs.length);
+
+  const lightG = svg && svg.querySelector("g.nsk-light");
+  ok("存在光照组 g.nsk-light", !!lightG);
+  ok("光照值写进了 rotate", lightG && /rotate\(210\.00,48,48\)/.test(lightG.getAttribute("transform")),
+    lightG ? lightG.getAttribute("transform") : "无");
+  ok("光照组不在倾角组内（光源方位独立于自转轴）",
+    lightG && !tiltG.contains(lightG));
+
+  const lightWrapper = lightG && lightG.parentNode;
+  ok("光照组被圆形 clip 包住（旋转不会带出方角）",
+    lightWrapper && lightWrapper.getAttribute && /_cp\)/.test(lightWrapper.getAttribute("clip-path") || ""),
+    lightWrapper && lightWrapper.getAttribute ? lightWrapper.getAttribute("clip-path") : "无");
+
+  /* ---------- 3. 几何自检：旋转后球内每个点都必须落在贴图矩形内 ---------- */
+  if (imgs.length) {
+    const texW = parseFloat(imgs[0].getAttribute("width"));
+    const texH = parseFloat(imgs[0].getAttribute("height"));
+    const R = (S/2 - 4) * 0.66;
+    ok("贴图渲染宽度 = 4R（一盏经度周期）", Math.abs(texW - R*4) < 1e-6, texW.toFixed(2) + " vs " + (R*4).toFixed(2));
+    // 竖直方向：矩形跟着旋转、圆不转 → 圆内点逆旋转后半径不变（|p'| = |p| ≤ R），
+    // 所以恒在半高 R 的矩形内。**不需要留白**，加了反而会让极点露出纯色块。
+    ok("贴图高度 = 2R（绕中心旋转的矩形始终盖住其内切圆）",
+      Math.abs(texH - 2*R) < 1e-6, texH.toFixed(2) + " vs " + (2*R).toFixed(2));
+
+    let vWorst = 0;
+    for (let a = -TILT_MAX; a <= TILT_MAX; a += 0.5) {
+      const t = a * Math.PI / 180;
+      // 圆内点逆旋转后 |y'| 的上确界：max over 圆内点 of |x·sin t + y·cos t| = R
+      vWorst = Math.max(vWorst, R);
+    }
+    ok("任意 ±22° 倾角下，竖直方向贴图都盖得住球", texH/2 >= vWorst - 1e-9,
+      "需要 " + vWorst.toFixed(2) + "，实有 " + (texH/2).toFixed(2));
+
+    // 水平：三张间距 4R，平移 0..4R，最坏位置仍要覆盖 ±R(cosθ+sinθ)
+    const xs = Array.prototype.map.call(imgs, function(g){ return parseFloat(g.getAttribute("x")); });
+    const cx = S/2;
+    ok("三张图间距正好 4R（贴图周期）",
+      Math.abs((xs[1] - xs[0]) - R*4) < 1e-6 && Math.abs((xs[2] - xs[1]) - R*4) < 1e-6,
+      (xs[1] - xs[0]).toFixed(1) + " / " + (xs[2] - xs[1]).toFixed(1));
+    let hWorst = 1e9;
+    for (let s = 0; s <= R*4; s += R*0.05) {
+      // 各图平移 -s 后的并集右边界
+      let right = -1e9;
+      for (let i = 0; i < xs.length; i++) right = Math.max(right, xs[i] + texW - s);
+      hWorst = Math.min(hWorst, right);
+    }
+    const needH = R * Math.max(Math.cos(TILT_MAX*Math.PI/180) + Math.sin(TILT_MAX*Math.PI/180), 1);
+    ok("任意平移位置，水平方向并集都盖得住球", hWorst >= cx + needH - 1e-6,
+      "最坏右边界 " + hWorst.toFixed(2) + "，需 ≥ " + (cx + needH).toFixed(2));
+  }
+
+  /* ---------- 4. tilt=0 必须与不倾斜完全等价 ---------- */
+  const html0 = W.svgApprox("temperate", 64, { tilt: 0, light: 0, speed: 1, phase: 0.3 });
+  ok("tilt=0 时倾角组退化为恒等变换", /data-tilt="0\.0"/.test(html0) && /rotate\(0\.00,/.test(html0));
+
+  /* ---------- 五、目视画廊 ---------- */
+  const gal = document.getElementById("gallery");
+  function addRow(type, list, captionFn){
+    const row = document.createElement("div"); row.className = "row";
+    list.forEach(function(p, i){
+      const item = document.createElement("div"); item.className = "item";
+      const d = document.createElement("div");
+      d.innerHTML = W.svgApprox(type, 96, p);
+      item.appendChild(d);
+      const cap = document.createElement("div"); cap.className = "cap";
+      cap.innerHTML = captionFn(p, i);
+      item.appendChild(cap);
+      row.appendChild(item);
+    });
+    gal.appendChild(row);
+  }
+  const derived = [];
+  for (let i = 0; i < 8; i++) derived.push(W.spinParams(W.strHash("planet_" + i)));
+  addRow("temperate", derived, function(p){ return "倾" + Math.round(p.tilt) + "°<br>光" + Math.round(p.light) + "°"; });
+
+  const fixed = [];
+  for (let i = 0; i < 8; i++) fixed.push({ tilt: -TILT_MAX + i * (TILT_MAX*2/7), light: -60, speed: 1, phase: 0.3 });
+  addRow("temperate", fixed, function(p){ return Math.round(p.tilt) + "°"; });
+
+  // 气态行星：横条纹 + 星环，倾角变化一眼可见（环也跟着歪，因为环垂直于自转轴）
+  addRow("gas", fixed, function(p){ return Math.round(p.tilt) + "°"; });
+
+  flush();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>pending</title>
+<style>body{margin:0;background:#0a0e14;color:#c8d4e2;font:13px/1.6 monospace;padding:10px}</style>
+</head>
+<body>
+<div id="out">pending</div>
+<svg id="stage" width="400" height="400" viewBox="0 0 400 400" style="background:#070b12;display:none"></svg>
+<script src="../js/ui/planet-svg.js"></script>
+<script>
+"use strict";
+// 行星渲染性能实测（真实时间，靠 --timeout 保证有足够墙钟）
+// 用 4 颗行星 = 游戏内上限（当前每个星系 2~3 行星 + 空间站；取 4 做上界）
+const P = window.NSK.UI.Planet;
+const stage = document.getElementById("stage");
+const TYPES = ["lava", "gas", "ice", "temperate"];
+const bodies = [];
+for (let i = 0; i < 4; i++) bodies.push({ id: "perf_" + i, size: 11 + i * 2, planetType: TYPES[i] });
+
+stage.style.display = "";
+stage.innerHTML = bodies.map(function (b, i) {
+  return '<g class="sys-body planet" transform="translate(' + (60 + i * 80) + ',200)">' + P.bodyHtml(b) + "</g>";
+}).join("");
+
+function bench(name, fn, n) {
+  fn(); fn();                                  // 预热（JIT + 首次布局）
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) fn(i);
+  const dt = performance.now() - t0;
+  return { name: name, per: dt / n, total: dt, n: n };
+}
+
+const rows = [];
+
+// A. 纯 JS：只写 transform 属性（不触发同步布局，浏览器在帧末统一处理）
+rows.push(bench("tick 纯 JS（4 颗 = 12 个 &lt;use&gt;）", function (i) { P._tickAt(i * 16); }, 3000));
+
+// B. 最坏情况：每次 tick 后强制同步布局（读 getBBox 会 flush）
+rows.push(bench("tick + 强制布局刷新（最坏情况）", function (i) { P._tickAt(i * 16); stage.getBBox(); }, 300));
+
+// C. 每帧重建一次样式（模拟浏览器真实帧：属性变了要重新算样式）
+rows.push(bench("tick + offsetWidth 强制重排（上界）", function (i) { P._tickAt(i * 16); void document.body.offsetWidth; }, 300));
+
+// D. 生成 HTML（1Hz 重建时每颗行星一次）
+rows.push(bench("bodyHtml() 生成字符串 / 颗", function (i) { P.bodyHtml(bodies[i & 3]); }, 3000));
+
+// E. 贴图生成（一次性）—— 已在加载时做过，这里只报单张成本
+const _doc = document;
+let texMs = 0;
+(function () {
+  const t0 = performance.now();
+  // 直接读已缓存的 dataURL 长度，评估常驻 defs 的体积
+  for (const t of P.TYPES) { const u = P._texUrl(t); if (u) texMs += u.length; }
+})();
+
+let html = "";
+rows.forEach(function (r) {
+  html += r.name + "：<b>" + r.per.toFixed(4) + " ms</b> / 次（" + r.n + " 次，共 " + r.total.toFixed(1) + " ms）\n";
+});
+html += "\n6 张贴图 base64 合计：" + (texMs / 1024).toFixed(0) + " KB（常驻 defs，不参与每秒重建）\n";
+html += "本页片段时间槽：" + (1000 / 60).toFixed(2) + " ms/帧（60fps）\n";
+html += "结论：A == 每帧主线程增量；D × N(行星数) × 1Hz == 重建增量。";
+
+document.getElementById("out").innerHTML = html;
+document.title = "PERF A=" + rows[0].per.toFixed(4) + " D=" + rows[3].per.toFixed(4);
+</script>
+</body></html>

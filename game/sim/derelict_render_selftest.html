@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>残骸场定位 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 残骸场定位真机自测（2026-11-01）
+// 覆盖：星系视图里残骸场真的画在画布内 / 数据层 orbit=104 / 旧档 orbit=210 被迁移 / 迁移后重载不再变动
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+// 解析星系视图里所有残骸场的 SVG 坐标
+function derelictCoords(){
+  const gs=D().querySelectorAll("g.sys-body.derelict");
+  return [...gs].map(g=>{
+    const m=/translate\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/.exec(g.getAttribute("transform")||"");
+    return m?{x:+m[1],y:+m[2]}:null;
+  }).filter(Boolean);
+}
+const inCanvas=(p)=>p.x>=0&&p.x<=400&&p.y>=0&&p.y<=400;
+const edgeOf=(p)=>Math.min(p.x,p.y,400-p.x,400-p.y);
+
+// 存档键（App 侧带前缀混淆，直接找 localStorage 里的主键）
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+
+let BACKUP=null, KEY=null;
+
+(async function(){
+  await nav("../index.html?t="+Date.now());
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const hasCore=await until(()=>W().NSK&&W().NSK.Core&&W().NSK.Core.load&&W().NSK.Core.save,15000);
+  ok("存档接口可用", hasCore);
+  if(!hasCore){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey();
+  if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+
+  // 跳过序章（否则遮罩挡住一切点击）
+  const S=W().NSK.Narrative&&W().NSK.Narrative.Story;
+  const st0=W().NSK.Core.load();
+  if(st0){
+    st0.story=st0.story||{};
+    st0.story.seen=S?S.list().map(x=>x.id):[];
+    st0.story.cur=null;
+    st0.story.flags=st0.story.flags||{};
+    W().NSK.Core.save(st0);
+  }
+
+  // ── A. 全新档：星系视图里的残骸场必须落在画布内 ──
+  await nav("../index.html?r="+Date.now()+"#system");
+  const b1=await until(booted,25000);
+  ok("重载后启动并停在星系页", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  await until(()=>D().querySelectorAll("g.sys-body.derelict").length>0,15000);
+
+  const DR_ORBIT=W().NSK.Data.StarMap.DR_ORBIT;
+  ok("DR_ORBIT 已导出且为 104", DR_ORBIT===104, String(DR_ORBIT));
+
+  const st1=W().NSK.Core.load();
+  const curId=st1.base.nodeId;
+  const curNode=st1.starMap.nodes.find(n=>n.id===curId);
+  const curDr=curNode&&(curNode.bodies||[]).find(b=>b.kind==="derelict");
+  ok("当前星系的残骸场数据 orbit=104", !!curDr&&curDr.orbit===104, curDr?String(curDr.orbit):"无残骸场");
+
+  let coords=derelictCoords();
+  ok("星系视图渲染出残骸场", coords.length>0, "找到 "+coords.length+" 个");
+  ok("残骸场坐标全部在画布 0~400 内", coords.every(inCanvas),
+    coords.map(p=>Math.round(p.x)+","+Math.round(p.y)).join(" | "));
+  ok("残骸场距画布边 ≥ 20 单位", coords.every(p=>edgeOf(p)>=20),
+    coords.length?("最小距边 "+Math.min(...coords.map(edgeOf)).toFixed(0)):"n/a");
+
+  // 渲染坐标与数据推导一致（translate 就是 200+orbit*cos/sin）
+  if(curDr&&coords.length){
+    const R=Math.PI/180;
+    const ex=200+curDr.orbit*Math.cos(curDr.ang*R), ey=200+curDr.orbit*Math.sin(curDr.ang*R);
+    ok("渲染坐标 = 数据推导坐标", Math.abs(coords[0].x-ex)<0.2&&Math.abs(coords[0].y-ey)<0.2,
+      "渲染 "+coords[0].x.toFixed(1)+","+coords[0].y.toFixed(1)+" / 推导 "+ex.toFixed(1)+","+ey.toFixed(1));
+  }
+
+  // ── B. 旧档迁移：把残骸场改回 orbit=210，重载后必须被修好 ──
+  const st2=W().NSK.Core.load();
+  const nd2=st2.starMap.nodes.find(n=>n.id===curId);
+  const dr2=nd2&&(nd2.bodies||[]).find(b=>b.kind==="derelict");
+  if(dr2){
+    dr2.orbit=210; dr2.ang=45;                 // 模拟旧档：越界 + 固定角度
+    W().NSK.Core.save(st2);
+    // ⚠️ 不能在这里用 Core.load() 验证落盘值：load 会走 normalize → ensureBodies 当场修好，
+    //    中间态根本读不到。必须直接解码存档原文，确认「盘上确实是 210」。
+    const raw=W().NSK.Core.decodeLocalSave(W().localStorage.getItem(W().NSK.Core.SAVE_KEY));
+    const c2=raw&&raw.starMap.nodes.find(n=>n.id===curId).bodies.find(b=>b.kind==="derelict");
+    ok("旧档写入成功（盘上 orbit=210）", c2&&c2.orbit===210, c2?String(c2.orbit):"读不到");
+
+    await nav("../index.html?m="+Date.now()+"#system");
+    await until(booted,25000);
+    await until(()=>D().querySelectorAll("g.sys-body.derelict").length>0,15000);
+
+    const st3=W().NSK.Core.load();
+    const dr3=st3.starMap.nodes.find(n=>n.id===curId).bodies.find(b=>b.kind==="derelict");
+    ok("重载后旧档 orbit 被迁移为 104", dr3&&dr3.orbit===104, dr3?String(dr3.orbit):"无");
+    ok("迁移后角度不再是旧值 45", dr3&&dr3.ang!==45, dr3?String(dr3.ang):"无");
+
+    const c3=derelictCoords();
+    ok("迁移后渲染坐标回到画布内", c3.length>0&&c3.every(inCanvas),
+      c3.map(p=>Math.round(p.x)+","+Math.round(p.y)).join(" | "));
+
+    // C. 幂等：再重载一次，角度不该再变
+    const angBefore=dr3.ang;
+    await nav("../index.html?n="+Date.now()+"#system");
+    await until(booted,25000);
+    const st4=W().NSK.Core.load();
+    const dr4=st4.starMap.nodes.find(n=>n.id===curId).bodies.find(b=>b.kind==="derelict");
+    ok("再次重载角度不变（幂等）", dr4&&dr4.ang===angBefore, (dr4?dr4.ang:"无")+" vs "+angBefore);
+
+    // D. 点残骸场 → 天体详情浮层（2026-11-01 回归：曾因 app.js 调用 Arch.successRate() 抛
+    //    TypeError 导致整个 showBody 中断、#nsk-pop 永不 show，表现是「点残骸没反应」。）
+    const errs=[];
+    try{ W().addEventListener("error", ev=>errs.push(String((ev&&ev.message)||ev))); }catch(e){}
+    await until(()=>D().querySelectorAll("g.sys-body.derelict").length>0,15000);
+    const g=D().querySelector("g.sys-body.derelict");
+    ok("星系图上有残骸场可点", !!g);
+    if(g){
+      const hit=g.querySelector(".derelict-hit")||g;
+      hit.dispatchEvent(new (W().MouseEvent)("click",{bubbles:true,cancelable:true}));
+      const shown=await until(()=>{ const p=D().getElementById("nsk-pop"); return p&&p.classList.contains("show"); },6000);
+      ok("点残骸场弹出天体详情", shown);
+      const pop=D().getElementById("nsk-pop");
+      const fb=pop?[...pop.querySelectorAll(".focus-btn")]:[];
+      ok("考古焦点按钮 = 3 个（安全打捞/科研遗迹/危险秘藏）", fb.length===3, "找到 "+fb.length+" 个");
+      const texts=fb.map(b=>b.textContent.replace(/\s+/g," ").trim());
+      ok("每个焦点都带成功率百分比", fb.length>0&&texts.every(t=>/\d+%/.test(t)), texts.join(" | "));
+      ok("成功率不是 NaN/undefined", texts.every(t=>!/NaN|undefined/.test(t)), texts.join(" | "));
+      ok("详情里有「关闭」按钮", !!(pop&&pop.querySelector('[data-act="closePop"]')));
+
+      // E. 换派遣成员 → 成功率必须跟着重算（曾只按「下拉首位」算一次，换人不刷新，
+      //    数字和旁边的说明都会当场变成错的。2026-11-01 用户点名要改。）
+      const rateTexts=()=>[...D().querySelectorAll("#nsk-pop .focus-btn .focus-rate")].map(n=>n.textContent.trim());
+      const nameOf=(o)=>(o.textContent||"").split("·")[0].trim();
+      const lvOf=(o)=>{ const m=/L(\d+)/.exec(o.textContent||""); return m?+m[1]:null; };
+      const sel=D().querySelector("#nsk-pop #body-mem");
+      ok("残骸浮层有派遣成员下拉", !!sel, sel?[...sel.options].map(nameOf).join("/"):"none");
+      if(sel && sel.options.length>1){
+        const opts=[...sel.options];
+        const i2=opts.findIndex(o=>lvOf(o)!==lvOf(opts[0]));
+        sel.value=opts[0].value; sel.dispatchEvent(new (W().Event)("change",{bubbles:true}));
+        await wait(220);
+        const r0=rateTexts(), n0=(D().querySelector("#body-rate-note")||{}).textContent||"";
+        if(i2>0){
+          sel.value=opts[i2].value; sel.dispatchEvent(new (W().Event)("change",{bubbles:true}));
+          await wait(220);
+          const r1=rateTexts(), n1=(D().querySelector("#body-rate-note")||{}).textContent||"";
+          ok("换成员后成功率实时重算", r0.join()!==r1.join(), r0.join(" ")+" → "+r1.join(" "));
+          ok("说明文字跟着换人", n1.indexOf(nameOf(opts[i2]))>=0, n1);
+          ok("说明文字不再写死「下拉首位」", n0.indexOf("下拉首位")<0 && n1.indexOf("下拉首位")<0, n1);
+          sel.value=opts[0].value; sel.dispatchEvent(new (W().Event)("change",{bubbles:true}));
+          await wait(220);
+          ok("切回原成员成功率可逆", rateTexts().join()===r0.join(), rateTexts().join(" "));
+        } else {
+          ok("换成员后成功率实时重算", true, "成员考古等级全相同，无法构造差异（跳过）");
+        }
+      }
+    }
+    ok("点残骸场全程无未捕获错误", errs.length===0, errs.length?errs.join(" | "):"clean");
+  } else {
+    ok("当前星系有残骸场可测", false);
+  }
+
+  // 还原存档
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

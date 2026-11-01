@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>星系天体视觉 Demo</title>
+  <style>
+    :root { color-scheme: dark; --bg:#060b12; --panel:#0c1520; --line:#243746; --muted:#78909f; --text:#d9e8ed; --cyan:#8de6ed; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:var(--text); background:
+      radial-gradient(ellipse at 50% -18%,rgba(48,104,126,.24),transparent 52%),
+      radial-gradient(ellipse at 84% 65%,rgba(72,52,89,.13),transparent 38%),var(--bg);
+      font:14px/1.5 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+    .shell { width:min(1120px,100%); margin:auto; padding:30px 22px 44px; }
+    .head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+    .eyebrow { color:#66aeb9; font:600 10px/1.2 Consolas,monospace; letter-spacing:.18em; }
+    h1 { margin:7px 0 4px; color:#ecf6f7; font-size:25px; font-weight:600; letter-spacing:.04em; }
+    .sub { color:#8097a3; font-size:12px; }
+    .controls { display:flex; align-items:center; gap:6px; flex:0 0 auto; padding:5px; border:1px solid var(--line); background:rgba(8,17,25,.78); }
+    .controls span { margin:0 5px; color:#8aa1ad; font-size:11px; }
+    button { border:1px solid transparent; padding:6px 10px; color:#90a6b1; background:transparent; font:inherit; font-size:11px; cursor:pointer; }
+    button:hover { color:#d8ecef; }
+    button.on { border-color:#35616d; color:#b8f0ef; background:rgba(52,123,134,.17); }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:13px; margin-top:17px; }
+    .card { min-width:0; overflow:hidden; border:1px solid #1d303c; background:linear-gradient(160deg,rgba(15,27,38,.96),rgba(8,15,23,.98)); transition:border-color .18s,box-shadow .18s,transform .18s; }
+    .card:hover,.card.selected { border-color:#477686; box-shadow:0 0 0 1px rgba(93,174,189,.11),0 12px 34px rgba(0,0,0,.2); }
+    .card.selected { transform:translateY(-2px); }
+    .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:13px 14px 10px; }
+    .card-title { display:flex; align-items:center; gap:8px; min-width:0; }
+    .index { color:#62818e; font:600 10px Consolas,monospace; }
+    h2 { margin:0; color:#e6f0f2; font-size:15px; font-weight:600; }
+    .kind { padding:2px 7px; border:1px solid currentColor; color:#c5a46f; font-size:10px; white-space:nowrap; }
+    .art { position:relative; display:block; width:100%; aspect-ratio:1.22; overflow:hidden; background:radial-gradient(ellipse at center,rgba(37,57,72,.3),rgba(6,12,19,.08) 65%,transparent 80%); }
+    .art-image { display:block; width:100%; height:100%; object-fit:cover; object-position:center; transform:scale(1); transition:transform .24s ease; }
+    .art::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(180deg,rgba(4,9,15,.08),transparent 46%,rgba(4,9,15,.55)); }
+    .image-mark { position:absolute; z-index:1; left:12px; bottom:10px; color:rgba(214,234,239,.7); font:9px Consolas,monospace; letter-spacing:.12em; }
+    body[data-view="wide"] .art-image { object-fit:contain; transform:scale(.94); }
+    body[data-view="normal"] .art-image { object-fit:cover; transform:scale(1); }
+    body[data-view="close"] .art-image { object-fit:cover; transform:scale(1.2); }
+    .detail { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 14px 12px; border-top:1px solid rgba(51,75,89,.45); }
+    .detail b { display:block; color:#c9dce2; font-size:11px; font-weight:500; }
+    .detail small { color:#708692; font-size:10px; }
+    .status { color:#718d98; font:10px Consolas,monospace; white-space:nowrap; }
+    .status i { display:inline-block; width:5px; height:5px; margin:0 5px 1px 0; border-radius:50%; background:#54717d; }
+    .card:hover .status i,.card.selected .status i { background:#75e0ce; box-shadow:0 0 8px #75e0ce; }
+    .foot { display:flex; justify-content:space-between; gap:16px; margin-top:14px; padding:11px 13px; border:1px solid rgba(36,55,70,.75); color:#78909b; background:rgba(7,14,21,.62); font-size:11px; }
+    .foot strong { color:#a9c9d0; font-weight:500; }
+    .foot .right { color:#5d7c88; white-space:nowrap; }
+    .orbit { fill:none; stroke:rgba(133,166,192,.12); stroke-width:1; }
+    .encounter { margin-top:26px; border:1px solid #263a46; background:linear-gradient(150deg,rgba(14,26,36,.97),rgba(7,14,21,.98)); }
+    .encounter-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:16px 18px 13px; border-bottom:1px solid rgba(47,69,82,.72); }
+    .encounter-kicker { color:#c77d69; font:600 10px Consolas,monospace; letter-spacing:.16em; }
+    .encounter-head h2 { margin:5px 0 3px; font-size:17px; }
+    .encounter-head p { margin:0; color:#7e939e; font-size:11px; }
+    .state-controls { display:flex; flex-wrap:wrap; gap:4px; padding:4px; border:1px solid #2a3e49; background:rgba(4,10,16,.72); }
+    .state-controls button { border-color:transparent; padding:6px 9px; }
+    .state-controls button.on { border-color:rgba(227,115,89,.48); color:#ffd2c0; background:rgba(171,73,59,.2); }
+    .raid-layout { display:grid; grid-template-columns:minmax(280px,.9fr) minmax(360px,1.1fr); gap:14px; padding:14px; }
+    .system-map { position:relative; min-height:310px; overflow:hidden; border:1px solid #1e3542; background:
+      radial-gradient(ellipse at 49% 48%,rgba(15,44,57,.38),transparent 52%),
+      radial-gradient(circle at 15% 17%,rgba(191,222,232,.55) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 76% 82%,rgba(191,222,232,.38) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 83% 23%,rgba(191,222,232,.34) 0 1px,transparent 1.5px),#050b12; }
+    .system-map svg { display:block; width:100%; height:310px; }
+    .map-label { position:absolute; left:12px; top:10px; color:#68818e; font:9px Consolas,monospace; letter-spacing:.13em; }
+    .map-scale { position:absolute; right:12px; bottom:10px; color:#58717e; font:9px Consolas,monospace; }
+    .raid-orbit { fill:none; stroke:rgba(127,163,184,.19); stroke-width:1; }
+    .raid-star { fill:#f4d693; filter:drop-shadow(0 0 7px rgba(255,205,119,.6)); }
+    .raid-planet { fill:#718c9f; stroke:#9cb8c6; stroke-width:.7; }
+    .raid-marker { cursor:pointer; transform-box:fill-box; transform-origin:center; }
+    .raid-marker .target { fill:rgba(255,116,85,.08); stroke:#fa795f; stroke-width:1.6; }
+    .raid-marker .target-inner { fill:none; stroke:rgba(255,151,119,.82); stroke-width:.8; stroke-dasharray:2 2; }
+    .raid-marker .ship { fill:#ef856c; stroke:#ffd0b7; stroke-width:.65; }
+    .raid-marker .marker-beacon { fill:#ff755a; filter:drop-shadow(0 0 5px #ff684b); }
+    .raid-marker text { fill:#ffc0aa; font:8px Consolas,monospace; text-anchor:middle; letter-spacing:.08em; paint-order:stroke; stroke:#050b12; stroke-width:3px; }
+    .raid-marker:hover .target,.raid-marker.selected .target { fill:rgba(255,116,85,.22); stroke-width:2; }
+    .raid-marker.selected { filter:drop-shadow(0 0 6px rgba(255,111,80,.55)); }
+    .raid-marker:focus-visible { outline:none; filter:drop-shadow(0 0 8px rgba(255,188,147,.9)); }
+    .raid-panel { overflow:hidden; border:1px solid #2a3b45; background:rgba(7,14,20,.88); }
+    .raid-art { position:relative; height:210px; overflow:hidden; background:#03070d; }
+    .raid-art img { display:block; width:100%; height:100%; object-fit:cover; object-position:center 52%; }
+    .raid-art::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,rgba(3,7,13,.7),transparent 60%),linear-gradient(0deg,rgba(3,7,13,.72),transparent 64%); pointer-events:none; }
+    .raid-art-stamp { position:absolute; z-index:1; left:15px; top:13px; display:flex; align-items:center; gap:7px; color:#ffd0bd; font:600 9px Consolas,monospace; letter-spacing:.14em; }
+    .raid-art-stamp i { width:6px; height:6px; border-radius:50%; background:#ff795d; box-shadow:0 0 9px #ff795d; }
+    .raid-art-code { position:absolute; z-index:1; right:13px; top:13px; color:rgba(225,237,239,.58); font:9px Consolas,monospace; }
+    .raid-art-title { position:absolute; z-index:1; left:15px; right:15px; bottom:13px; }
+    .raid-art-title small { display:block; color:#ffad96; font:9px Consolas,monospace; letter-spacing:.15em; }
+    .raid-art-title b { display:block; margin-top:3px; color:#f0f5f5; font-size:19px; letter-spacing:.04em; }
+    .raid-copy { padding:13px 15px 14px; }
+    .raid-line { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .raid-line b { color:#dce9ec; font-size:12px; }
+    .raid-tags { display:flex; flex-wrap:wrap; gap:5px; }
+    .raid-tag { padding:2px 7px; border:1px solid rgba(213,116,94,.4); color:#e8a18b; font-size:9px; }
+    .raid-tag.elite { border-color:rgba(255,92,87,.62); color:#ff9d91; background:rgba(192,58,54,.12); }
+    .raid-desc { margin:8px 0 11px; color:#8296a0; font-size:10px; }
+    .raid-stats { display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid rgba(49,70,81,.55); border-bottom:1px solid rgba(49,70,81,.55); }
+    .raid-stats div { padding:8px 5px; color:#718792; font-size:9px; text-align:center; }
+    .raid-stats div+div { border-left:1px solid rgba(49,70,81,.55); }
+    .raid-stats b { display:block; margin-top:2px; color:#c9d9de; font:600 11px Consolas,monospace; }
+    .raid-engagement { display:none; margin-top:10px; padding:8px 9px; border:1px solid rgba(219,105,84,.27); background:rgba(146,58,46,.08); }
+    .raid-engagement .row { display:flex; justify-content:space-between; color:#bc8c80; font-size:9px; }
+    .raid-progress { height:4px; margin-top:6px; background:#26323a; }
+    .raid-progress i { display:block; width:63%; height:100%; background:linear-gradient(90deg,#e48a69,#ffb66c); box-shadow:0 0 7px rgba(255,137,91,.4); }
+    .raid-actions { display:flex; gap:7px; margin-top:11px; }
+    .raid-actions button { min-height:32px; padding-inline:12px; border-color:#9a5548; color:#ffd2c1; background:rgba(143,62,50,.26); }
+    .raid-actions button:hover { background:rgba(177,76,58,.4); }
+    .raid-actions button.ghost { border-color:#314651; color:#93aab3; background:transparent; }
+    .raid-note { padding:0 15px 13px; color:#647d87; font-size:9px; }
+    .raid-demo[data-state="elite"] .raid-panel { border-color:rgba(231,91,84,.58); box-shadow:inset 0 0 26px rgba(193,55,48,.08); }
+    .raid-demo[data-state="elite"] .raid-marker .target { stroke:#ff534e; stroke-width:2.2; }
+    .raid-demo[data-state="engaged"] .raid-marker { animation:contact-pulse 2.3s ease-in-out infinite; }
+    .raid-demo[data-state="engaged"] .raid-engagement { display:block; }
+    .raid-demo[data-state="engaged"] .raid-marker .marker-beacon { fill:#63d7ca; filter:drop-shadow(0 0 6px #63d7ca); }
+    .raid-demo[data-state="engaged"] .raid-art-stamp { color:#9de7d7; }
+    .raid-demo[data-state="engaged"] .raid-art-stamp i { background:#67dec9; box-shadow:0 0 9px #67dec9; }
+    .raid-demo[data-state="engaged"] .state-controls button.on { border-color:rgba(86,197,171,.48); color:#b7f1e5; background:rgba(52,131,114,.18); }
+    @keyframes contact-pulse { 0%,100% { opacity:1; } 50% { opacity:.72; } }
+    @media(max-width:800px) { .encounter-head{align-items:flex-start;flex-direction:column}.raid-layout{grid-template-columns:1fr}.system-map,.system-map svg{min-height:250px;height:250px}.raid-art{height:190px} }
+    @media(max-width:800px) { .shell{padding:23px 14px 32px}.grid{grid-template-columns:1fr;max-width:520px;margin-inline:auto}.head{align-items:flex-start;flex-direction:column}.controls{align-self:flex-start}.foot{flex-direction:column}.foot .right{white-space:normal} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="head">
+      <div>
+        <div class="eyebrow">DEEP SPACE FRONTIER / SYSTEM OBJECTS</div>
+        <h1>星系天体 · 视觉 Demo</h1>
+        <div class="sub">小尺寸星图用程序化矢量表现，悬停或点选查看目标态。</div>
+      </div>
+      <div class="controls" role="group" aria-label="视觉密度">
+        <span>构图</span>
+        <button data-view="wide">全景</button>
+        <button class="on" data-view="normal">标准</button>
+        <button data-view="close">特写</button>
+      </div>
+    </header>
+
+    <section class="grid" aria-label="三类星系天体预览">
+      <article class="card" data-kind="belt" tabindex="0" aria-label="小行星带，点选聚焦">
+        <div class="card-head"><div class="card-title"><span class="index">01</span><h2>小行星带</h2></div><span class="kind">采矿区</span></div>
+        <div class="art"><img class="art-image" src="../assets/system-concepts/asteroid-belt-concept.png" alt="围绕恒星旋转的碎石与矿尘带"><span class="image-mark">CONCEPT ART · 01</span></div>
+        <div class="detail"><div><b>碎岩环 · 粒径与密度有变化</b><small>暖矿色 / 窄尘带 / 稀疏留白</small></div><span class="status"><i></i>HOVER / SELECT</span></div>
+      </article>
+
+      <article class="card" data-kind="derelict" tabindex="0" aria-label="残骸场，点选聚焦">
+        <div class="card-head"><div class="card-title"><span class="index">02</span><h2>残骸场</h2></div><span class="kind" style="color:#e28fae">考古区</span></div>
+        <div class="art"><img class="art-image" src="../assets/system-concepts/derelict-field-concept.png" alt="一艘解体的舰船和周围漂散的残骸"><span class="image-mark">CONCEPT ART · 02</span></div>
+        <div class="detail"><div><b>破损舰体 · 让人一眼读出“遗迹”</b><small>冷铁碎片 / 断裂环 / 微弱信标</small></div><span class="status"><i></i>HOVER / SELECT</span></div>
+      </article>
+
+      <article class="card" data-kind="gas" tabindex="0" aria-label="气云，点选聚焦">
+        <div class="card-head"><div class="card-title"><span class="index">03</span><h2>气云</h2></div><span class="kind" style="color:#8ddce4">采集区</span></div>
+        <div class="art"><img class="art-image" src="../assets/system-concepts/gas-cloud-concept.png" alt="由青蓝色电离气体和发光丝带构成的气云"><span class="image-mark">CONCEPT ART · 03</span></div>
+        <div class="detail"><div><b>弥散云团 · 柔亮核心与气流丝带</b><small>青蓝气体 / 透明叠层 / 无硬边</small></div><span class="status"><i></i>HOVER / SELECT</span></div>
+      </article>
+    </section>
+
+    <section class="encounter raid-demo" data-state="ready" aria-label="海盗战斗点预览">
+      <header class="encounter-head">
+        <div>
+          <div class="encounter-kicker">TACTICAL CONTACT / COMBAT NODE</div>
+          <h2>海盗据点 · 接战信号</h2>
+          <p>星系图标出接战位置；点选后在战斗面板查看敌情与派遣状态。</p>
+        </div>
+        <div class="state-controls" role="group" aria-label="战斗点状态">
+          <button class="on" data-raid-state="ready">待命</button>
+          <button data-raid-state="elite">精锐</button>
+          <button data-raid-state="engaged">交战中</button>
+        </div>
+      </header>
+      <div class="raid-layout">
+        <div class="system-map">
+          <span class="map-label">SYSTEM VIEW / NODE 04-K</span>
+          <svg viewBox="0 0 400 300" role="img" aria-label="星系图中橙红色敌对接战锚点">
+            <circle class="raid-orbit" cx="177" cy="151" r="45"/><circle class="raid-orbit" cx="177" cy="151" r="83"/>
+            <circle class="raid-orbit" cx="177" cy="151" r="119"/><circle class="raid-orbit" cx="177" cy="151" r="146"/>
+            <circle class="raid-star" cx="177" cy="151" r="6"/>
+            <circle class="raid-planet" cx="222" cy="151" r="4.6"/>
+            <circle class="raid-planet" cx="95" cy="151" r="6.2"/>
+            <circle cx="261" cy="151" r="2.8" fill="#74b8c5"/>
+            <g class="raid-marker selected" data-raid-marker="1" tabindex="0" role="button" aria-label="选择海盗接战信号">
+              <circle class="target" cx="311" cy="75" r="21"/>
+              <circle class="target-inner" cx="311" cy="75" r="15"/>
+              <path d="M311 60v7m0 16v7m-15-15h7m16 0h7" stroke="#ff987a" stroke-width="1.2"/>
+              <path class="ship" d="m311 68 7 8-7 6-7-6z"/>
+              <circle class="marker-beacon" cx="326" cy="60" r="3"/>
+              <text x="311" y="111">HOSTILE CONTACT</text>
+            </g>
+          </svg>
+          <span class="map-scale">SIGNAL LOCKED · RANGE 0.42 AU</span>
+        </div>
+        <article class="raid-panel">
+          <div class="raid-art">
+            <img src="../assets/system-concepts/raid-encounter-concept.png" alt="海盗舰队盘踞在通讯中继站周围">
+            <div class="raid-art-stamp"><i></i><span class="raid-state-label">HOSTILE SIGNAL</span></div>
+            <span class="raid-art-code">CONTACT / 04-K-17</span>
+            <div class="raid-art-title"><small>RAIDER RELAY · THREAT BAND 03</small><b>荒烬中继站</b></div>
+          </div>
+          <div class="raid-copy">
+            <div class="raid-line"><b>血袭者 · 劫掠编队</b><div class="raid-tags"><span class="raid-tag">低安</span><span class="raid-tag elite-tag" hidden>精锐</span></div></div>
+            <p class="raid-desc state-description">敌方信号稳定，等待我方舰队进入交战区。</p>
+            <div class="raid-stats"><div>敌方威胁<b class="threat-band">III</b></div><div>赏金倍率<b class="bounty-mult">×2.0</b></div><div>我方编制<b class="fleet-count">0 / 3</b></div></div>
+            <div class="raid-engagement"><div class="row"><span>交战进度 · 第 4 波</span><span>敌方结构 63%</span></div><div class="raid-progress"><i></i></div></div>
+            <div class="raid-actions"><button class="dispatch-button">派遣舰队</button><button class="ghost">查看敌情</button></div>
+          </div>
+          <div class="raid-note">示意：地图锚点由矢量绘制，概念图用于展开后的战斗目标面板。</div>
+        </article>
+      </div>
+    </section>
+
+    <footer class="foot"><span><strong>交互：</strong>切换待命 / 精锐 / 交战中；主按钮可派遣或召回演示舰队。上方构图按钮控制天体预览。</span><span class="right">IMAGEGEN CONCEPTS · NOT FINAL GAME ASSETS</span></footer>
+  </main>
+  <script>
+    (function () {
+      document.querySelectorAll("[data-view]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          document.body.dataset.view = btn.dataset.view;
+          document.querySelectorAll("[data-view]").forEach(function (b) { b.classList.toggle("on", b === btn); });
+        });
+      });
+      document.querySelectorAll(".card").forEach(function (card) {
+        card.addEventListener("click", function () {
+          document.querySelectorAll(".card").forEach(function (c) { c.classList.toggle("selected", c === card); });
+        });
+        card.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); }
+        });
+      });
+      const demo = document.querySelector(".raid-demo");
+      const stateButtons = demo.querySelectorAll("[data-raid-state]");
+      const marker = demo.querySelector("[data-raid-marker]");
+      function setRaidState(state) {
+        demo.dataset.state = state;
+        stateButtons.forEach(function (button) { button.classList.toggle("on", button.dataset.raidState === state); });
+        demo.querySelector(".raid-state-label").textContent = state === "engaged" ? "FRIENDLY FLEET ENGAGED" : state === "elite" ? "ELITE HOSTILE SIGNAL" : "HOSTILE SIGNAL";
+        demo.querySelector(".state-description").textContent = state === "engaged"
+          ? "我方编队已进入交战区，战况正在推进。"
+          : state === "elite" ? "精锐目标已锁定，敌方编队强度与悬赏提高。" : "敌方信号稳定，等待我方舰队进入交战区。";
+        demo.querySelector(".threat-band").textContent = state === "elite" ? "IV · ELITE" : "III";
+        demo.querySelector(".bounty-mult").textContent = state === "elite" ? "×3.0" : "×2.0";
+        demo.querySelector(".fleet-count").textContent = state === "engaged" ? "2 / 3" : "0 / 3";
+        demo.querySelector(".elite-tag").hidden = state !== "elite";
+        demo.querySelector(".dispatch-button").textContent = state === "engaged" ? "调整编制" : "派遣舰队";
+      }
+      stateButtons.forEach(function (button) { button.addEventListener("click", function () { setRaidState(button.dataset.raidState); }); });
+      marker.addEventListener("click", function () { marker.classList.toggle("selected"); });
+      marker.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); marker.click(); } });
+      demo.querySelector(".dispatch-button").addEventListener("click", function () { setRaidState(demo.dataset.state === "engaged" ? "ready" : "engaged"); });
+      document.body.dataset.view = "normal";
+    })();
+  </script>
+</body>
+</html>

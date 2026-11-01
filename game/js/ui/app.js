@@ -365,6 +365,15 @@
       for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
       return function () { h += 0x6d2b79f5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     }
+    // 将方形概念图裁成柔边天体贴图，亮部融入深空底色，避免出现硬矩形边框。
+    function sceneImageSvg(id, cx, cy, size, src, cls) {
+      const safeId = "nsk-scene-" + String(id).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const x = +(cx - size / 2).toFixed(1), y = +(cy - size / 2).toFixed(1);
+      const s = +size.toFixed(1);
+      return '<defs><radialGradient id="' + safeId + '-fade"><stop offset="0" stop-color="#fff"/><stop offset=".78" stop-color="#fff" stop-opacity=".96"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>'
+        + '<mask id="' + safeId + '-mask" maskUnits="userSpaceOnUse" x="' + x + '" y="' + y + '" width="' + s + '" height="' + s + '"><rect x="' + x + '" y="' + y + '" width="' + s + '" height="' + s + '" fill="url(#' + safeId + '-fade)"/></mask></defs>'
+        + '<image class="' + cls + '" x="' + x + '" y="' + y + '" width="' + s + '" height="' + s + '" href="' + src + '" preserveAspectRatio="xMidYMid slice" mask="url(#' + safeId + '-mask)"/>';
+    }
     // 标签点击热区：`.sys-label` 是 pointer-events:none 的（避免文字挡住天体），
     // 真实点击会穿透到 SVG 画布 → 「点小行星带的名字」完全没反应。
     // 方案：在文字下方垫一块透明 rect，命中后冒泡到父级 <g data-act>，文字仍不拦截别的天体。
@@ -417,21 +426,36 @@
     for (const b of bodies) {
       const col = kindColor(b.kind);
       if (b.kind === "belt") {
-        // 小行星带 = 环绕恒星的环状碎石带（不是单个圆）。沿轨道半径散布 N 颗小碎石，确定性布点。
+        // 小行星带 = 有厚度、有疏密变化的碎岩环。所有形状都由 body id 播种，切页重绘不跳位。
         const br0 = beltRng(b.id);
-        const N = 26, halfW = Math.max(8, b.size * 0.6);
+        const N = 38, halfW = Math.max(8, b.size * 0.6);
         const act0 = ' data-act="body:' + node.id + ":" + b.id + '"';
         let peb = "";
         for (let i = 0; i < N; i++) {
-          const a = (i / N) * 360 + br0() * 12;                          // 沿环均匀分布 + 相位抖动
-          const rad = b.orbit + (br0() - 0.5) * 2 * halfW;               // 径向厚度抖动
-          const px = (200 + rad * Math.cos(a * Math.PI / 180)).toFixed(1);
-          const py = (200 + rad * Math.sin(a * Math.PI / 180)).toFixed(1);
-          const pr = (1.0 + br0() * 1.6).toFixed(1);
-          peb += '<circle cx="' + px + '" cy="' + py + '" r="' + pr + '" fill="' + col + '" opacity="' + (0.45 + br0() * 0.45).toFixed(2) + '"/>';
+          const a = (i / N) * 360 + (br0() - 0.5) * 15;
+          const rad = b.orbit + (br0() - 0.5) * 2 * halfW;
+          const px = 200 + rad * Math.cos(a * Math.PI / 180);
+          const py = 200 + rad * Math.sin(a * Math.PI / 180);
+          const sz = 1.25 + br0() * (i % 5 === 0 ? 2.5 : 1.35);
+          const rot = br0() * 360;
+          const sides = 4 + Math.floor(br0() * 3);
+          const palette = ["#d4b27a", "#a88b61", "#e2c28d", "#747b80", "#b69b72"];
+          let pts = "";
+          for (let k = 0; k < sides; k++) {
+            const aa = (rot + k * 360 / sides) * Math.PI / 180;
+            const rr = sz * (0.62 + br0() * 0.58);
+            pts += (k ? " " : "") + (px + Math.cos(aa) * rr).toFixed(1) + "," + (py + Math.sin(aa) * rr * 0.72).toFixed(1);
+          }
+          peb += '<polygon class="belt-rock" points="' + pts + '" fill="' + palette[i % palette.length] + '" opacity="' + (0.56 + br0() * 0.38).toFixed(2) + '"/>';
+          if (i % 2 === 0) {
+            const dx = px + (br0() - 0.5) * 5, dy = py + (br0() - 0.5) * 5;
+            peb += '<circle class="belt-dust" cx="' + dx.toFixed(1) + '" cy="' + dy.toFixed(1) + '" r="' + (0.35 + br0() * 0.55).toFixed(1) + '"/>';
+          }
         }
         html += '<g class="sys-body belt click"' + act0 + '>'
           + '<circle class="belt-hit" cx="200" cy="200" r="' + b.orbit + '" fill="none" stroke="transparent" stroke-width="' + (halfW * 2 + 26) + '"/>'
+          + '<circle class="belt-mass" cx="200" cy="200" r="' + b.orbit + '" fill="none" stroke="' + col + '" stroke-width="' + (halfW * 1.55).toFixed(1) + '"/>'
+          + '<circle class="belt-lane" cx="200" cy="200" r="' + b.orbit + '" fill="none" stroke="' + col + '" stroke-width="1"/>'
           + peb
           + labelHitRect(b.name, 200, 200 - b.orbit - halfW - 4)
           + workerBadge(200, 200 - b.orbit - halfW - 17, bodyWorkers(node.id, b.id))
@@ -439,23 +463,13 @@
         continue;
       }
       if (b.kind === "gas") {
-        // 气云 = 轨道上某处的弥散气体云团（蓬松叠加，非实心球、非环形）
-        const gr0 = beltRng(b.id);
+        // 气云直接使用概念图做柔边贴图；透明边缘让深空背景自然透出。
         const gx = 200 + b.orbit * Math.cos(b.ang * Math.PI / 180);
         const gy = 200 + b.orbit * Math.sin(b.ang * Math.PI / 180);
         const act0 = ' data-act="body:' + node.id + ":" + b.id + '"';
-        let puff = "";
-        const NP = 7;
-        for (let i = 0; i < NP; i++) {
-          const a = gr0() * 360, rr = 6 + gr0() * 16;
-          const px = (gx + rr * Math.cos(a * Math.PI / 180)).toFixed(1);
-          const py = (gy + rr * Math.sin(a * Math.PI / 180)).toFixed(1);
-          const pr = (10 + gr0() * 12).toFixed(1);
-          puff += '<circle cx="' + px + '" cy="' + py + '" r="' + pr + '" fill="' + col + '" opacity="' + (0.12 + gr0() * 0.12).toFixed(2) + '"/>';
-        }
         html += '<g class="sys-body gas click"' + act0 + '>'
           + '<circle class="gas-hit" cx="' + gx.toFixed(1) + '" cy="' + gy.toFixed(1) + '" r="' + (b.size + 10) + '" fill="transparent"/>'
-          + puff
+          + sceneImageSvg(b.id, gx, gy, Math.min(60, b.size * 2.65), "assets/system-concepts/gas-cloud-concept.png", "gas-image")
           + labelHitRect(b.name, gx, gy + b.size + 18)
           + workerBadge(gx, gy + b.size + 35, bodyWorkers(node.id, b.id))
           + '<text class="sys-label" x="' + gx.toFixed(1) + '" y="' + (gy + b.size + 18).toFixed(1) + '" text-anchor="middle">' + esc(b.name) + "</text></g>";
@@ -463,6 +477,20 @@
       }
       const x = (200 + b.orbit * Math.cos(b.ang * Math.PI / 180)).toFixed(1);
       const y = (200 + b.orbit * Math.sin(b.ang * Math.PI / 180)).toFixed(1);
+      if (b.kind === "derelict") {
+        // 残骸场使用生成的舰骸图像，保留原有扫描环和较大的点击热区。
+        const act0 = ' data-act="body:' + node.id + ":" + b.id + '"';
+        const drImageId = "derelict-" + b.id;
+        html += '<g class="sys-body derelict click"' + act0 + ' transform="translate(' + x + "," + y + ')">'
+          + '<circle class="derelict-hit" r="18" fill="transparent"/>'
+          + sceneImageSvg(drImageId, 0, 0, 36, "assets/system-concepts/derelict-field-concept.png", "derelict-image")
+          + '<circle class="derelict-scan" r="16.5" fill="none"/>'
+          + '<path class="derelict-orbit" d="M-17 -2 A17 17 0 0 1 -5 -16 M5 16 A17 17 0 0 1 17 2" fill="none"/>'
+          + labelHitRect(b.name, 0, 29)
+          + workerBadge(0, -21, bodyWorkers(node.id, b.id))
+          + '<text class="sys-label" y="29">' + esc(b.name) + "</text></g>";
+        continue;
+      }
       const clickable = (b.kind === "planet" || b.kind === "derelict");
       const act = clickable ? ' data-act="body:' + node.id + ":" + b.id + '"' : "";
       html += '<g class="sys-body ' + b.kind + (clickable ? " click" : "") + '"' + act + ' transform="translate(' + x + "," + y + ')">';
@@ -751,7 +779,13 @@
     const body = (node.bodies || []).find(b => b.id === bodyId);
     if (!body) return;
     const acts = bodyActs(body.kind);
+    const sceneArt = {
+      belt: { src: "assets/system-concepts/asteroid-belt-concept.png", alt: "恒星周围的碎岩与矿尘带", stamp: "MINERAL FIELD" },
+      derelict: { src: "assets/system-concepts/derelict-field-concept.png", alt: "解体舰船及周边漂浮的金属残骸", stamp: "ARCHAEOLOGY SITE" },
+      gas: { src: "assets/system-concepts/gas-cloud-concept.png", alt: "青蓝色电离气云与发光丝带", stamp: "GAS SIGNATURE" },
+    }[body.kind];
     let html = '<div class="pop-body"><h3>' + esc(body.name) + ' <span class="tag">' + kindCN(body.kind) + "</span></h3>";
+    if (sceneArt) html += '<div class="sys-scene-art"><img src="' + sceneArt.src + '" alt="' + sceneArt.alt + '" loading="lazy" decoding="async"><div class="sys-scene-stamp"><span>目标影像</span><b>' + sceneArt.stamp + '</b></div></div>';
     html += '<div class="dim">所属星系：' + esc(node.name) + "</div>";
     if (body.kind === "belt") html += '<div>可采矿种：' + Object.entries(body.abundance || {}).map(([o, v]) =>
       '<span class="tag ' + (v > 1 ? "good" : "") + '">' + resIcon(o) + resName(o) + " ×" + v.toFixed(1) + "</span>").join("") + "</div>";
@@ -818,12 +852,17 @@
           html += '<div class="row" style="flex-wrap:wrap;gap:4px">';
           for (const pid of order) {
             const pf = Data.Archaeology.profileById(pid);
-            const rate = (Arch && firstM) ? Math.round(100 * Arch.successRate(pf, firstM)) : 0;
+            // ⚠️ 引擎导出的是 successChance(member, body, focusId)；旧代码写成 successRate(pf, member)，
+            // 名字和参数顺序都不对 → 抛 TypeError → 整个 popover 组装中断、$pop 不 show，
+            // 表现就是「点残骸没反应」（2026-11-01 修）。
+            const rate = (Arch && firstM) ? Math.round(100 * Arch.successChance(firstM, body, pid)) : 0;
             const riskTag = pf.risk === 1 ? "低风险" : pf.risk === 2 ? "中风险" : "高风险";
-            html += '<button class="sm focus-btn" data-act="assignBody:' + nodeId + ":" + bodyId + ':explore" data-focus="' + pid + '" title="' + esc(pf.desc) + '">' + pf.name + (firstM ? " · " + rate + "%" : "") + ' <span class="risk ' + (pf.risk === 3 ? "bad" : pf.risk === 2 ? "warn" : "good") + '">' + riskTag + "</span></button>";
+            // 百分比单独包一层 .focus-rate：换成员时由 refreshBodyRates() 只改这一段文本，
+            // 不重渲染整个浮层（重渲染会关掉下拉、丢失滚动位置）。
+            html += '<button class="sm focus-btn" data-act="assignBody:' + nodeId + ":" + bodyId + ':explore" data-focus="' + pid + '" title="' + esc(pf.desc) + '">' + pf.name + (firstM ? ' <b class="focus-rate">· ' + rate + "%</b>" : "") + ' <span class="risk ' + (pf.risk === 3 ? "bad" : pf.risk === 2 ? "warn" : "good") + '">' + riskTag + "</span></button>";
           }
           html += "</div>";
-          if (firstM) html += '<div class="dim">成功率按「' + esc(firstM.name) + '」（下拉首位）考古等级估算；换成员结果不同。</div>';
+          if (firstM) html += '<div class="dim" id="body-rate-note">成功率按「' + esc(firstM.name) + '」的考古等级估算，换成员会变。</div>';
         } else {
           html += '<div class="row">' + acts.map(a =>
             '<button class="sm" data-act="assignBody:' + nodeId + ":" + bodyId + ":" + a.type + '">' + a.label + "</button>").join(" ") + "</div>";
@@ -841,11 +880,34 @@
     }
     html += '<button class="sm ghost" data-act="closePop">关闭</button></div>';
     $pop.innerHTML = html;
+    $pop.classList.toggle("body-detail-pop", !!sceneArt);
     $pop.dataset.nodeId = nodeId;   // 供召回后原地刷新面板
     $pop.dataset.bodyId = bodyId;
-    $pop.style.left = Math.max(8, (window.innerWidth - 280) / 2) + "px";
+    const popWidth = sceneArt ? 440 : 280;
+    $pop.style.left = Math.max(8, (window.innerWidth - popWidth) / 2) + "px";
     $pop.style.top = "72px";
     $pop.classList.add("show");
+  }
+
+  // 换派遣成员 → 就地重算三个考古焦点的成功率（不重渲染浮层，保留下拉焦点与滚动位置）。
+  // 只对残骸场浮层生效：其它天体没有 .focus-btn。
+  function refreshBodyRates() {
+    if (!$pop || !$pop.querySelector(".focus-btn")) return;
+    const sel = $pop.querySelector("#body-mem");
+    const nodeId = $pop.dataset.nodeId, bodyId = $pop.dataset.bodyId;
+    if (!sel || !nodeId || !bodyId) return;
+    const node = Data.StarMap.nodeById(state.starMap, nodeId);
+    const body = node && (node.bodies || []).find(b => b.id === bodyId);
+    const m = state.members.find(x => x.id === sel.value);
+    const Arch = Engine.Archaeology;
+    if (!body || !m || !Arch) return;
+    for (const btn of $pop.querySelectorAll(".focus-btn")) {
+      const pid = btn.getAttribute("data-focus");
+      const rateEl = btn.querySelector(".focus-rate");
+      if (rateEl && pid) rateEl.textContent = "· " + Math.round(100 * Arch.successChance(m, body, pid)) + "%";
+    }
+    const note = $pop.querySelector("#body-rate-note");
+    if (note) note.textContent = "成功率按「" + m.name + "」的考古等级估算，换成员会变。";
   }
 
   function baseQueueState(type, recipes) {
@@ -3050,6 +3112,11 @@
     document.addEventListener("change", function (e) {
       if (e.target && e.target.id === "set-import-file") doImportFile(e);
     });
+    // 天体详情里换派遣成员 → 重算考古成功率。
+    // ⚠️ 必须挂在 $pop 上：#nsk-pop 是 body 直属节点、在 $view 之外，$view 的 change 委托收不到。
+    $pop.addEventListener("change", function (e) {
+      if (e.target && e.target.id === "body-mem") refreshBodyRates();
+    });
     document.addEventListener("click", e => {
       // 拖动舱段后紧跟的 click：target 是「落到的那张卡」，会误开右侧详情，用时间窗吞掉。
       if (Date.now() - baseDragEndedAt < 320 && e.target.closest && e.target.closest(".base-layout")) return;
@@ -3160,12 +3227,13 @@
   }
   function showPop(el) {
     $pop.textContent = el.getAttribute("data-info");
+    $pop.classList.remove("body-detail-pop");
     const r = el.getBoundingClientRect();
     $pop.style.left = Math.min(window.innerWidth - 270, r.left) + "px";
     $pop.style.top = (r.top - $pop.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - $pop.offsetHeight - 8) + "px";
     $pop.classList.add("show");
   }
-  function hidePop() { $pop.classList.remove("show"); }
+  function hidePop() { $pop.classList.remove("show", "body-detail-pop"); }
 
   // 星图节点浮层：查看星系 + 跃迁（跃迁按可达性 / 燃料决定可用状态）
   function hideNodeMenu() { if ($nodePop) $nodePop.classList.remove("show"); }

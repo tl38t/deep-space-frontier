@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>行星渲染对照：1 代真球面 vs 纯 SVG 近似</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111823; --line:#1e2a38; --fg:#c8d4e2; --dim:#6b7c90;
+    --acc:#5ad1a0; --warn:#e8b45a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px 26px 60px;background:var(--bg);color:var(--fg);
+    font:13px/1.65 -apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+  h1{font-size:17px;margin:0 0 6px;font-weight:600;letter-spacing:.3px}
+  h2{font-size:13px;margin:26px 0 10px;color:var(--acc);font-weight:600;
+    border-bottom:1px solid var(--line);padding-bottom:6px}
+  .lead{color:var(--dim);margin:0 0 4px;max-width:920px}
+  .lead b{color:var(--fg);font-weight:600}
+  table{border-collapse:collapse;margin-top:4px}
+  th,td{padding:6px 12px;text-align:center;border-bottom:1px solid var(--line)}
+  th{font-size:11px;color:var(--dim);font-weight:500;letter-spacing:.4px;text-transform:uppercase}
+  td.t{text-align:left;font-size:12px;color:var(--fg);padding-left:0;min-width:104px}
+  td.t i{display:block;font-style:normal;font-size:10px;color:var(--dim);letter-spacing:.3px}
+  .cell{display:inline-flex;align-items:center;justify-content:center}
+  canvas,svg{display:block}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:12px 14px;font:12px/1.7 ui-monospace,Consolas,monospace;color:var(--fg);
+    overflow:auto;margin:10px 0 0}
+  .note{background:rgba(232,180,90,.07);border-left:2px solid var(--warn);
+    padding:9px 13px;margin:12px 0;color:#d8c49a;font-size:12px;border-radius:0 4px 4px 0}
+  .ok{color:var(--acc)}
+  .flag{color:var(--warn)}
+  .row2{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .legend{font-size:11px;color:var(--dim);margin:0 0 8px}
+</style>
+</head>
+<body>
+
+<h1>行星渲染对照</h1>
+<p class="lead">左 = <b>1 代原式</b>（逐像素球面重采样，每帧重算）。右 = <b>纯 SVG</b>（圆形裁剪 + 贴图无缝平移 + 独立的倾角组 + 可单独旋转的光照遮罩）。
+两边使用<b>同一张程序生成贴图</b>（固定种子，完全相同），唯一变量是投影方式。默认自转；网址加 <code>?freeze=0.3</code> 可冻结相位做逐像素比对。
+<button id="btnPause" style="margin-left:10px;background:#16222f;color:#c8d4e2;border:1px solid #2a3a4c;border-radius:4px;padding:2px 12px;cursor:pointer;font-size:12px">暂停</button></p>
+
+<h2>1 · 逐尺寸对比（左边是 1 代真球面，紧挨着的是纯 SVG 近似）</h2>
+<p class="legend">64px 用于看清投影差异；32px / 24px 是游戏内的真实尺寸（行星直径 19~54px 的两端）。</p>
+<table id="tblAll"></table>
+
+<h2>2 · 光照诊断（同一颗冰封行星 · 64px，有无光照遮罩对照）</h2>
+<p class="legend">如果「SVG 有遮罩」和「SVG 无遮罩」看起来一样，说明 SVG 里的 <code>mix-blend-mode</code> 没生效，那两边的明暗就不对等。</p>
+<table id="tblLight"></table>
+
+<h2>3 · 随机倾斜 / 随机光照（同一类型、同一张贴图，参数按 id 派生）</h2>
+<p class="legend">8 颗<strong>完全相同</strong>的 temperate 贴图，只改三个参数：倾角 ±22°、光源方位 0~360°、转速 ×0.7~1.3。
+参数由 <code>body.id</code> 派生 → 同一颗行星每次进游戏都一样，不同行星互不相同。</p>
+<table id="tblTilt"></table>
+
+<h2>4 · 性能实测</h2>
+<pre id="bench">跑分中…</pre>
+
+<h2>5 · 结论怎么看</h2>
+<div class="note" id="verdict">…</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   固定种子 PRNG —— 保证两边拿到完全相同的贴图像素
+   ============================================================ */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const TYPES   = ["lava","gas","ice","plasma","temperate","storm"];
+const TYPE_CN = {lava:"熔岩",gas:"气态",ice:"冰封",plasma:"等离子",temperate:"温带",storm:"风暴"};
+const SPEEDS  = {lava:0.0009, gas:0.0006, ice:0.0012, plasma:0.0005, temperate:0.0010, storm:0.0015};
+const TILTS   = {lava:15, gas:20, ice:210, plasma:330, temperate:55, storm:140};
+const HAS_RING= {gas:true, storm:true};
+
+/* 倾斜所需的额外留白：**不需要**。
+   矩形是跟着旋转的，圆不转 —— 圆内任意点逆旋转后半径不变（|p'| = |p| ≤ R），
+   所以永远落在高 2R 的矩形内。也就是说：绕自身中心旋转的矩形始终盖住它的内切圆。
+   我一开始按「R(cosθ+sinθ)」算留白是错的 —— 那是矩形包围盒的角点，圆内没有角点。
+   加了留白反而会让球的极点露出纯色块。 */
+const TILT_MAX = 22;                             // 倾斜方向上限（度），纯观感取值
+
+const FREEZE  = (function(){                     // ?freeze=0.3 冻结相位（截图用）；默认自转
+  const q = new URLSearchParams(location.search);
+  if (!q.has("freeze")) return null;
+  const v = parseFloat(q.get("freeze"));
+  return isNaN(v) ? 0.30 : v;
+})();
+
+/* ============================================================
+   贴图生成 —— 逐行复刻 1 代 _getPlanetTexture()，只把 Math.random() 换成 rnd()
+   ============================================================ */
+const TEX = {};   // { data, w, h, url }
+
+function buildTexture(type, seed){
+  const rnd = mulberry32(seed);
+  const w = 512, h = 256;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+
+  const grads = {
+    lava:      [[0,'#552200'],[0.5,'#993300'],[0.7,'#dd5500'],[1,'#772200']],
+    gas:       [[0,'#0f2a3a'],[0.3,'#1a4466'],[0.6,'#337799'],[0.8,'#4488bb'],[1,'#1a4466']],
+    ice:       [[0,'#2a5566'],[0.4,'#4488aa'],[0.7,'#99ccdd'],[1,'#4488aa']],
+    plasma:    [[0,'#331166'],[0.4,'#6622bb'],[0.7,'#9944ee'],[1,'#6622bb']],
+    temperate: [[0,'#0d3344'],[0.3,'#1a5577'],[0.6,'#2a77aa'],[0.8,'#4499cc'],[1,'#2a77aa']],
+    storm:     [[0,'#112233'],[0.3,'#223355'],[0.6,'#445577'],[0.8,'#556688'],[1,'#334466']]
+  };
+  const stops = grads[type] || grads.lava;
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  for (const [pos, color] of stops) grad.addColorStop(pos, color);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+
+  if (type === "lava") {
+    for (let i = 0; i < 14; i++) {
+      const x = rnd() * w, y = rnd() * h, r = 8 + rnd() * 40;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(255,'+(200+rnd()*55)+',80,'+(0.7+rnd()*0.3)+')');
+      g.addColorStop(0.6, 'rgba(255,'+(150+rnd()*50)+',30,'+(0.4+rnd()*0.3)+')');
+      g.addColorStop(1, 'rgba(255,80,0,0)');
+      ctx.fillStyle = g; ctx.beginPath();
+      ctx.ellipse(x, y, r*(0.6+rnd()*0.8), r*(0.4+rnd()*0.6), rnd()*2, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  if (type === "gas") {
+    for (let i = 0; i < 8; i++) {
+      const y = (0.05 + i*0.12 + rnd()*0.04) * h;
+      ctx.fillStyle = 'rgba(200,230,255,'+(0.15+rnd()*0.25)+')';
+      ctx.fillRect(0, y-4, w, 6+rnd()*10);
+    }
+    ctx.save(); ctx.shadowColor='rgba(255,180,80,0.4)'; ctx.shadowBlur=25;
+    ctx.beginPath(); ctx.ellipse(w*0.35, h*0.52, 44, 28, 0, 0, Math.PI*2);
+    ctx.fillStyle='#dd7744'; ctx.fill();
+    ctx.shadowBlur=12; ctx.beginPath(); ctx.ellipse(w*0.35, h*0.52, 28, 16, 0, 0, Math.PI*2);
+    ctx.fillStyle='#ff9955'; ctx.fill();
+    ctx.shadowBlur=6; ctx.beginPath(); ctx.ellipse(w*0.35, h*0.52, 12, 7, 0, 0, Math.PI*2);
+    ctx.fillStyle='#ffbb77'; ctx.fill(); ctx.restore();
+    for (let i = 0; i < 20; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 2+rnd()*6;
+      ctx.beginPath(); ctx.ellipse(x, y, r, r*0.5, rnd()*2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,'+(0.04+rnd()*0.06)+')'; ctx.fill();
+    }
+  }
+  if (type === "ice") {
+    for (let i = 0; i < 25; i++) {
+      const x = rnd()*w, y = rnd()*h, len = 8+rnd()*35;
+      ctx.strokeStyle = 'rgba(60,90,110,'+(0.25+rnd()*0.35)+')';
+      ctx.lineWidth = 1+rnd()*2; ctx.beginPath();
+      ctx.moveTo(x, y); ctx.lineTo(x+len*(rnd()-0.5)*2, y+len*(rnd()-0.5)*2); ctx.stroke();
+    }
+    for (let i = 0; i < 8; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 15+rnd()*45;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(255,255,255,'+(0.08+rnd()*0.12)+')');
+      g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  if (type === "plasma") {
+    const cols = ['#ff88ff','#66aaff','#aa44ff','#44ccff'];
+    for (let i = 0; i < 16; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 10+rnd()*32;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const col = cols[Math.floor(rnd()*cols.length)];
+      g.addColorStop(0, col+'aa'); g.addColorStop(0.5, col+'55'); g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g; ctx.beginPath();
+      ctx.ellipse(x, y, r*(0.5+rnd()*0.8), r*(0.3+rnd()*0.6), rnd()*2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  if (type === "temperate") {
+    const landCols = ['#55bb44','#66bb55','#77cc66','#99dd77','#88cc66'];
+    for (let i = 0; i < 12; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 12+rnd()*38;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const col = landCols[Math.floor(rnd()*landCols.length)];
+      g.addColorStop(0, col+'aa'); g.addColorStop(0.7, col+'60'); g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g; ctx.beginPath();
+      ctx.ellipse(x, y, r*(0.5+rnd()*0.9), r*(0.4+rnd()*0.7), rnd()*2, 0, Math.PI*2); ctx.fill();
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 20+rnd()*55;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(255,255,255,'+(0.08+rnd()*0.08)+')');
+      g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(x, y, r*(0.5+rnd()*0.8), r*(0.3+rnd()*0.5), rnd()*2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  if (type === "storm") {
+    for (let i = 0; i < 14; i++) {
+      const x = rnd()*w, y = rnd()*h, r = 8+rnd()*30;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const bright = 130+rnd()*125;
+      g.addColorStop(0, 'rgba('+bright+','+(bright-40)+',255,'+(0.4+rnd()*0.4)+')');
+      g.addColorStop(0.6, 'rgba('+(bright-60)+','+(bright-100)+',220,'+(0.15+rnd()*0.25)+')');
+      g.addColorStop(1, 'transparent'); ctx.fillStyle = g; ctx.beginPath();
+      ctx.ellipse(x, y, r*(0.4+rnd()*0.8), r*(0.3+rnd()*0.6), rnd()*2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  const imgData = ctx.getImageData(0, 0, w, h);
+  TEX[type] = { data: imgData.data, w, h, url: c.toDataURL("image/png") };
+  return TEX[type];
+}
+
+/* ============================================================
+   光照遮罩
+   1 代 _getPlanetMask() 的坐标是拿 baseR 当基准写的，而 baseR≈0.3×size，
+   导致高光圆心距球心 1.19R（整颗高光都在球外），暗角也整片压死 —— 球体基本被压平。
+   这里改成以球心 (size/2, size/2) 为基准重写，保留 1 代「左上亮、右下暗、最深 0.7」的观感。
+   两边共用同一张，所以对比的变量仍然只有投影方式。
+   ============================================================ */
+const MASK = {};
+function getMask(size){
+  if (MASK[size]) return MASK[size];
+  const c0 = size/2, r0 = size/2;
+  const mc = document.createElement("canvas"); mc.width = size; mc.height = size;
+  const mCtx = mc.getContext("2d");
+  // 暗角：亮核偏左上，向球心外推
+  const grad = mCtx.createRadialGradient(c0 - r0*0.45, c0 - r0*0.45, r0*0.15, c0, c0, r0*1.02);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(0.45, 'rgba(0,0,0,0.06)');
+  grad.addColorStop(0.78, 'rgba(0,0,0,0.26)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.72)');
+  mCtx.fillStyle = grad; mCtx.fillRect(0, 0, size, size);
+  // 高光：圆心在球内（距球心 0.59R），旋转任意方位都不会跑出球
+  const hl = mCtx.createRadialGradient(c0 - r0*0.42, c0 - r0*0.42, 0, c0 - r0*0.42, c0 - r0*0.42, r0*0.62);
+  hl.addColorStop(0, 'rgba(255,255,255,0.40)');
+  hl.addColorStop(0.3, 'rgba(255,255,255,0.14)');
+  hl.addColorStop(1, 'rgba(255,255,255,0)');
+  mCtx.fillStyle = hl; mCtx.beginPath(); mCtx.arc(c0 - r0*0.42, c0 - r0*0.42, r0*0.62, 0, Math.PI*2); mCtx.fill();
+
+  // ---- 裁到圆内：修掉 1 代那张「0.7 黑铺满整张 size×size」带来的球外黑方块 ----
+  // 裁完不需要再扩边：圆形遮罩绕球心旋转是「圆→圆」的双射，边缘不会露。
+  mCtx.globalCompositeOperation = "destination-in";
+  mCtx.beginPath(); mCtx.arc(size/2, size/2, size/2, 0, Math.PI*2); mCtx.fill();
+  mCtx.globalCompositeOperation = "source-over";
+
+  MASK[size] = { canvas: mc, url: mc.toDataURL("image/png") };
+  return MASK[size];
+}
+
+/* ============================================================
+   左：1 代真球面 —— 逐行复刻 _drawPlanetSphere()
+   ============================================================ */
+function drawSphere(canvas, type, scrollOffset, noMask){
+  const size = canvas.width;
+  const baseR = (size/2-4)*0.66;
+  const cx = size/2, cy = size/2;
+  const tex = TEX[type];
+  const mask = getMask(size).canvas;
+  const ctx = canvas.getContext("2d");
+  const tiltRad = (TILTS[type] || 15) * Math.PI / 180;
+  const cosT = Math.cos(tiltRad), sinT = Math.sin(tiltRad);
+  const r = baseR;
+  const ow = Math.ceil(r*2), oh = Math.ceil(r*2);
+  const imageData = ctx.createImageData(ow, oh);
+  const data = imageData.data;
+  const texW = tex.w, texH = tex.h;
+
+  for (let py = 0; py < oh; py++) {
+    for (let px = 0; px < ow; px++) {
+      const nx = (px - r)/r, ny = (py - r)/r;
+      const dist2 = nx*nx + ny*ny;
+      if (dist2 > 1) continue;
+      const nz = Math.sqrt(1 - dist2);
+      const rx = nx;
+      const ry = ny*cosT - nz*sinT;
+      const rz = ny*sinT + nz*cosT;
+      const theta = Math.atan2(rz, rx);
+      const phi = Math.asin(Math.max(-1, Math.min(1, ry)));
+      let u = (theta/(2*Math.PI) + 0.5 + scrollOffset) % 1;
+      if (u < 0) u += 1;
+      const v = phi/Math.PI + 0.5;
+      const tx = Math.floor(u*texW) % texW;
+      const ty = Math.min(texH-1, Math.max(0, Math.floor(v*texH)));
+      const tidx = (ty*texW + tx)*4;
+      const idx = (py*ow + px)*4;
+      data[idx]=tex.data[tidx]; data[idx+1]=tex.data[tidx+1]; data[idx+2]=tex.data[tidx+2]; data[idx+3]=255;
+    }
+  }
+  ctx.clearRect(0, 0, size, size);
+  const offsetX = cx - r, offsetY = cy - r;
+  ctx.putImageData(imageData, offsetX, offsetY);
+
+  if (!noMask) {
+    ctx.save(); ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(mask, offsetX, offsetY, r*2, r*2);
+    ctx.restore();
+  }
+
+  ctx.save();
+  const glow = ctx.createRadialGradient(cx, cy, r*0.7, cx, cy, r);
+  glow.addColorStop(0, 'rgba(255,255,255,0)');
+  glow.addColorStop(0.95, 'rgba(180,220,255,0.08)');
+  glow.addColorStop(1, 'rgba(180,220,255,0.04)');
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(180,220,255,0.06)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+
+  if (HAS_RING[type]) drawRing(ctx, cx, cy, r, type);
+}
+
+function drawRing(ctx, cx, cy, r, type){
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, ctx.canvas.width, cy); ctx.clip();
+  ctx.translate(cx, cy); ctx.scale(1, 0.28); ctx.rotate(0.18);
+  ctx.shadowColor = 'rgba(150,200,255,0.35)'; ctx.shadowBlur = 35;
+  ctx.strokeStyle = type==='gas' ? 'rgba(180,215,255,0.70)' : 'rgba(160,150,220,0.65)';
+  ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(0, 0, r*2.2, r*2.2, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.shadowBlur = 15;
+  ctx.strokeStyle = type==='gas' ? 'rgba(210,235,255,0.50)' : 'rgba(190,180,240,0.45)';
+  ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, 0, r*1.70, r*1.70, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  const shGrad = ctx.createLinearGradient(0, cy+r*0.2, 0, cy+r*1.5);
+  shGrad.addColorStop(0, 'rgba(0,0,0,0)'); shGrad.addColorStop(0.3, 'rgba(0,0,0,0.08)'); shGrad.addColorStop(1, 'rgba(0,0,0,0.20)');
+  ctx.fillStyle = shGrad; ctx.beginPath(); ctx.ellipse(cx, cy, r*2.2, r*0.62, 0.18, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+/* ============================================================
+   右：纯 SVG 近似
+   圆形裁剪 + 三张首尾相接的完整贴图横向平移（平移 4R = 一整圈，无缝重置）
+   + 独立的倾角组（静态 rotate）+ 独立的光照遮罩（可单独旋转方位）
+   ============================================================ */
+let _uidSeq = 0;
+
+function svgApprox(type, S, o){
+  o = o || {};
+  const phase  = o.phase == null ? 0 : o.phase;
+  const tilt   = o.tilt  == null ? 0 : o.tilt;
+  const light  = o.light == null ? 0 : o.light;
+  const speed  = o.speed == null ? 1 : o.speed;
+  const noMask = !!o.noMask;
+
+  const baseR = (S/2-4)*0.66;
+  const cx = S/2, cy = S/2, R = baseR;
+  const uid = "pl" + (++_uidSeq);
+  const tex = TEX[type];
+  const msk = getMask(S);
+
+  const texW = R*4;                        // 一整圈经度 = 4R
+  const texH = R*2;                        // 球直径，旋转后依然盖住圆（见 TILT_MAX 处注释）
+  const texY = cy - R;
+  const shift = phase * texW;              // 平移量（一整圈 = 4R）
+  const dur = 1/(SPEEDS[type]*speed*60);   // 秒/圈
+
+  // 三张图首尾相接（间距 4R）：旋转 tilt 后，圆内点的逆变换 x 最远到 ±1.302R，
+  // 而单张图只有 4R 宽，平移到最坏位置时两张盖不到右侧 —— 必须第三张兜住。
+  const xb = cx - R, xa = xb - texW, xc = xb + texW;
+  const img = function(x){
+    return '<image href="'+tex.url+'" x="'+x+'" y="'+texY+'" width="'+texW+'" height="'+texH+'" preserveAspectRatio="none"/>';
+  };
+
+  let ring = "";
+  if (HAS_RING[type]) {
+    const col1 = type==='gas' ? 'rgba(180,215,255,0.70)' : 'rgba(160,150,220,0.65)';
+    const col2 = type==='gas' ? 'rgba(210,235,255,0.50)' : 'rgba(190,180,240,0.45)';
+    const lw1 = Math.max(1.2, 6*(R/18.48)), lw2 = Math.max(0.7, 3*(R/18.48));
+    const e = '<ellipse cx="0" cy="0" rx="'+(R*2.2)+'" ry="'+(R*2.2)+'" fill="none" stroke="'+col1+'" stroke-width="'+lw1+'"/>'
+            + '<ellipse cx="0" cy="0" rx="'+(R*1.7)+'" ry="'+(R*1.7)+'" fill="none" stroke="'+col2+'" stroke-width="'+lw2+'"/>';
+    // 环垂直于自转轴 → 跟着 tilt 一起歪。
+    // 遮挡（只留屏幕上半）用外层 clip 判定，所以 clip 必须在 rotate 之外，否则矩形会跟着转。
+    ring = '<g clip-path="url(#'+uid+'_up)"><g transform="translate('+cx+','+cy+') rotate('+tilt+') scale(1,0.28) rotate(10.31)">'+e+'</g></g>';
+  }
+
+  const mR = R;                            // 遮罩按球包围盒铺（已裁圆，旋转安全）
+
+  return '<svg width="'+S+'" height="'+S+'" viewBox="0 0 '+S+' '+S+'" style="overflow:visible">'
+    + '<defs>'
+    +   '<clipPath id="'+uid+'_cp"><circle cx="'+cx+'" cy="'+cy+'" r="'+R+'"/></clipPath>'
+    +   '<clipPath id="'+uid+'_up"><rect x="0" y="0" width="'+S+'" height="'+cy+'"/></clipPath>'
+    + '</defs>'
+    + ring
+    // ① 球体：静态倾角组 里套 自转组（每帧只改内层的 translate，倾角不动）
+    + '<g clip-path="url(#'+uid+'_cp)">'
+    + '<g class="nsk-tilt" data-tilt="'+tilt.toFixed(1)+'" transform="rotate('+tilt.toFixed(2)+','+cx+','+cy+')">'
+    +     '<g class="nsk-spin" data-sw="'+texW+'" data-sp="'+dur.toFixed(5)+'" data-sph="'+phase+'"'
+    +     ' transform="translate('+(-shift).toFixed(2)+',0)">'+img(xa)+img(xb)+img(xc)+'</g>'
+    +   '</g>'
+    + '</g>'
+    // ② 光照：不跟倾角走（光源方位要能各自不同），用圆形 clip 兜住旋转后带出的方角
+    + (noMask ? '' : '<g clip-path="url(#'+uid+'_cp)"><g class="nsk-light" data-light="'+light.toFixed(1)+'" transform="rotate('+light.toFixed(2)+','+cx+','+cy+')">'
+    +   '<image href="'+msk.url+'" x="'+(cx-mR)+'" y="'+(cy-mR)+'" width="'+(mR*2)+'" height="'+(mR*2)+'"'
+    +   ' preserveAspectRatio="none" style="mix-blend-mode:multiply"/></g></g>')
+    + '<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="rgba(180,220,255,0.06)" stroke-width="1"/>'
+    + '</svg>';
+}
+
+/* ============================================================
+   初始化：先把 6 张贴图生成出来（固定种子，两边共用同一份像素）
+   ============================================================ */
+TYPES.forEach(function(t, i){
+  buildTexture(t, (0x9E3779B1 ^ Math.imul(i + 1, 2654435761)) >>> 0);
+});
+
+/* ============================================================
+   渲染
+   ============================================================ */
+const JOBS = [];   // 需要每帧重绘的真球面 canvas
+function cellCanvas(type, S, noMask){
+  const d = document.createElement("div");
+  d.className = "cell";
+  const c = document.createElement("canvas");
+  c.width = S; c.height = S;
+  c.style.width = S + "px"; c.style.height = S + "px";
+  d.appendChild(c);
+  if (FREEZE === null) JOBS.push({ canvas: c, type: type, noMask: !!noMask });
+  else setTimeout(function(){ drawSphere(c, type, FREEZE, noMask); }, 0);
+  return d;
+}
+function cellSvg(type, S, opts){
+  opts = opts || {};
+  const d = document.createElement("div");
+  d.className = "cell";
+  d.innerHTML = svgApprox(type, S, {
+    phase:  opts.phase  == null ? (FREEZE === null ? 0 : FREEZE) : opts.phase,
+    tilt:   opts.tilt   == null ? 0 : opts.tilt,
+    light:  opts.light  == null ? 0 : opts.light,
+    speed:  opts.speed  == null ? 1 : opts.speed,
+    noMask: !!opts.noMask
+  });
+  return d;
+}
+
+function head(rows, labels){
+  const tr = document.createElement("tr");
+  labels.forEach(function(l,i){
+    const th = document.createElement("th");
+    th.textContent = l;
+    if (i === 0) th.style.textAlign = "left";
+    tr.appendChild(th);
+  });
+  rows.appendChild(tr);
+}
+
+// 单表：每种类型一行，每档尺寸两格（左真球面 / 右 SVG 紧邻）
+(function(){
+  const tb = document.getElementById("tblAll");
+  head(tb, ["类型", "64px 真球面", "64px SVG", "32px 真球面", "32px SVG", "24px 真球面", "24px SVG"]);
+  TYPES.forEach(function(t){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.className = "t";
+    td.innerHTML = TYPE_CN[t] + "<i>" + t + "</i>";
+    tr.appendChild(td);
+    [64, 32, 24].forEach(function(S){
+      const a = document.createElement("td"); a.appendChild(cellCanvas(t, S)); tr.appendChild(a);
+      const b = document.createElement("td"); b.appendChild(cellSvg(t, S)); tr.appendChild(b);
+    });
+    tb.appendChild(tr);
+  });
+})();
+
+/* ============================================================
+   光照诊断
+   ============================================================ */
+(function(){
+  const tb = document.getElementById("tblLight");
+  head(tb, ["", "真球面 · 有遮罩", "真球面 · 无遮罩", "SVG · 有遮罩", "SVG · 无遮罩"]);
+  const tr = document.createElement("tr");
+  const td = document.createElement("td"); td.className = "t";
+  td.innerHTML = "冰封<i>ice · 64px</i>";
+  tr.appendChild(td);
+  [[false, "c"], [true, "c"], [false, "s"], [true, "s"]].forEach(function(pair){
+    const cell = document.createElement("td");
+    cell.appendChild(pair[1] === "c" ? cellCanvas("ice", 64, pair[0]) : cellSvg("ice", 64, { noMask: pair[0] }));
+    tr.appendChild(cell);
+  });
+  tb.appendChild(tr);
+})();
+
+/* ============================================================
+   随机倾斜 / 随机光照 —— 同一张贴图，参数按 id 派生
+   ============================================================ */
+function strHash(s){
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+// 真实接入时这里传 body.id：同一颗行星每次进游戏参数完全一致
+function spinParams(seed){
+  const r = mulberry32(seed);
+  return {
+    tilt:  (r() * 2 - 1) * TILT_MAX,   // 自转轴在屏幕上的倾斜方向 ±22°
+    light: r() * 360,                  // 光源方位（独立于倾角，物理上本就无关）
+    speed: 0.7 + r() * 0.6,            // 转速倍率
+    phase: r()                         // 初始相位，避免所有球像贴纸一样同相位
+  };
+}
+
+(function(){
+  const tb = document.getElementById("tblTilt");
+  head(tb, ["", "1", "2", "3", "4", "5", "6", "7", "8"]);
+  [[48, "48px"], [24, "24px 游戏内尺寸"]].forEach(function(pair){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.className = "t";
+    td.innerHTML = pair[1] + "<i>temperate</i>";
+    tr.appendChild(td);
+    for (let i = 0; i < 8; i++) {
+      const cell = document.createElement("td");
+      const d = document.createElement("div"); d.className = "cell";
+      d.innerHTML = svgApprox("temperate", pair[0], spinParams(strHash("planet_" + i)));
+      cell.appendChild(d);
+      tr.appendChild(cell);
+    }
+    tb.appendChild(tr);
+  });
+  const tr = document.createElement("tr");
+  const td = document.createElement("td"); td.className = "t";
+  td.innerHTML = "参数<i>倾角 / 光源方位</i>";
+  tr.appendChild(td);
+  for (let i = 0; i < 8; i++) {
+    const pr = spinParams(strHash("planet_" + i));
+    const c = document.createElement("td");
+    c.style.fontSize = "10px"; c.style.color = "#6b7c90"; c.style.lineHeight = "1.5";
+    c.innerHTML = Math.round(pr.tilt) + "°<br>" + Math.round(pr.light) + "°";
+    tr.appendChild(c);
+  }
+  tb.appendChild(tr);
+})();
+
+/* ============================================================
+   自转驱动
+   真球面：每帧重绘 canvas
+   SVG   ：每帧只改内层 <g> 的 translate —— 相位是「已过秒数」的纯函数，
+           所以即便外层 DOM 被整段重建，下一帧自动回到正确相位（不会跳回起点）。
+   ============================================================ */
+(function spin(){
+  if (FREEZE !== null) return;
+  let paused = false, sec = 0, last = null;
+  const btn = document.getElementById("btnPause");
+  if (btn) btn.onclick = function(){ paused = !paused; btn.textContent = paused ? "继续" : "暂停"; };
+
+  const svgNodes = Array.prototype.slice.call(document.querySelectorAll(".nsk-spin"));
+  const PARAMS = svgNodes.map(function(g){
+    return {
+      el: g,
+      w:  parseFloat(g.getAttribute("data-sw")),
+      sp: parseFloat(g.getAttribute("data-sp")),
+      ph: parseFloat(g.getAttribute("data-sph")) || 0
+    };
+  });
+  window.__svgSpinCount = PARAMS.length;
+
+  function loop(ts){
+    if (last !== null && !paused) sec += (ts - last) / 1000;
+    last = ts;
+    for (let i = 0; i < JOBS.length; i++) {
+      const j = JOBS[i];
+      drawSphere(j.canvas, j.type, (sec * SPEEDS[j.type] * 60) % 1, j.noMask);
+    }
+    for (let i = 0; i < PARAMS.length; i++) {
+      const p = PARAMS[i];
+      const k = (p.ph + sec / p.sp) % 1;
+      p.el.setAttribute("transform", "translate(" + (-k * p.w).toFixed(2) + ",0)");
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+
+/* ============================================================
+   跑分（同步执行，保证在真实时钟下完成；自适应帧数使各尺寸工作量相同）
+   注意：headless 加 --virtual-time-budget 会把 performance.now() 冻住，
+   那种环境下测出来全是 0.00ms —— 测这一节必须去掉该参数。
+   ============================================================ */
+(function bench(){
+  const out = [];
+  const sizes = [24, 32, 48, 64, 96];
+  out.push("真球面（1 代原式）单帧总耗时 = 逐像素重采样 + putImageData + 光照遮罩 + 辉光");
+  out.push("尺寸    像素循环   帧数      单帧       占16.6ms    3颗行星/帧");
+  out.push("─".repeat(66));
+  let worst = 0;
+  sizes.forEach(function(S){
+    const baseR = (S/2-4)*0.66;
+    const px = Math.ceil(baseR*2) * Math.ceil(baseR*2);
+    const FRAMES = Math.max(40, Math.ceil(600000 / px));   // 统一总工作量 ≈ 60 万像素
+    const c = document.createElement("canvas"); c.width = S; c.height = S;
+    for (let k = 0; k < 3; k++) drawSphere(c, "temperate", 0);   // 预热：建 mask 缓存、JIT
+    const t0 = performance.now();
+    for (let i = 0; i < FRAMES; i++) drawSphere(c, "temperate", i / FRAMES);
+    const ms = (performance.now() - t0) / FRAMES;
+    worst = Math.max(worst, ms);
+    out.push(
+      (S + "px").padEnd(8) +
+      String(px).padEnd(11) +
+      String(FRAMES).padEnd(10) +
+      (ms.toFixed(3) + " ms").padEnd(11) +
+      ((ms / 16.6 * 100).toFixed(1) + "%").padEnd(12) +
+      (ms * 3).toFixed(2) + " ms"
+    );
+  });
+  out.push("");
+  // SVG 侧每帧 JS 开销（只测 JS；浏览器重绘在无 GPU 的 headless 下不可信）
+  (function(){
+    const nodes = Array.prototype.slice.call(document.querySelectorAll(".nsk-spin"));
+    if (!nodes.length) return;
+    for (let i = 0; i < 20; i++) nodes.forEach(function(g){ g.setAttribute("transform", "translate(0,0)"); });
+    const FR = 600;
+    const t0 = performance.now();
+    for (let f = 0; f < FR; f++) {
+      const x = (-((f * 7) % 997)).toFixed(2);
+      for (let i = 0; i < nodes.length; i++) nodes[i].setAttribute("transform", "translate(" + x + ",0)");
+    }
+    const ms = (performance.now() - t0) / FR;
+    out.push("SVG 侧每帧 JS 开销：写 " + nodes.length + " 个 transform = "
+      + ms.toFixed(3) + " ms/帧（占 16.6ms 的 " + (ms / 16.6 * 100).toFixed(2) + "%）");
+    out.push("每颗行星的节点：3×贴图 <image> + 1×光照 <image> + 3 个 <g> + 2 个 clipPath");
+    out.push("注意：上面仅含 JS 侧。浏览器重绘/合成在无 GPU 的 headless 下不具参考性，须真机复核。");
+  })();
+  document.getElementById("bench").textContent = out.join("\n");
+
+  document.getElementById("verdict").innerHTML =
+    "<b>关于倾斜（第 3 节）</b>：纹理组外面套一层静态 <code>rotate(θ)</code> 就是倾角，"
+    + "圆不转、矩形转 —— 所以 <b>不需要给纹理加任何留白</b>（矩形绕中心旋转恒盖住它的内切圆）。<br>"
+    + "光照遮罩用另一层独立 <code>rotate(φ)</code>，不跟倾角走，所以「自转轴朝向」和「光源方位」可以各自随机、互不牵连。<br>"
+    + "倾角本身在温带那种平缓渐变贴图上偏微妙（±22° 只是纹理条带略微斜一下），"
+    + "但<b>换成气态行星那种横条纹 + 星环就很明显</b>（自检页第三排）。真正让「每颗都不一样」的其实主要是<b>光照方位</b>。<br><br>"
+    + "<b>关于投影差异</b>：看第 1 节的 64px 组，球边缘（真球面经度压缩成竖条纹）与斑块速度（真球面越靠边越快）是两者唯一的实质差别，"
+    + "中间约 60% 区域几乎无法区分；24px / 32px 是游戏内真实尺寸，<b>这一档基本分不出来</b>。<br><br>"
+    + "<b>关于性能表</b>：上一轮我给的 0.08 / 0.14 / 0.21 ms 是在 headless 虚拟时钟下测的，"
+    + "那组数字不可信（时钟被冻住时测出来全是 0.00ms）。这张表的真球面部分是真实时钟下同步测的，可以当基准。";
+})();
+</script>
+</body>
+</html>

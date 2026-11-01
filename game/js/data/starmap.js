@@ -125,17 +125,57 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  // 残骸场轨道半径。早期写的是 200 + rand()*18，但星系视图 viewBox 是 400×400
+  // （中心 200，半径 200 正好就是画布边缘），实测 207 个残骸场里 85 个圆心落在画布外、
+  // 150 个贴边。现收到 104：落在气云(50) / 小行星带(72) / 行星(112+) 三者之间的空档，
+  // 且距四边都有充足余量（104 + 视觉半径 15 = 119 << 200）。
+  const DR_ORBIT = 104;
+  const DR_RADIUS = 15;   // 残骸场视觉半径（后续图形改造按此展开碎块，当前 size 仍为 9）
+  const DR_MIN_GAP = 12;  // 与邻近天体边缘的最小间隙（角度避让的目标值）
+
   // 残骸场（每个节点恰好 1 个）：风味名（多起点名字给观感）+ 安等 band（遗址 I–V）。
   // 玩家在 UI 自选考古焦点，band 决定掉落肥度，与焦点正交。
   function makeDerelict(node, rand, band) {
     const rt = nodeRich(node);
     const ArchData = (typeof window !== "undefined" && window.NSK && window.NSK.Data && window.NSK.Data.Archaeology) ? window.NSK.Data.Archaeology : null;
     const an = ArchData ? ArchData.siteName(band, rand) : (node.name + " 残骸场");
+    // ⚠️ 下面两次 rand() 必须照旧消耗：makeBodies 里所有天体共用同一条 PRNG 序列，
+    //    少调一次会让其后的行星/空间站全部错位，整张固定星图重排。
+    void rand();                             // 原 orbit: 200 + rand()*18（值已废弃，仅保留序列消耗）
+    const ang0 = Math.floor(rand() * 360);   // 原 ang
     return {
       id: node.id + "_dr", kind: "derelict", name: an,
-      orbit: 200 + rand() * 18, ang: Math.floor(rand() * 360), size: 9, tier: rt, band: band,
+      orbit: DR_ORBIT, ang: ang0, size: 9, tier: rt, band: band,
       abundance: {},
     };
+  }
+  // 残骸场定位：用独立 prng 挑角度（不消耗主序列 → 不惊动其它天体），
+  // 并在候选角度里挑一个与同星系天体边缘间隙最大的，避免叠在一起点不到。
+  // 纯函数 + 幂等：同一 node.id 永远得到同一个角度。
+  function placeDerelict(node, bodies) {
+    const dr = bodies && bodies.find(b => b.kind === "derelict");
+    if (!dr) return bodies;
+    const pr = hashPrng(node.id + "_drpos");
+    const R2D = Math.PI / 180;
+    let bestAng = dr.ang || 0, bestGap = -Infinity;
+    for (let k = 0; k < 36; k++) {
+      const ang = Math.floor(pr() * 360);
+      const x = 200 + DR_ORBIT * Math.cos(ang * R2D);
+      const y = 200 + DR_ORBIT * Math.sin(ang * R2D);
+      let gap = Infinity;
+      for (const b of bodies) {
+        if (b === dr) continue;
+        if (!b.orbit || b.kind === "belt") continue;   // 环状天体铺满整圈，点对点比距离没有意义
+        const bx = 200 + b.orbit * Math.cos(b.ang * R2D);
+        const by = 200 + b.orbit * Math.sin(b.ang * R2D);
+        gap = Math.min(gap, Math.hypot(x - bx, y - by) - ((b.size || 8) + DR_RADIUS));
+      }
+      if (gap > bestGap) { bestGap = gap; bestAng = ang; }
+      if (gap >= DR_MIN_GAP) break;
+    }
+    dr.orbit = DR_ORBIT;
+    dr.ang = bestAng;
+    return bodies;
   }
   function makeBodies(node, rand, regionStage, band) {
     const bodies = [];
@@ -145,11 +185,22 @@
     const beltOres = {};
     for (const o in node.abundance) beltOres[o] = node.abundance[o];
     bodies.push({ id: node.id + "_belt", kind: "belt", name: node.name + " 小行星带", orbit: 72, ang: Math.floor(rand() * 360), size: 17, tier: rt, abundance: beltOres });
-    // 气云（约 40% 星系出现）：另一种采集点，采气体资源（走 mining 技能）；全气体丰寡，越级气体稀缺可采
+    // 气云（采气点）：**每个星系必有**（2026-11-01 用户定：采矿/采气/考古/海盗四类作业点全星系齐全）。
+    // ⚠️ rand() 消耗次数必须与原「40% 概率出现」完全一致 —— 那 131 个原本没气云的星系，
+    //    一旦去掉 if 直接生成，会凭空多消耗「角度 1 次 + 每气体 1 次」的随机数，
+    //    其后残骸场/行星/空间站全部错位，整张固定星图重排。
+    //    做法：仍先掷一次判定（消耗照旧），命中分支沿用原 rand 序列，
+    //    未命中的星系改用独立 hashPrng 补一个 —— 主序列一次都不多消耗。
+    //    用 node.id+"_gas" 作种子还带来一个好处：ensureBodies 给旧档补的气云与本函数算出的完全同参数。
     if (rand() < 0.4) {
       const gasOres = {};
       for (const g of ALL_GASES) gasOres[g] = +oreAbundance(GAS_TIER[g], rt, rand).toFixed(3);
       bodies.push({ id: node.id + "_gas", kind: "gas", name: node.name + " 气云", orbit: 50, ang: Math.floor(rand() * 360), size: 22, tier: rt, abundance: gasOres });
+    } else {
+      const gr = hashPrng(node.id + "_gas");
+      const gasOres = {};
+      for (const g of ALL_GASES) gasOres[g] = +oreAbundance(GAS_TIER[g], rt, gr).toFixed(3);
+      bodies.push({ id: node.id + "_gas", kind: "gas", name: node.name + " 气云", orbit: 50, ang: Math.floor(gr() * 360), size: 22, tier: rt, abundance: gasOres });
     }
     // —— 每个节点恰好 1 个残骸场（玩家自选考古焦点）——
     bodies.push(makeDerelict(node, rand, band));
@@ -169,6 +220,7 @@
       if (k === "planet") b.planetType = planetTypeForStage(regionStage, rand);
       bodies.push(b);
     }
+    placeDerelict(node, bodies);   // 残骸场角度避让：必须等全部天体就位后再算
     return bodies;
   }
   // 旧档/外部构造补天体（幂等）：缺 bodies 才生成；已存在则补全全矿种/全气体（O(1) 不破坏新档确定性）
@@ -192,15 +244,16 @@
       // 小行星带同步节点全矿种
       const belt = n.bodies.find(b => b.kind === "belt");
       if (belt) { belt.abundance = {}; for (const o in n.abundance) belt.abundance[o] = n.abundance[o]; }
-      // 气云：缺失则按 40% 概率补（全气体）；已存在则补全缺的气体
+      // 气云：每星系必有（旧档缺则补，插回小行星带之后，位置与新档一致）；
+      // 已存在则补齐缺的气体（O(1)，不破坏新档确定性）。
       let gas = n.bodies.find(b => b.kind === "gas");
       const gr = hashPrng(n.id + "_gas");
       if (!gas) {
-        if (gr() < 0.4) {
-          const gasOres = {};
-          for (const g of ALL_GASES) gasOres[g] = +oreAbundance(GAS_TIER[g], nodeRich(n), gr).toFixed(3);
-          n.bodies.push({ id: n.id + "_gas", kind: "gas", name: n.name + " 气云", orbit: 50, ang: Math.floor(gr() * 360), size: 22, tier: nodeRich(n), abundance: gasOres });
-        }
+        const gasOres = {};
+        for (const g of ALL_GASES) gasOres[g] = +oreAbundance(GAS_TIER[g], nodeRich(n), gr).toFixed(3);
+        const gasBody = { id: n.id + "_gas", kind: "gas", name: n.name + " 气云", orbit: 50, ang: Math.floor(gr() * 360), size: 22, tier: nodeRich(n), abundance: gasOres };
+        const bi = n.bodies.findIndex(b => b.kind === "belt");
+        if (bi >= 0) n.bodies.splice(bi + 1, 0, gasBody); else n.bodies.push(gasBody);
       } else {
         for (const g of ALL_GASES) if (!(g in gas.abundance)) gas.abundance[g] = +oreAbundance(GAS_TIER[g], nodeRich(n), gr).toFixed(3);
       }
@@ -210,6 +263,11 @@
         const reg2 = (map.regions || []).find(r => r.id === n.region) || {};
         const band2 = SECLEVEL_TABLE[reg2.secLevel] ? SECLEVEL_TABLE[reg2.secLevel].band : 1;
         n.bodies.push(makeDerelict(n, rr, band2));
+        placeDerelict(n, n.bodies);   // 新补的残骸场同样要做角度避让
+      } else if (n.bodies.some(b => b.kind === "derelict" && b.orbit > 180)) {
+        // 旧档迁移（幂等，不升 STATE_VERSION）：早期残骸场轨道是 200+rand()*18，
+        // 压在画布边缘外，圆心出界看不见也点不到。orbit>180 是「旧值」的唯一特征。
+        placeDerelict(n, n.bodies);
       }
     }
     return map;
@@ -595,5 +653,5 @@
     };
   }
 
-  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, makeDerelict, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE };
+  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, makeDerelict, placeDerelict, DR_ORBIT, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE };
 });
