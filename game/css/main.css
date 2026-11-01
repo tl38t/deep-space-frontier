@@ -1298,3 +1298,18 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .research-tree::-webkit-scrollbar-thumb { background: #2c5663; border-radius: 3px; }
 .research-tree::-webkit-scrollbar-thumb:hover { background: #3a7a8a; }
 .research-tree::-webkit-scrollbar-track { background: transparent; }
+
+/* 驻舱面板（2026-11-01 技能体系）：一人一岗，驻舱只给倍率不产经验 */
+.base-station { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(120,180,255,.05); border: 1px solid rgba(120,180,255,.14); }
+.base-station-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.base-station-head b { color: #9fc6ff; font-weight: 600; }
+.base-station-who { color: #d8e6ff; }
+.base-station-none { color: #8b96a8; }
+.base-station-tip { font-size: 12px; margin-top: 6px; line-height: 1.6; }
+.base-station-skills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.base-station-skills .sm { font-size: 11px; padding: 3px 8px; }
+.base-station-pick { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.base-station-mem { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 9px; border-radius: 8px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); color: #cbd6e8; cursor: pointer; }
+.base-station-mem:hover { background: rgba(120,180,255,.14); border-color: rgba(120,180,255,.4); color: #fff; }
+.base-station-mem small { color: #7f8b9e; font-size: 10px; }

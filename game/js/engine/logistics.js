@@ -31,6 +31,14 @@
 
   function ensure(state) { if (!state.logistics) state.logistics = { compensation: 0 }; }
 
+  // 成员技能等级（惰性取 Settle：本模块在 settle.js 之前加载，运行时已就绪）
+  function skillLvOf(m, key) {
+    const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const S = E && E.Settle;
+    if (!S || !S.levelOf || !m || !m.skills) return 1;
+    return S.levelOf(m.skills[key] || 0);
+  }
+
   // 母舰到作业节点的最短跳数（BFS，复用 StarMap.shortestHops）
   function hopsTo(state, nodeId) {
     if (!state.starMap || !Data || !Data.StarMap || !Data.StarMap.shortestHops) return 0;
@@ -42,11 +50,14 @@
   // 与燃料/产出同 dt，置于 settle 主循环前，保证当次结算即用最新补偿。
   function accumulate(state, dt) {
     ensure(state);
-    let n = 0;
+    // 2026-11-01 技能体系：每人补偿速率 ×(1+物流 lv×2%) —— 与采集/战斗同比例，
+    // 这样「物流」不再只是名册里一个没人读的数字。
+    let rate = 0;
     for (const m of state.members) {
-      if (!m.destroyed && m.assignment && m.assignment.type === "logistics") n++;
+      if (m.destroyed || !m.assignment || m.assignment.type !== "logistics") continue;
+      rate += COMP_RATE * (1 + skillLvOf(m, "logistics") * 0.02);
     }
-    if (n > 0) state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + COMP_RATE * n * dt);
+    if (rate > 0) state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + rate * dt);
   }
 
   // 距离惩罚：基础 HOP_PENALTY，受精通点「航线优化」按级下调（惰性取用 Mastery，最低 5pp）

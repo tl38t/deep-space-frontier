@@ -319,11 +319,63 @@
     return { owned: false, available: enoughRel && enoughLevel && enoughCost, label: reason };
   }
 
+  // ===== 驻舱（2026-11-01 技能体系）：一人一岗，与出征互斥 =====
+  // 队列 → 承担该队列的舱段模块类型（造船与部件制造共用总装船坞）
+  const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture" };
+  // 队列 → 驻舱者决定耗时的技能键
+  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture" };
+  const UNMANNED_PENALTY = 1.4;   // 舱段无人：该队列耗时 ×1.4（约 71% 速度）
+
+  function stationedAt(state, slotId) {
+    if (!state || !Array.isArray(state.members)) return null;
+    for (const m of state.members) {
+      if (!m.destroyed && m.assignment && m.assignment.type === "station" && m.assignment.slotId === slotId) return m;
+    }
+    return null;
+  }
+
+  // 按模块类型找驻舱者。command / dock / habitat 这些不接队列的舱段也用它。
+  function stationedOfType(state, moduleType) {
+    if (!state || !Array.isArray(state.members)) return null;
+    for (const m of state.members) {
+      if (!m.destroyed && m.assignment && m.assignment.type === "station"
+          && (m.assignment.slotType === moduleType
+              || (m.assignment.slotType === undefined && m.assignment.slotId === moduleType))) return m;
+    }
+    return null;
+  }
+
+  function memberSkillLv(m, key) {
+    const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const S = E && E.Settle;
+    if (!S || !S.levelOf || !m || !m.skills || !key) return 1;
+    return S.levelOf(m.skills[key] || 0);
+  }
+
+  // 该队列的驻舱工头 → { member, skill }；无人返回 null。
+  function stationWorker(state, queueType) {
+    const type = QUEUE_MODULE[queueType];
+    if (!type) return null;
+    const m = stationedOfType(state, type);
+    return m ? { member: m, skill: QUEUE_SKILL[queueType], moduleType: type } : null;
+  }
+
+  // 驻舱对「队列耗时」的乘数。**运行时算、不烘进 it.dur**：
+  // 人可以撤走，撤了就该立刻变慢；而布局乘区是物理结构（queueDurationMultiplier 在入队时烘死）。
+  // ⚠️ 无人惩罚 1.4 必须留在 queueDurationMultiplier 的 clamp(0.65~1) 之外，否则会被钳回 1。
+  function stationSpeedMult(state, queueType) {
+    const w = stationWorker(state, queueType);
+    if (!w) return UNMANNED_PENALTY;
+    return 1 / (1 + memberSkillLv(w.member, w.skill) * 0.02);
+  }
+
   return {
     normalize, hullOf, stateSlots, slotById, adjacentSlots, moduleAt, availableModules,
     swapSlots, resetSlotPos, hasCustomLayout,
     buyBlueprint, switchHull, installModule, uninstallModule, slotEffects,
     queueDurationMultiplier, hullStatus,
     energyBudget, energyUsed, powerReport, powerMult, upgradeCore,
+    stationedAt, stationedOfType, stationWorker, stationSpeedMult, memberSkillLv,
+    QUEUE_MODULE, QUEUE_SKILL, UNMANNED_PENALTY,
   };
 });

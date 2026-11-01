@@ -142,7 +142,26 @@
   //   laser → laserOps / missile → missileOperations / cannon → cannonOps
   // 本作三个战斗技能对应：laser → combatLaser，cannon → combatTurret，missile → command。
   // 每门炮只吃自己类型的技能，不做跨类型平均（1 代 selectors.js:2575/2603 即如此）。
-  const SKILL_OF_WEAPON = { laser: "combatLaser", missile: "command", cannon: "combatTurret" };
+  // 2026-11-01：导弹不再借用 command（该技能已删除），改用独立的 missile 键。
+  const SKILL_OF_WEAPON = { laser: "combatLaser", missile: "missile", cannon: "combatTurret" };
+
+  function _Base() {
+    return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+  }
+
+  // 指挥塔全局战斗加成（2026-11-01 用户定）。
+  // 指挥值 cmdLv = 驻塔者三项战斗技能的算术平均；命中 +cmdLv×2、伤害 ×(1+cmdLv×1%)。
+  // 两个系数都是 1 代单兵（+4 命中 / 2% 伤害）的一半 —— 受益的是全队 5 人而不是自己一人。
+  // ⚠️ 明确不碰：减伤归 defense 技能、闪避归舰船 dodge。碰了就是双源。
+  function stationCommandBuff(state) {
+    const B = _Base(), S = _Settle();
+    if (!B || !B.stationedOfType || !S || !state) return { hitAdd: 0, dmgMult: 1 };
+    const m = B.stationedOfType(state, "command");
+    if (!m) return { hitAdd: 0, dmgMult: 1 };
+    const sk = m.skills || {};
+    const lv = (S.levelOf(sk.combatLaser || 0) + S.levelOf(sk.combatTurret || 0) + S.levelOf(sk.missile || 0)) / 3;
+    return { hitAdd: lv * 2, dmgMult: 1 + lv * 0.01 };
+  }
 
   // 扫某成员的装配，汇总「武器 / 维修 / 减伤」三类战斗贡献。
   // 返回 { weapons:[{type,dmg,hitChance,ammoCost}], dpsByType, ammoRate, repair, dmgRed }
@@ -151,8 +170,10 @@
   //   命中 = baseHit + lv×4     伤害 = baseDamage × (1 + lv×0.02)
   // ⚠️ 旧实现是「三技能 skillBonus 取算术平均」再统一乘到所有武器：既不按类型分，
   //    练指挥也会让激光炮变强，与 1 代不符，已删（见架构设计「六次修订」之前的一节）。
-  function scanFit(m, evasion, split) {
+  function scanFit(m, evasion, split, cmd) {
     const Eq = _Eq(), Arch = _Arch(), Settle = _Settle();
+    const hitAdd = (cmd && cmd.hitAdd) || 0;      // 指挥塔给全队的命中加成
+    const dmgMult = (cmd && cmd.dmgMult) || 1;    // 指挥塔给全队的伤害乘区
     const out = {
       weapons: [], dpsByType: { laser: 0, missile: 0, cannon: 0 },
       ammoRate: { laser: 0, missile: 0, cannon: 0 },
@@ -170,9 +191,9 @@
         if (c.kind === "weapon") {
           const skKey = SKILL_OF_WEAPON[c.weaponType];
           const lv = (Settle && m.skills && skKey) ? Settle.levelOf(m.skills[skKey]) : 1;
-          const ht = (c.baseHit || 100) + lv * 4;                   // 1 代命中加值（selectors.js:2575）
+          const ht = (c.baseHit || 100) + lv * 4 + hitAdd;           // 1 代命中加值（selectors.js:2575）+ 指挥塔
           const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式 hit^1.4/(hit^1.4+dodge^1.4)
-          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02);        // 1 代伤害乘区（selectors.js:2603）
+          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult; // 1 代伤害乘区（selectors.js:2603）× 指挥塔
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
           // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
           out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
@@ -230,6 +251,8 @@
     let ammoRate = { laser: 0, missile: 0, cannon: 0 };
     let weapons = [];
     let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0;
+    // 指挥塔全局加成只算一次（驻塔者不参战，是远程指挥）
+    const cmdBuff = stationCommandBuff(state);
 
     for (const m of state.members) {
       if (m.destroyed || !m.assignment || m.assignment.type !== "combat" || m.assignment.nodeId !== nodeId) continue;
@@ -238,14 +261,16 @@
       modCreditSum += (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1;
 
       // 装配战斗贡献（每门武器按自己的类型取技能：命中 +lv×4、伤害 ×(1+lv×0.02)，见 scanFit）
-      const f = scanFit(m, fleet.evasion, fleet.split);
+      const f = scanFit(m, fleet.evasion, fleet.split, cmdBuff);
       for (const t of AMMO_TYPES) {
         dpsByType[t] += f.dpsByType[t] || 0;
         ammoRate[t] += f.ammoRate[t] || 0;
       }
       for (const w of f.weapons) weapons.push(w);
       repairRaw += f.repair;
-      dmgRedRaw += f.dmgRed;
+      // 减伤：装配（损伤控制）+ defense 技能「统合护盾/装甲/结构」。
+      // 走同一个 dmgRedRaw 累积、同一个 DMG_RED_CAP 上限 —— 不另起变量，否则两套上限互不知情。
+      dmgRedRaw += f.dmgRed + Settle.levelOf((m.skills || {}).defense || 0) * 0.02;
     }
     if (!cnt) return null;
 

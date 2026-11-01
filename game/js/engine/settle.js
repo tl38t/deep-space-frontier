@@ -43,7 +43,7 @@
   // 2026-10-30 调慢：原值约 ×10 会导致 1 分钟内冲到 Lv5、半小时破 Lv10；
   //   现约 ÷10，使「试玩周期可见成长但不瞬满」——Lv5 约需 6~9 分钟专注（含专精 passion），Lv10 约需 17~25 分钟。
   //   曲线仍复用 EVE-IDLE 玩家升级曲线（xpForLevel 指数），无 NPC 等级、技能等级无硬上限。
-  const XP_RATE = { mining: 0.9, scanning: 0.6, archaeology: 0.6, refine: 0.9, manufacture: 0.7, invent: 0.6, combatLaser: 0.8, combatTurret: 0.8, command: 0.8, defense: 0.6, train: 1.4 };
+  const XP_RATE = { mining: 0.9, gas: 0.6, archaeology: 0.6, refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, logistics: 0.7, train: 1.4 };
   // 复用 EVE-IDLE 玩家曲线：xpForLevel(lv)=floor(100*1.1^(lv-1))，技能等级无上限（无 NPC 等级）。
   const LV_THRESHOLD = 100;      // （保留兼容常量；等级改用 levelOf 闭式）
   const EVENT_INTERVAL = 25;      // 每成员活动事件 roll 间隔（秒）
@@ -278,7 +278,19 @@
     }
 
     // 1) 燃料回复
-    state.base.fuel = Math.min(state.base.fuelMax, state.base.fuel + FUEL_REGEN * dt);
+    //    电容管理（2026-11-01 技能体系）：驻能源舱者的 capacitor 等级提升燃料再生 ×(1+lv×2%)。
+    //    为什么不挂在「减少消耗」上：本作燃料只有 moveBase 一处消耗，是玩家点按钮触发的，
+    //    没有「谁在执行」这个角色；而再生是持续的，驻舱者正好对应。
+    let capMult = 1;
+    {
+      const E0 = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+      const B0 = E0 ? E0.Base : null;
+      if (B0 && B0.stationedOfType) {
+        const w = B0.stationedOfType(state, "energy");
+        if (w) capMult = 1 + B0.memberSkillLv(w, "capacitor") * 0.02;
+      }
+    }
+    state.base.fuel = Math.min(state.base.fuelMax, state.base.fuel + FUEL_REGEN * dt * capMult);
 
     // 1.5) 物流补偿累积（由 logistics 岗成员持续产生，软顶 70pp）
     if (Logistics) Logistics.accumulate(state, dt);
@@ -309,16 +321,19 @@
         // 每成员每 tick 聚合一次（O(成员×槽位)，与离线时长无关，红线不破）。
         const ArchM = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
         const fitB = (ArchM && ArchM.fittedBonuses) ? ArchM.fittedBonuses(m) : null;
+        // 采气 / 采矿分流（2026-11-01 技能体系）：同一采矿派遣按目标矿种自动分派技能。
+        // 判定用现成的 Data.Resources.GAS —— 与装配乘区用的是同一个标记，不另起一套判据。
+        const isGas = !!(Data.Resources && Data.Resources.GAS && Data.Resources.GAS[ore]);
+        const mineKey = isGas ? "gas" : "mining";
         let fitEff = 1;
         if (fitB) {
-          const isGas = !!(Data.Resources && Data.Resources.GAS && Data.Resources.GAS[ore]);
           fitEff = isGas
             ? 1 + (fitB.gasEfficiency || 0) + (fitB.gasLaserEfficiency || 0)
             : 1 + (fitB.miningEfficiency || 0) + (fitB.miningLaserEfficiency || 0);
         }
-        const y = BASE_MINE * skillBonus(m.skills, "mining") * abv * dt * ym * effLogi * fitEff;
+        const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff;
         state.res[ore] = (state.res[ore] || 0) + y;
-        m.skills.mining = (m.skills.mining || 0) + XP_RATE.mining * dt * passionMult(m, "mining") * xpMultOf(m, "mining");
+        m.skills[mineKey] = (m.skills[mineKey] || 0) + XP_RATE[mineKey] * dt * passionMult(m, mineKey) * xpMultOf(m, mineKey);
       } else if (a.type === "explore" && node) {
         // 残骸场考古：装配 analyzer 的 archaeologyCycleReduction 缩短遗址周期（封顶 0.50）
         const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
@@ -342,7 +357,8 @@
           }
         } else {
           // —— 旧逻辑：行星勘探 = 扫图发现新节点（UI 已下线，仅存量行星 explorer 兼容）——
-          m.skills.scanning = (m.skills.scanning || 0) + XP_RATE.scanning * dt * passionMult(m, "scanning") * xpMultOf(m, "scanning");
+          // 2026-11-01：不再增长任何技能。原 scanning 技能已并入 gas（气体采集），
+          // 但「扫图发现节点」不是采气，塞给它等于语义污染；这条分支本就已下线，不配发经验。
           if (a.exploreProgress >= 1) {
             a.exploreProgress = 0;
             const adj = Data.StarMap.adjacency(state.starMap)[a.nodeId] || [];
@@ -359,14 +375,31 @@
       } else if (a.type === "combat") {
         // 剿匪产出已在第 0 步按节点逐波结算（Engine.Combat.advance）；此处只增长战斗技能，
         // 避免「节点级产出」在成员循环里被重复累加。无逐波仿真、无每击杀簿记。
-        // 战斗同时增长三武器技能（激光/炮台/指挥，各满额）+ 防御（副，0.6×），复用 EVE-IDLE 战斗攻击三类 / 战斗防御
+        // 战斗同时增长三武器技能（激光/炮台/导弹，各满额）+ 防御（副，0.6×）。
+        // 2026-11-01：command 已删除，导弹用自己的 missile 键（1 代 missileOperations 的对应物）。
         m.skills.combatLaser = (m.skills.combatLaser || 0) + XP_RATE.combatLaser * dt * passionMult(m, "combatLaser") * xpMultOf(m, "combatLaser");
         m.skills.combatTurret = (m.skills.combatTurret || 0) + XP_RATE.combatTurret * dt * passionMult(m, "combatTurret") * xpMultOf(m, "combatTurret");
-        m.skills.command = (m.skills.command || 0) + XP_RATE.command * dt * passionMult(m, "command") * xpMultOf(m, "command");
+        m.skills.missile = (m.skills.missile || 0) + XP_RATE.missile * dt * passionMult(m, "missile") * xpMultOf(m, "missile");
         m.skills.defense = (m.skills.defense || 0) + XP_RATE.defense * 0.6 * dt * passionMult(m, "defense") * xpMultOf(m, "defense");
       } else if (a.type === "train") {
-        const sk = a.trainSkill || "combatLaser";   // 演训 = EVE-IDLE 主动技能训练，增长所选技能
+        // 演训 = 主动技能训练，增长所选技能。白名单校验：旧存档里可能写着已删除的键（command 等），
+        // 直接当键名用会给一个不存在的技能发经验（白算），落到 combatLaser 更安全。
+        const sk = (a.trainSkill && XP_RATE[a.trainSkill]) ? a.trainSkill : "combatLaser";
         m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(m, sk);
+      } else if (a.type === "logistics") {
+        // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景；
+        // 电容管理作副技能（0.5×）——它管的是航程开销，与调度是同一件事的两面。
+        m.skills.logistics = (m.skills.logistics || 0) + XP_RATE.logistics * dt * passionMult(m, "logistics") * xpMultOf(m, "logistics");
+        m.skills.capacitor = (m.skills.capacitor || 0) + XP_RATE.capacitor * 0.5 * dt * passionMult(m, "capacitor") * xpMultOf(m, "capacitor");
+      } else if (a.type === "station") {
+        // 驻舱（2026-11-01，用户定「驻舱不涨技能」）：**只有演训舱按时间涨经验** ——
+        // 全游戏唯一「不产出也涨」的通道，玩家付的是一个人力。
+        // 其余舱段（精炼环/总装船坞/发明舱/指挥塔/泊位/仓储/能源）驻着**不涨**：
+        // 工业经验只在「真的产出一批」时结算（见 production.js → Settle.grantBatchXp）。
+        if (a.slotType === "habitat" && a.trainSkill && a.trainSkill !== "train" && XP_RATE[a.trainSkill]) {
+          const sk = a.trainSkill;
+          m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(m, sk);
+        }
       }
 
       // 活动事件 roll（六类 MVP 工作 + 演训/行星开发/物流）
@@ -419,8 +452,20 @@
     if (Narrative && Narrative.applyEvent) Narrative.applyEvent(state, ev, member);
   }
 
+  // 批次经验（production.js 在「一批真的产出」时调用）——这才是 1 代「真正使用才涨」的工业侧口径。
+  // 基数用 it.dur（布局乘区后的基础时长）而非运行时 effDur：否则技能越高 → 耗时越短 → 经验越少，
+  // 形成「练得越好越难练」的负反馈。离线一次跑 N 批就调 N 次，天然 O(1)。
+  const BATCH_XP_RATIO = 0.5;
+  function grantBatchXp(state, m, key, batchSec) {
+    if (!m || !key || key === "train" || !XP_RATE[key]) return 0;
+    const gain = XP_RATE[key] * (batchSec || 0) * BATCH_XP_RATIO;
+    if (!m.skills) m.skills = {};
+    m.skills[key] = (m.skills[key] || 0) + gain * passionMult(m, key) * xpMultOf(m, key);
+    return gain;
+  }
+
   return {
     settle, moveBase, levelOf, skillBonus, xpForLevel, XP_RATE, FUEL_REGEN, BASE_MINE, LV_THRESHOLD, MAX_OFFLINE_SECONDS,
-    passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS,
+    passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, BATCH_XP_RATIO,
   };
 });

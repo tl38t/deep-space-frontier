@@ -96,12 +96,16 @@
     return st;
   }
 
-  // 技能 = 轻量化复用 EVE-IDLE 玩家技能树（采集 / 工业 / 战斗攻击 / 战斗防御 四类），共 10 项。
-  // 战斗攻击拆为 combatLaser/combatTurret/command（EVE-IDLE 实测三键，导弹类归 command）；
-  // 勘探拆为 scanning（探针/破解）+ archaeology（遗迹，新增）。无 NPC 等级；技能等级无上限。
-  const SKILL_KEYS = ["mining", "scanning", "archaeology", "refine", "manufacture", "invent", "combatLaser", "combatTurret", "command", "defense"];
+  // 技能 = 轻量化复用 1 代技能树（采集 / 战斗 / 工业 / 科研 / 后勤），共 12 项。
+  // 2026-11-01 用户定案（见 深空星疆·技能体系_13项设计稿.md）：
+  //   战斗攻击三系独立 → combatLaser / combatTurret / missile（原 command 已删，导弹不再借用指挥）；
+  //   gas 承担气体采集（原 scanning 并入）、research 取代 invent（科研 = 科技研究 / 增强剂 / 蓝图）；
+  //   capacitor / logistics 为新增后勤项，各接一处既有乘区。
+  // ⚠️ drones（无人机）用户定「以后再说」，**不进本表** —— 有 key 但无人读就是死技能，本轮的
+  //    全部目的就是消灭死技能（12 项每项都必须既「能涨」又「有用」，见 sim/skill_matrix.mjs）。
+  const SKILL_KEYS = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "logistics"];
   function freshSkills() {
-    return { mining: 0, scanning: 0, archaeology: 0, refine: 0, manufacture: 0, invent: 0, combatLaser: 0, combatTurret: 0, command: 0, defense: 0 };
+    return { mining: 0, gas: 0, archaeology: 0, combatLaser: 0, combatTurret: 0, missile: 0, defense: 0, refine: 0, manufacture: 0, research: 0, capacitor: 0, logistics: 0 };
   }
 
   // 招募来源池：9 星域 + 3 势力 + 人才市场
@@ -200,18 +204,18 @@
   const A_NEUTRAL = { repMult: 1, creditMult: 1, urgentSuccess: 0 };
   const A_BONDED = { repMult: 1.15, creditMult: 1.15, urgentSuccess: 0.2 };
   const BACKSTORY_DEFS = [
-    { id: "orphan_void", title: "虚空孤儿", desc: "在废弃空间站长大，靠 scavenge 维生。", forcePassion: "scanning", factionAffinity: "sansha", affinity: A_BONDED },
-    { id: "fleet_brat", title: "舰队子弟", desc: "将门之后，从小泡在舰桥。", forcePassion: "command", factionAffinity: "blood", affinity: A_BONDED },
+    { id: "orphan_void", title: "虚空孤儿", desc: "在废弃空间站长大，靠 scavenge 维生。", forcePassion: "gas", factionAffinity: "sansha", affinity: A_BONDED },
+    { id: "fleet_brat", title: "舰队子弟", desc: "将门之后，从小泡在舰桥。", forcePassion: "missile", factionAffinity: "blood", affinity: A_BONDED },
     { id: "belt_nomad", title: "小行星带游牧", desc: "逐矿而居的流浪采矿家族。", forcePassion: "mining", factionAffinity: "angel", affinity: A_BONDED },
     { id: "station_rat", title: "空间站鼠辈", desc: "在船坞缝隙里偷学了一手装配。", forcePassion: "manufacture", factionAffinity: "sansha", affinity: A_BONDED },
     { id: "relic_kid", title: "遗迹猎人之后", desc: "父辈以倒卖先驱遗物为生。", forcePassion: "archaeology", factionAffinity: "angel", affinity: A_BONDED },
-    { id: "corp_heir", title: "财团继承人", desc: "被家族放逐的旁支，识得市道。", forcePassion: "invent", factionAffinity: null, affinity: A_NEUTRAL },
+    { id: "corp_heir", title: "财团继承人", desc: "被家族放逐的旁支，识得市道。", forcePassion: "research", factionAffinity: null, affinity: A_NEUTRAL },
     { id: "defector", title: "叛逃者", desc: "从某势力舰队叛出，懂自保。", forcePassion: "defense", factionAffinity: "blood", affinity: A_BONDED },
-    { id: "signal_orphan", title: "信号弃儿", desc: "在干扰带里长大的监听天才。", forcePassion: "scanning", factionAffinity: null, affinity: A_NEUTRAL },
+    { id: "signal_orphan", title: "信号弃儿", desc: "在干扰带里长大的监听天才。", forcePassion: "gas", factionAffinity: null, affinity: A_NEUTRAL },
     // —— 2026-10-22 补 7 个出身：覆盖余下技能(refine/combatLaser/combatTurret) + 新建 6 家中型势力亲和 ——
     { id: "smelter_apprentice", title: "冶炼学徒", desc: "在矿冶殖民星的炉火边长大，闻得懂合金味。", forcePassion: "refine", factionAffinity: "mining_guild", affinity: A_BONDED },
     { id: "salvage_waif", title: "拾荒遗孤", desc: "在残骸带长大的拆解童子，什么破烂都能拼回原型。", forcePassion: "manufacture", factionAffinity: "salvage_union", affinity: A_BONDED },
-    { id: "gas_drifter", title: "气井游商", desc: "跟着气态巨行星的勘探船跑单帮，识得湍流里的门道。", forcePassion: "scanning", factionAffinity: "lone_star", affinity: A_BONDED },
+    { id: "gas_drifter", title: "气井游商", desc: "跟着气态巨行星的勘探船跑单帮，识得湍流里的门道。", forcePassion: "gas", factionAffinity: "lone_star", affinity: A_BONDED },
     { id: "abyss_acolyte", title: "深空研习生", desc: "研究院附属学校的优等生，泡在先驱造物数据库里。", forcePassion: "archaeology", factionAffinity: "abyssal_inst", affinity: A_BONDED },
     { id: "bounty_foundling", title: "赏金猎徒", desc: "在悬赏船上长大的孩子，炮塔比摇篮还熟。", forcePassion: "combatTurret", factionAffinity: "bounty_league", affinity: A_BONDED },
     { id: "settler_scion", title: "拓殖农裔", desc: "边境拓殖星的第二代，从小跟着开矿拓荒。", forcePassion: "mining", factionAffinity: "settlers", affinity: A_BONDED },

@@ -68,16 +68,16 @@
 
     // ================= 探索 explore =================
     { id: "exp_relic", activity: "explore", weight: 8, title: "遗迹残片", lines: ["扫描到先驱文明的零散造物，或可交付势力。"], deltas: { credits: 500 }, skillKey: "archaeology", skill: 50 },
-    { id: "exp_signal", activity: "explore", weight: 6, title: "异常信号", lines: ["截获一段加密广播，破译后是一笔星币转账。"], deltas: { credits: 800 }, skillKey: "scanning", skill: 40 },
-    { id: "exp_quiet_scan", activity: "explore", weight: 3, title: "乏味航段", lines: ["连续数小时只有背景噪声，倒也积累了不少滤波器参数。"], skillKey: "scanning", skill: 30 },
+    { id: "exp_signal", activity: "explore", weight: 6, title: "异常信号", lines: ["截获一段加密广播，破译后是一笔星币转账。"], deltas: { credits: 800 }, skillKey: "gas", skill: 40 },
+    { id: "exp_quiet_scan", activity: "explore", weight: 3, title: "乏味航段", lines: ["连续数小时只有背景噪声，倒也积累了不少滤波器参数。"], skillKey: "gas", skill: 30 },
     {
       id: "exp_derelict_choice", activity: "explore", weight: 5, title: "残骸场 · 进与退",
       lines: ["一艘断成两截的旧式运输舰漂在航道边，货舱似乎还有人封存过。"],
       options: [
         { label: "深入残骸搜索", chance: 0.55, chanceBonus: { deep_diver: 0.2 },
           success: { deltas: { bp: 1, credits: 300 }, skillKey: "archaeology", skill: 60, title: "残骸场 · 找到封存货柜", lines: ["切开舱壁，里面是一份完整图纸与少量货款。"] },
-          fail: { skillKey: "scanning", skill: 20, title: "残骸场 · 空手而归", lines: ["舱室早被扫空，只留下锈蚀的支架。"] } },
-        { label: "标记坐标后撤离（无风险）", dels: { deltas: { credits: 150 }, skillKey: "scanning", skill: 20, lines: ["把坐标上报给航道局，换了一笔情报费。"] } },
+          fail: { skillKey: "gas", skill: 20, title: "残骸场 · 空手而归", lines: ["舱室早被扫空，只留下锈蚀的支架。"] } },
+        { label: "标记坐标后撤离（无风险）", dels: { deltas: { credits: 150 }, skillKey: "gas", skill: 20, lines: ["把坐标上报给航道局，换了一笔情报费。"] } },
         { label: "老手拆解（需「遗迹嗅觉」）", require: { trait: "deep_diver" },
           dels: { deltas: { bp: 1 }, skillKey: "archaeology", skill: 80, lines: ["熟门熟路地拆走核心数据模块。"] } },
       ],
@@ -85,7 +85,7 @@
 
     // ================= 战斗 combat =================
     { id: "com_win", activity: "combat", weight: 10, title: "巡逻交火", lines: ["小队清剿了一股走私武装，缴获战利品。"], deltas: { credits: 600, rep: 3 } },
-    { id: "com_intel", activity: "combat", weight: 5, title: "俘获情报官", lines: ["审讯得到敌方部署，全员战术素养提升。"], skillKey: "command", skill: 50 },
+    { id: "com_intel", activity: "combat", weight: 5, title: "俘获情报官", lines: ["审讯得到敌方部署，全员战术素养提升。"], skillKey: "missile", skill: 50 },
     { id: "com_skirmish", activity: "combat", weight: 3, title: "零星骚扰", lines: ["海盗试探性打了几个照面就退走，正好练手。"], skillKey: "defense", skill: 40 },
     {
       id: "com_salvage_choice", activity: "combat", weight: 5, title: "战果 · 追与收",
@@ -96,7 +96,7 @@
           fail: { skillKey: "defense", skill: 30, title: "战果 · 追之不及", lines: ["残敌跃迁逃脱，小队只带回少量战利品。"] } },
         { label: "回收残骸（无风险）", dels: { deltas: { credits: 250, struct: 2 }, skillKey: "manufacture", skill: 20, lines: ["拆回可用的结构与部件。"] } },
         { label: "联系黑市销赃（需「销赃能手」）", require: { trait: "black_broker" },
-          dels: { deltas: { credits: 800 }, skillKey: "command", skill: 30, lines: ["黑市不问货源，价格给得很痛快。"] } },
+          dels: { deltas: { credits: 800 }, skillKey: "missile", skill: 30, lines: ["黑市不问货源，价格给得很痛快。"] } },
       ],
     },
     {
@@ -107,7 +107,7 @@
           success: { deltas: { credits: 700, rep: 5 }, skillKey: "combatLaser", skill: 50, title: "遭遇伏击 · 正面击穿", lines: ["顶着火力撕开缺口，反把伏击者围歼。"] },
           fail: { skillKey: "defense", skill: 30, title: "遭遇伏击 · 被迫脱离", lines: ["硬扛着撤出交战，没吃到战利品。"] } },
         { label: "绕后突袭（风险更高，收益更大）", chance: 0.5,
-          success: { deltas: { credits: 1000, rep: 6 }, skillKey: "command", skill: 60, title: "遭遇伏击 · 反包围", lines: ["从陨石背面绕出，反把伏击者钉在航道上。"] },
+          success: { deltas: { credits: 1000, rep: 6 }, skillKey: "missile", skill: 60, title: "遭遇伏击 · 反包围", lines: ["从陨石背面绕出，反把伏击者钉在航道上。"] },
           fail: { skillKey: "defense", skill: 20, title: "遭遇伏击 · 绕行失败", lines: ["绕行路线被预判，只能仓促脱离。"] } },
         { label: "谨慎脱离（无风险）", dels: { skillKey: "defense", skill: 40, lines: ["果断掉头脱离，保存战力。"] } },
       ],
@@ -133,7 +133,7 @@
           success: { deltas: { credits: 700, rep: 3 }, skillKey: "combatTurret", skill: 50, title: "断链行动 · 二阶段完成", lines: ["据点被攻破，守军溃散。"] },
           fail: { skillKey: "defense", skill: 40, title: "断链行动 · 二阶段受阻", lines: ["入口火力太密，小队被迫退出，行动中止。"] } },
         { label: "施放干扰后突入", chance: 0.7,
-          success: { deltas: { credits: 600, rep: 3 }, skillKey: "command", skill: 50, title: "断链行动 · 二阶段完成", lines: ["干扰弹压下火控，小队贴墙突入。"] },
+          success: { deltas: { credits: 600, rep: 3 }, skillKey: "missile", skill: 50, title: "断链行动 · 二阶段完成", lines: ["干扰弹压下火控，小队贴墙突入。"] },
           fail: { skillKey: "defense", skill: 20, title: "断链行动 · 二阶段受阻", lines: ["干扰未生效，只能撤离。"] } },
       ],
     },
@@ -182,21 +182,21 @@
 
     // ================= 发明 invent =================
     { id: "inv_insight", activity: "invent", weight: 6, title: "逆向顿悟", lines: ["拆解样机时捕捉到关键工艺节点。"], deltas: { bp: 1 } },
-    { id: "inv_skill", activity: "invent", weight: 4, title: "图纸推演", lines: ["在草图上反复推演，思路逐渐清晰。"], skillKey: "invent", skill: 50 },
+    { id: "inv_skill", activity: "invent", weight: 4, title: "图纸推演", lines: ["在草图上反复推演，思路逐渐清晰。"], skillKey: "research", skill: 50 },
     {
       id: "inv_risk_choice", activity: "invent", weight: 5, title: "图纸 · 破译与复刻",
       lines: ["一份加密的先驱工艺档案摆在面前：强行破译可能拿到更多，也可能一无所获。"],
       options: [
         { label: "强行破译先驱协议", chance: 0.5, chanceBonus: { inventor_wind: 0.2 },
-          success: { deltas: { bp: 2 }, skillKey: "invent", skill: 70, title: "图纸 · 破译成功", lines: ["协议被解开，附带两套完整图纸。"] },
-          fail: { skillKey: "invent", skill: 20, title: "图纸 · 破译失败", lines: ["自毁程序触发，档案清空。"] } },
-        { label: "稳妥复刻现有图纸（无风险）", dels: { deltas: { bp: 1 }, skillKey: "invent", skill: 25, lines: ["照着现有图纸复刻一份，稳妥推进。"] } },
+          success: { deltas: { bp: 2 }, skillKey: "research", skill: 70, title: "图纸 · 破译成功", lines: ["协议被解开，附带两套完整图纸。"] },
+          fail: { skillKey: "research", skill: 20, title: "图纸 · 破译失败", lines: ["自毁程序触发，档案清空。"] } },
+        { label: "稳妥复刻现有图纸（无风险）", dels: { deltas: { bp: 1 }, skillKey: "research", skill: 25, lines: ["照着现有图纸复刻一份，稳妥推进。"] } },
       ],
     },
 
     // ================= 演训 train =================
-    { id: "trn_drill", activity: "train", weight: 6, title: "例行演训", lines: ["按课表完成一轮战术演练。"], skillKey: "command", skill: 40 },
-    { id: "trn_doc", activity: "train", weight: 4, title: "战术复盘", lines: ["复盘上一场交火，纠正了几处协同失误。"], skillKey: "command", skill: 50 },
+    { id: "trn_drill", activity: "train", weight: 6, title: "例行演训", lines: ["按课表完成一轮战术演练。"], skillKey: "missile", skill: 40 },
+    { id: "trn_doc", activity: "train", weight: 4, title: "战术复盘", lines: ["复盘上一场交火，纠正了几处协同失误。"], skillKey: "missile", skill: 50 },
     {
       id: "trn_spar_choice", activity: "train", weight: 5, title: "对练 · 全力与留手",
       lines: ["演训舱里空着，要不要来一场不带护具的对练？"],
@@ -204,7 +204,7 @@
         { label: "全力对练", chance: 0.7,
           success: { skillKey: "combatLaser", skill: 60, lines: ["高强度对练，手感提升明显。"] },
           fail: { skillKey: "defense", skill: 40, title: "对练 · 吃了点亏", lines: ["被对手抓住破绽，倒是把防御练明白了。"] } },
-        { label: "按标准课表练（无风险）", dels: { skillKey: "command", skill: 40, lines: ["标准课表走完，稳稳积累。"] } },
+        { label: "按标准课表练（无风险）", dels: { skillKey: "missile", skill: 40, lines: ["标准课表走完，稳稳积累。"] } },
       ],
     },
 
@@ -212,16 +212,16 @@
     // 成员不再驻留行星 → dev_* 事件失去触发源，整段移除（设施玩法的事件后置）。
 
     // ================= 物流 logistics =================
-    { id: "log_route", activity: "logistics", weight: 6, title: "航线优化", lines: ["重新规划了运输航线，周转更顺。"], skillKey: "command", skill: 40 },
-    { id: "log_delay", activity: "logistics", weight: 4, title: "航道拥堵", lines: ["航道上排起了队，来回调度耗掉不少精力。"], skillKey: "command", skill: 30 },
+    { id: "log_route", activity: "logistics", weight: 6, title: "航线优化", lines: ["重新规划了运输航线，周转更顺。"], skillKey: "missile", skill: 40 },
+    { id: "log_delay", activity: "logistics", weight: 4, title: "航道拥堵", lines: ["航道上排起了队，来回调度耗掉不少精力。"], skillKey: "missile", skill: 30 },
     {
       id: "log_bottleneck_choice", activity: "logistics", weight: 4, title: "调度 · 绕行与等待",
       lines: ["主航道临时管制，货物要么绕远路，要么排队等放行。"],
       options: [
         { label: "绕行远航道", chance: 0.65,
-          success: { deltas: { credits: 200 }, skillKey: "command", skill: 40, title: "调度 · 绕行顺利", lines: ["绕行路线通畅，按期送达。"] },
-          fail: { skillKey: "command", skill: 20, title: "调度 · 绕行遇阻", lines: ["远航道也不好走，耽搁了半程。"] } },
-        { label: "排队等放行（无风险）", dels: { deltas: { credits: 80 }, skillKey: "command", skill: 30, lines: ["老老实实排队，损失了一点时效。"] } },
+          success: { deltas: { credits: 200 }, skillKey: "missile", skill: 40, title: "调度 · 绕行顺利", lines: ["绕行路线通畅，按期送达。"] },
+          fail: { skillKey: "missile", skill: 20, title: "调度 · 绕行遇阻", lines: ["远航道也不好走，耽搁了半程。"] } },
+        { label: "排队等放行（无风险）", dels: { deltas: { credits: 80 }, skillKey: "missile", skill: 30, lines: ["老老实实排队，损失了一点时效。"] } },
       ],
     },
   ];

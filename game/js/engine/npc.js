@@ -195,9 +195,9 @@
     { id: "ms_lv5", title: "熟练工", icon: "◆", desc: "任一技能达到 Lv5", test: m => maxSkillLevel(m) >= 5 },
     { id: "ms_lv10", title: "行家", icon: "◆◆", desc: "任一技能达到 Lv10", test: m => maxSkillLevel(m) >= 10 },
     { id: "ms_multi5", title: "多面手", icon: "✦", desc: "3 项技能达到 Lv5", test: m => countAtLeast(m, 5) >= 3 },
-    { id: "ms_combat8", title: "百战老兵", icon: "⚔", desc: "战斗三技（激光/炮台/指挥）任一达到 Lv8", test: m => Math.max(lv(m, "combatLaser"), lv(m, "combatTurret"), lv(m, "command")) >= 8 },
-    { id: "ms_industry8", title: "工业骨干", icon: "⚙", desc: "精炼/制造/发明任一达到 Lv8", test: m => Math.max(lv(m, "refine"), lv(m, "manufacture"), lv(m, "invent")) >= 8 },
-    { id: "ms_explorer6", title: "深空测绘师", icon: "🛰", desc: "扫描/考古任一达到 Lv6", test: m => Math.max(lv(m, "scanning"), lv(m, "archaeology")) >= 6 },
+    { id: "ms_combat8", title: "百战老兵", icon: "⚔", desc: "战斗三技（激光/炮台/导弹）任一达到 Lv8", test: m => Math.max(lv(m, "combatLaser"), lv(m, "combatTurret"), lv(m, "missile")) >= 8 },
+    { id: "ms_industry8", title: "工业骨干", icon: "⚙", desc: "冶炼/制造/科研任一达到 Lv8", test: m => Math.max(lv(m, "refine"), lv(m, "manufacture"), lv(m, "research")) >= 8 },
+    { id: "ms_explorer6", title: "深空测绘师", icon: "🛰", desc: "采气/考古任一达到 Lv6", test: m => Math.max(lv(m, "gas"), lv(m, "archaeology")) >= 6 },
   ];
 
   function milestoneById(id) { for (const ms of MILESTONES) if (ms.id === id) return ms; return null; }

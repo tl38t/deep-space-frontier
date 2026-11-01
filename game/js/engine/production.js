@@ -89,7 +89,11 @@
         smeltFit = Math.min(0.50, smeltFit);
       }
     }
-    const effDur = (it) => it.dur / (pm * bm) * mm / (1 + smeltFit); // 棕化(pm<1)拉长；增强剂(bm>1)缩短；精通(mm<1)缩短；精炼泵缩短
+    // 驻舱技能因子（2026-11-01）：**运行时算**。queueDurationMultiplier 是入队时烘进 it.dur 的
+    // 布局乘区（物理结构不变），而驻舱的人随时会被撤走 —— 撤走就该立刻变慢，所以放这里。
+    // 无人驻舱时 sf = 1.4（UNMANNED_PENALTY），不会被布局那一层的 clamp(0.65~1) 钳掉。
+    const sf = (Base && Base.stationSpeedMult) ? Base.stationSpeedMult(state, queueType) : 1;
+    const effDur = (it) => it.dur / (pm * bm) * mm / (1 + smeltFit) * sf; // 棕化(pm<1)拉长；增强剂(bm>1)缩短；精通(mm<1)缩短；精炼泵缩短；驻舱技能缩短/无人拉长
     const q = state.base.industry[queueType + "Queue"];
     const log = [];
     let guard = 0;
@@ -107,6 +111,14 @@
         log.push({ out: it.out, qty: it.qty });
       }
       it.done += 1;
+      // 驻舱工头经验（2026-11-01）：**真产出一批才涨**，与 1 代「真正使用才涨」同口径。
+      // 无人驻舱 = 没人涨（这是驻舱的第二个动机，第一个是耗时倍率）。
+      // 用 it.dur 而非 effDur 发经验：effDur 含技能因子，会造成「技能越高练得越慢」。
+      const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
+      if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
+        const w = Base.stationWorker(state, queueType);
+        if (w) Sx.grantBatchXp(state, w.member, w.skill, it.dur);
+      }
       if (it.done >= it.repeat) { q.shift(); continue; }
       // 续下一批：推进 startedAt（按等效耗时），重新校验原料（用队列项快照 it.in，避免依赖配方表）
       it.startedAt += effDur(it) * 1000;
@@ -191,7 +203,9 @@
       if (elapsed < effDur(it)) break;
       const ship = Data.Ships.shipById(it.shipId);
       if (ship) {
-        state.ships.push({ id: "s_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e6).toString(36), shipId: ship.id, name: ship.name, status: "idle", nodeId: state.base.nodeId });
+        // memberId: null = 出厂入库待配属。舰队页（Engine.Fleet）负责把它配给成员；
+        // 不直接给 m.shipId，否则会绕过「换船 = 按损伤比例迁移三防」的规则。
+        state.ships.push({ id: "s_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e6).toString(36), shipId: ship.id, name: ship.name, status: "idle", nodeId: state.base.nodeId, memberId: null });
         log.push({ shipId: ship.id, name: ship.name });
         state.counters = state.counters || {};
         state.counters.builtShips = (state.counters.builtShips || 0) + 1;

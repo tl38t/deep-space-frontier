@@ -125,6 +125,17 @@
 
   // 开始研究：扣星币（**全额，即使已保留进度也照收**），写 active
   // base = 之前取消时留下来的进度；本次只需要熬剩下的 (1-base) 时长。
+  // 科研技能对研究时长的乘数（2026-11-01 技能体系）：由发明舱驻舱者的 research 等级决定。
+  // 无人驻舱 → ×1.4，与生产队列的无人惩罚同一口径（用户定的规则 2）。
+  function researchSpeedMult(state) {
+    const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const B = E ? E.Base : null;
+    if (!state || !B || !B.stationedOfType) return 1;
+    const w = B.stationedOfType(state, "invent");
+    if (!w) return B.UNMANNED_PENALTY || 1.4;
+    return 1 / (1 + (B.memberSkillLv ? B.memberSkillLv(w, "research") : 1) * 0.02);
+  }
+
   function start(state, id, now) {
     const v = canStart(state, id);
     if (!v.ok) return v;
@@ -132,15 +143,17 @@
     const base = savedProgressOf(state, id);
     const full = v.node.sec || 0;
     state.res.credits -= v.cost;
+    // 科研技能只作用于**本次剩余**时长；base 是比例，与技能无关，取消/续研都仍成立。
+    const speed = researchSpeedMult(state);
     state.tech.active = {
       id: id,
       targetLevel: v.targetLevel,
       base: base,
       startedAt: t,
-      endsAt: t + full * (1 - base) * 1000,
+      endsAt: t + full * (1 - base) * 1000 * speed,
     };
     return {
-      ok: true, node: v.node, base: base,
+      ok: true, node: v.node, base: base, speedMult: speed,
       endsAt: state.tech.active.endsAt, targetLevel: v.targetLevel,
     };
   }
@@ -180,6 +193,14 @@
     state.tech.levels[a.id] = want;
     if (state.tech.prog[a.id] !== undefined) delete state.tech.prog[a.id];  // 升级后进度归零
     state.tech.active = null;
+    // 科研经验（2026-11-01）：研究**真的完成**才给，与「真正使用才涨」同口径。
+    // 发给发明舱驻舱者；无人驻舱则没人涨。基数用节点标称 sec（不含技能因子，避免负反馈）。
+    const E2 = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const B2 = E2 ? E2.Base : null, S2 = E2 ? E2.Settle : null;
+    if (B2 && B2.stationedOfType && S2 && S2.grantBatchXp) {
+      const w = B2.stationedOfType(state, "invent");
+      if (w) S2.grantBatchXp(state, w, "research", node.sec || 0);
+    }
     return { node: node, bonus: node.bonus || {}, level: want };
   }
 
@@ -277,6 +298,6 @@
 
   return {
     ensure, levelOf, isDone, squadCapacity, canStart, start, cancel, advance,
-    progress, savedProgressOf, nodeView, list, reset, STATUS_CN,
+    progress, savedProgressOf, nodeView, list, reset, STATUS_CN, researchSpeedMult,
   };
 });

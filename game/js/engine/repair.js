@@ -29,9 +29,18 @@
     battleship: 2.5, capital: 3.5, supercapital: 5.0,
   };
 
-  function repairDuration(shipId) {
+  // 修复时长。第二参 state 用于「泊位驻舱」加速（2026-11-01 技能体系）：
+  // 维修是工程活，取驻泊位者的 manufacture 技能；**只缩短时长，不动 repairBays**
+  // —— 并发格数已由 bodyLevel 产出（repairBays），再给一份就是双源。
+  function repairDuration(shipId, state) {
     const m = CLASS_MULT[shipId] || 1.0;
-    return REPAIR_TIME_BASE * m;
+    const base = REPAIR_TIME_BASE * m;
+    const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const B = E ? E.Base : null;
+    const w = (state && B && B.stationedOfType) ? B.stationedOfType(state, "dock") : null;
+    if (!w) return base;
+    const lv = B.memberSkillLv ? B.memberSkillLv(w, "manufacture") : 1;
+    return base / (1 + lv * 0.02);
   }
 
   // 舰基船坞并发维修格数（随本体等级提升；Lv1→2 格，每级 +1）
@@ -56,13 +65,13 @@
     return total > 0 ? lost / total : 0;
   }
 
-  // 预估剩余修复秒数（基于已损总量 / 修复速率）
-  function repairETA(m) {
+  // 预估剩余修复秒数（基于已损总量 / 修复速率）。state 用于泊位加速，四处调用必须一起传。
+  function repairETA(m, state) {
     if (!needsRepair(m)) return 0;
     const max = Data.Ships.maxHp(m.shipId);
     const totalMax = max.shield + max.armor + max.structure;
     const lost = (max.shield - m.hp.shield) + (max.armor - m.hp.armor) + (max.structure - m.hp.structure);
-    return repairDuration(m.shipId) * (lost / totalMax);
+    return repairDuration(m.shipId, state) * (lost / totalMax);
   }
 
   // 每 tick 推进修复（settle 调用）。O(members)，幂等。
@@ -74,7 +83,7 @@
       if (m.status !== "repairing" || m.destroyed) continue;
       active++;
       const max = Data.Ships.maxHp(m.shipId);
-      const rate = totalMaxHp(m) / repairDuration(m.shipId); // 每秒回血量（按总三防均摊）
+      const rate = totalMaxHp(m) / repairDuration(m.shipId, state); // 每秒回血量（按总三防均摊）
       let heal = rate * dt;
       for (const key of ["shield", "armor", "structure"]) {
         if (heal <= 0) break;
@@ -85,7 +94,7 @@
       }
       if (m.hp.shield >= max.shield && m.hp.armor >= max.armor && m.hp.structure >= max.structure) {
         m.hp.shield = max.shield; m.hp.armor = max.armor; m.hp.structure = max.structure;
-        m.status = "idle"; // 修复完成，回归待命
+        m.status = (m.assignment && m.assignment.type === "station") ? "stationed" : "idle"; // 驻舱的人修好回 stationed，不能变 idle
       }
     }
     // 2) 空出格位后，从排队/待命的受损成员中按残损度优先补位
@@ -111,15 +120,15 @@
     const waiting = [];
     for (const m of (state.members || [])) {
       if (m.status === "repairing") {
-        repairing.push({ id: m.id, name: m.name, shipId: m.shipId, ratio: damageRatio(m), eta: repairETA(m) });
+        repairing.push({ id: m.id, name: m.name, shipId: m.shipId, ratio: damageRatio(m), eta: repairETA(m, state) });
       } else if (needsRepair(m)) {
-        waiting.push({ id: m.id, name: m.name, shipId: m.shipId, ratio: damageRatio(m), eta: repairETA(m) });
+        waiting.push({ id: m.id, name: m.name, shipId: m.shipId, ratio: damageRatio(m), eta: repairETA(m, state) });
       }
     }
     waiting.sort((a, b) => b.ratio - a.ratio); // 与 tick 补位一致：越残越优先
     // 排队舰的「预计开始修复」= 前面所有在修剩余 + 排在自己前面的待修完整时长
     let acc = repairing.reduce((s, e) => s + e.eta, 0);
-    for (const e of waiting) { e.startEta = acc; acc += repairDuration(e.shipId); }
+    for (const e of waiting) { e.startEta = acc; acc += repairDuration(e.shipId, state); }
     return { bays: bays, used: repairing.length, repairing: repairing, waiting: waiting };
   }
 

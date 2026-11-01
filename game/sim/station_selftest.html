@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>驻舱 &amp; 技能 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 驻舱真机自测（2026-11-01 技能体系）
+// 覆盖：舰基舱段面板出现 / 无人惩罚文案 / 指派与撤下 / 演训舱选技能（12 项）| 一舱一人 / 真机命中
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+const hit=(el)=>{
+  if(!el) return false;
+  if(typeof el.click==="function" && !(el instanceof W().SVGElement)){ el.click(); return true; }
+  const win=W();
+  el.dispatchEvent(new win.MouseEvent("click",{bubbles:true,cancelable:true,view:win}));
+  return true;
+};
+// UI 铁律：真实点击必须过 elementFromPoint，程序化 dispatchEvent 测不出 pointer-events 穿透
+const realHit=(el)=>{
+  if(!el) return false;
+  const r=el.getBoundingClientRect();
+  if(!r.width||!r.height) return false;
+  const x=r.left+r.width/2, y=r.top+r.height/2;
+  const top=D().elementFromPoint(x,y);
+  if(!top) return false;
+  const owner=top.closest("[data-act]");
+  return owner===el || el.contains(top);
+};
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+(async function(){
+  await nav("../index.html#base");
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 跳过序章（否则遮罩挡住舰基页）
+  const hasCore=await until(()=>W().NSK && W().NSK.Core && W().NSK.Core.load && W().NSK.Core.save,15000);
+  ok("存档接口可用", hasCore);
+  if(hasCore){
+    const S=W().NSK.Narrative && W().NSK.Narrative.Story;
+    const st=W().NSK.Core.load();
+    if(st){
+      st.story = st.story || {};
+      st.story.seen = S ? S.list().map(x=>x.id) : [];
+      st.story.cur = null;
+      st.story.flags = st.story.flags || {};
+      st.res.credits = 200000;
+      W().NSK.Core.save(st);
+    }
+  }
+
+  await wait(600);
+  await nav("../index.html?r="+Date.now()+"#base");
+  const b1=await until(booted,25000);
+  ok("重载后启动并停在舰基页", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 确保在舰基页签
+  const baseTab=q('[data-act="tab:base"]');
+  if(baseTab) hit(baseTab);
+  await until(()=>q('[data-act^="baseinfo:"]'),10000);
+
+  // 1) 点精炼环舱段 → 出现驻舱面板
+  const smeltBtn=q('[data-act="baseinfo:smelt"]');
+  ok("舰基页有舱段入口（精炼环）", !!smeltBtn);
+  hit(smeltBtn);
+  await wait(400);
+  ok("点开精炼环后出现驻舱面板", !!q(".base-station"));
+  ok("无人时提示「无人」", /无人/.test(txt(q(".base-station-head"))), txt(q(".base-station-head")));
+  ok("无人时提示耗时 +40%", /\+40%/.test(txt(q(".base-station"))));
+
+  // 2) 待命成员按钮可真实点击（elementFromPoint 命中）
+  const pick=qa(".base-station-mem");
+  ok("列出待命成员", pick.length>0, "count="+pick.length);
+  ok("待命成员按钮可真实命中（不穿透）", pick.length?realHit(pick[0]):false);
+  const firstName=txt(pick[0]);
+  const lvTag=qa(".base-station-mem small").length;
+  ok("成员按钮显示该舱段技能等级", lvTag>0, "lvTags="+lvTag);
+
+  // 3) 指派 → 面板变成「驻舱：某人（冶炼 Lv.x）」
+  hit(pick[0]);
+  await wait(500);
+  const head1=txt(q(".base-station-head"));
+  ok("指派后显示驻舱者名字", head1.indexOf(firstName.replace(/Lv\.\d+/,"").trim())>=0, head1);
+  ok("指派后显示冶炼技能等级", /冶炼 Lv\.\d+/.test(head1), head1);
+  ok("指派后出现「撤下」按钮", !!q('[data-act^="station:clear:"]'));
+
+  // 4) 撤下 → 回到无人
+  hit(q('[data-act^="station:clear:"]'));
+  await wait(500);
+  ok("撤下后回到「无人」", /无人/.test(txt(q(".base-station-head"))), txt(q(".base-station-head")));
+
+  // 5) 演训舱：12 个技能按钮 + 选技能后指派
+  const habBtn=q('[data-act="baseinfo:habitat"]');
+  ok("舰基页有演训舱入口", !!habBtn);
+  hit(habBtn);
+  await wait(400);
+  const skillBtns=qa('[data-act^="station:skill:"]');
+  ok("演训舱提供 12 项技能可选", skillBtns.length===12, "count="+skillBtns.length);
+  const gasBtn=q('[data-act="station:skill:gas"]');
+  ok("技能里有「采气」", !!gasBtn && /采气/.test(txt(gasBtn)), txt(gasBtn));
+  hit(gasBtn);
+  await wait(400);
+  // ⚠️ renderView 会整块重绘，旧节点引用已脱离文档 —— 必须重新查一次再判 className
+  const gasBtn2=q('[data-act="station:skill:gas"]');
+  ok("选中采气后该按钮变高亮（非 ghost）", gasBtn2 && !/ghost/.test(gasBtn2.className), gasBtn2?gasBtn2.className:"none");
+
+  const pick2=qa(".base-station-mem");
+  ok("演训舱仍可指派（切换技能不丢候选）", pick2.length>0, "count="+pick2.length);
+  if(pick2.length){
+    hit(pick2[0]);
+    await wait(500);
+    const head2=txt(q(".base-station-head"));
+    ok("演训舱驻舱后显示所选技能（采气）", /采气 Lv\.\d+/.test(head2), head2);
+  }
+
+  // 6) 指挥塔面板：说明文案
+  const cmdBtn=q('[data-act="baseinfo:command"]');
+  if(cmdBtn){
+    hit(cmdBtn); await wait(400);
+    ok("指挥塔面板说明全局战斗加成", /全队命中/.test(txt(q(".base-station"))), txt(q(".base-station-tip")));
+  } else ok("指挥塔舱段存在", false);
+
+  // 7) 成员页的「演训」按钮（默认练最高项）
+  const memTab=q('[data-act="tab:members"]');
+  if(memTab){ hit(memTab); await until(()=>qa('[data-act^="station:train:"]').length>0,8000); }
+  const trainBtn=qa('[data-act^="station:train:"]');
+  ok("成员页有「演训」按钮", trainBtn.length>0, "count="+trainBtn.length);
+  if(trainBtn.length){
+    ok("演训按钮可真实命中（不穿透）", realHit(trainBtn[0]));
+  }
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

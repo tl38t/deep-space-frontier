@@ -49,8 +49,32 @@
     return JSON.parse(payloadText);
   }
 
-  // 10 技能键（与 state.js SKILL_KEYS 对齐，防御旧档缺字段）
-  const SKILL_KEYS = ["mining", "scanning", "archaeology", "refine", "manufacture", "invent", "combatLaser", "combatTurret", "command", "defense"];
+  // 12 技能键（与 state.js SKILL_KEYS 对齐）。2026-11-01 技能体系重构，旧键迁移见 SKILL_MIGRATE。
+  const SKILL_KEYS = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "logistics"];
+  // 旧键 → 新键：scanning 并入采气、command 由导弹取代、invent 改名科研。
+  // ⚠️ 迁移必须删除旧键：否则每次 load 都会把同一个 xp 再加一遍（存档越读越强）。
+  const SKILL_MIGRATE = { scanning: "gas", command: "missile", invent: "research" };
+  function migrateSkillKeys(m) {
+    if (!m) return;
+    if (m.skills && typeof m.skills === "object") {
+      for (const oldK in SKILL_MIGRATE) {
+        if (typeof m.skills[oldK] !== "number") continue;
+        const nk = SKILL_MIGRATE[oldK];
+        m.skills[nk] = (m.skills[nk] || 0) + m.skills[oldK];
+        delete m.skills[oldK];
+      }
+    }
+    if (m.passion && typeof m.passion === "object") {
+      for (const oldK in SKILL_MIGRATE) {
+        const pv = m.passion[oldK];
+        if (pv === undefined) continue;
+        const nk = SKILL_MIGRATE[oldK];
+        // 新键已有实质档位就不覆盖（"none" 视为空位，可继承旧天赋）
+        if (m.passion[nk] === undefined || m.passion[nk] === "none") m.passion[nk] = pv;
+        delete m.passion[oldK];
+      }
+    }
+  }
 
   // 成员字段规范化（防御旧档/半成品档缺字段导致 UI 报错）
   function normalizeMembers(s) {
@@ -98,6 +122,9 @@
       if (m.origin === undefined) m.origin = "人才市场";
       if (!Array.isArray(m.milestones)) m.milestones = [];
       if (!m.passion) m.passion = {};
+      // 旧键迁移必须先于下面的「补默认」：否则 scanning/command/invent 会被当成缺失字段补成 0，
+      // 旧玩家的技能进度就白丢了。
+      migrateSkillKeys(m);
       for (const k of SKILL_KEYS) if (m.passion[k] === undefined) m.passion[k] = "none";
       if (!m.skills) m.skills = {};
       for (const k of SKILL_KEYS) if (typeof m.skills[k] !== "number") m.skills[k] = 0;

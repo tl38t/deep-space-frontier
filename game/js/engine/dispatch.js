@@ -43,6 +43,43 @@
     if (!m) return { ok: false, err: "成员不存在" };
     if (m.destroyed) return { ok: false, err: "成员已阵亡" };
     opts = opts || {};
+    // ===== 驻舱（2026-11-01 技能体系）：一人一岗，与出征互斥 =====
+    // 驻舱不离开舰基，所以不走下面 nodeId 那一套；单独处理，避免和采矿/剿匪混在一条分支里。
+    if (type === "station") {
+      const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+      const Base = E ? E.Base : null;
+      const slotId = opts.slotId;
+      if (!slotId) return { ok: false, err: "未指定舱段" };
+      if (!Base || !Base.slotById || !Base.moduleAt) return { ok: false, err: "舱段系统未就绪" };
+      const slot = Base.slotById(state, slotId);
+      const installed = Base.moduleAt(state, slotId);
+      if (!slot || !installed) return { ok: false, err: "该舱段没有安装模块" };
+      // 一舱一人（用户 2026-11-01 15:08 定）：别人已在这 → 直接拒，不静默覆盖
+      const occupant = Base.stationedAt(state, slotId);
+      if (occupant && occupant.id !== m.id) return { ok: false, err: "该舱段已有人（" + occupant.name + "）" };
+
+      // 演训舱必须指定训练技能，且必须在 SKILL_KEYS 白名单内（防旧存档传已删除的键）
+      let trainSkill = null;
+      if (installed.type === "habitat") {
+        trainSkill = opts.trainSkill || null;
+        if (!trainSkill) return { ok: false, err: "演训舱需要选择训练技能" };
+        const keys = (E && E.State && E.State.SKILL_KEYS) ? E.State.SKILL_KEYS : null;
+        if (keys && keys.indexOf(trainSkill) < 0) return { ok: false, err: "未知技能" };
+      }
+
+      m.assignment = {
+        type: "station",
+        slotId: slotId,
+        slotType: installed.type,
+        trainSkill: trainSkill,
+        nodeId: state.base.nodeId,
+        startedAt: Date.now(),
+        eventRoll: 0,
+      };
+      // status 用 "stationed" 而不是 "dispatched"：人在舰基里，应照常参与 autorepair。
+      m.status = "stationed";
+      return { ok: true, member: m };
+    }
     // develop 已退役（2026-10-27 设施化）：行星产出走 Engine.Sites 采集装置，成员不再驻留行星
     if (type === "mine" || type === "explore" || type === "combat" || type === "train" || type === "transport" || type === "logistics") {
       const nodeId = opts.nodeId || state.base.nodeId;

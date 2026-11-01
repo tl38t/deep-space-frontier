@@ -101,10 +101,18 @@
   function factionById(id) { return FACTIONS.find(f => f.id === id) || null; }
 
   // 派遣任务（突发任务）可指向的技能 + 任务标题（成功率按该技能等级，§13.7）
-  const DISPATCH_SKILLS = ["mining", "scanning", "archaeology", "refine", "manufacture", "invent", "combatLaser", "combatTurret", "command", "defense"];
+  // 突发任务可能考察的技能（2026-11-01 技能体系重构：12 项全覆盖，键名与 SKILL_KEYS 一致）。
+  // ⚠️ 只列「有成员在涨」的键 —— 列了死技能会让任务成功率恒在下限（levelOf(0)=1）。
+  const DISPATCH_SKILLS = ["mining", "gas", "archaeology", "refine", "manufacture", "research", "combatLaser", "combatTurret", "missile", "defense", "capacitor", "logistics"];
   const DISPATCH_TITLE = {
-    mining: "矿脉抢救", scanning: "信号溯源", archaeology: "遗迹发掘", refine: "炉况抢修", manufacture: "产线救急",
-    invent: "图纸攻坚", combatLaser: "激光突袭", combatTurret: "炮台压制", command: "指挥调度", defense: "防线死守",
+    mining: "矿脉抢救", gas: "气井稳压", archaeology: "遗迹发掘", refine: "炉况抢修", manufacture: "产线救急",
+    research: "图纸攻坚", combatLaser: "激光突袭", combatTurret: "炮台压制", missile: "导弹校射",
+    defense: "防线死守", capacitor: "电容过载", logistics: "航道调度",
+  };
+  // 技能中文名（desc 用）：玩家可见文案里不允许出现 refine / manufacture 这类内部键。
+  const DISPATCH_SKILL_CN = {
+    mining: "采矿", gas: "采气", archaeology: "考古", refine: "冶炼", manufacture: "制造", research: "科研",
+    combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", capacitor: "电容管理", logistics: "物流",
   };
 
   // 资源中文名（数据层运行时查 Resources，避免文案裸露 id）
@@ -151,7 +159,7 @@
         skill: skill,
         title: DISPATCH_TITLE[skill] || "突发任务",
         reward: reward,
-        desc: faction.name + " 发布「" + (DISPATCH_TITLE[skill] || "突发") + "」：需派遣擅长「" + skill + "」的团员执行（成功率按技能+舰船+出身）。",
+        desc: faction.name + " 发布「" + (DISPATCH_TITLE[skill] || "突发") + "」：需派遣擅长「" + (DISPATCH_SKILL_CN[skill] || "综合") + "」的团员执行（成功率按技能+舰船+出身）。",
       };
     }
     let tpl = weightedTpl(rng, faction, tierHint);
