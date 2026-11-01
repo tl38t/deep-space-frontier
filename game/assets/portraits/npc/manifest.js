@@ -125,6 +125,23 @@ window.NSK_NPC_MANIFEST = {
   "signal_orphan/v1": [
     "signal_orphan/signal_orphan_v1.webp"
   ],
+  "smelter_apprentice/v1_limb": [
+    "smelter_apprentice/smelter_apprentice_v1_limb.webp",
+    "smelter_apprentice/smelter_apprentice_v1_limb_2.webp",
+    "smelter_apprentice/smelter_apprentice_v1_limb_3.webp"
+  ],
+  "smelter_apprentice/v4": [
+    "smelter_apprentice/smelter_apprentice_v4.webp",
+    "smelter_apprentice/smelter_apprentice_v4_2.webp",
+    "smelter_apprentice/smelter_apprentice_v4_3.webp",
+    "smelter_apprentice/smelter_apprentice_v4_4.webp"
+  ],
+  "smelter_apprentice/v4_eye": [
+    "smelter_apprentice/smelter_apprentice_v4_eye.webp"
+  ],
+  "smelter_apprentice/v4_limb": [
+    "smelter_apprentice/smelter_apprentice_v4_limb.webp"
+  ],
   "station_rat/reveal": [
     "station_rat/station_rat_reveal.webp",
     "station_rat/station_rat_reveal_2.webp",
@@ -139,6 +156,19 @@ window.NSK_NPC_MANIFEST = {
   ],
   "station_rat/v1": [
     "station_rat/station_rat_v1.webp"
+  ],
+  "station_rat/v2": [
+    "station_rat/station_rat_v2.webp",
+    "station_rat/station_rat_v2_2.webp",
+    "station_rat/station_rat_v2_3.webp",
+    "station_rat/station_rat_v2_4.webp",
+    "station_rat/station_rat_v2_5.webp"
+  ],
+  "station_rat/v2_eye": [
+    "station_rat/station_rat_v2_eye.webp"
+  ],
+  "station_rat/v2_limb": [
+    "station_rat/station_rat_v2_limb.webp"
   ],
   "station_rat/v4": [
     "station_rat/station_rat_v4.webp",
