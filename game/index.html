@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>深空星疆 · 商业与战争</title>
-<link rel="stylesheet" href="css/main.css?v=75">
+<link rel="stylesheet" href="css/main.css?v=87">
 </head>
 <body>
 <div id="nsk-app">
@@ -38,6 +38,42 @@
       <button id="nsk-delete-save" class="sm danger-btn">删除本机存档</button>
     </div>
     <div class="nsk-hint" id="nsk-settings-hint"></div>
+  </div>
+</div>
+
+<!-- ===== 舰船装配 · 环带弹窗（移植 1 代 openEquipOrbit，2026-11-01 从成员档案迁入舰队页） =====
+     结构照搬 1 代 index.html 的 #equipOrbitModal：环带总览 + 点槽位浮出候选面板 +
+     已装装备条 + 四格统计。差异：去掉强化的「详情」入口、改装件谐振、泰坦末日槽、
+     精炼泵管路接口（本作没有这些子系统）；主题色由 1 代金黄改为本作青蓝。 -->
+<div class="fo-overlay" id="fitOrbitModal" aria-hidden="true">
+  <div class="fo-modal" role="dialog" aria-modal="true" aria-label="舰船装配">
+    <button class="fo-close" id="fitOrbitClose" aria-label="关闭">✕</button>
+    <div class="fo-title" id="fitOrbitTitle">舰船装配</div>
+    <div class="fo-sub" id="fitOrbitSub">—</div>
+    <div class="fo-orbit" id="fitOrbitWrapper">
+      <svg viewBox="0 0 500 500" id="fitOrbitSvg" aria-label="装配环"></svg>
+      <div class="fo-panel" id="fitOrbitPanel">
+        <div class="fo-panel-head">
+          <span class="fo-panel-title" id="fitOrbitPanelTitle">选择装备</span>
+          <button class="fo-panel-x" id="fitOrbitPanelClose" aria-label="收起">✕</button>
+        </div>
+        <div id="fitOrbitOptions"></div>
+      </div>
+    </div>
+    <div class="fo-lib">
+      <div class="fo-lib-title">已装配装备</div>
+      <div class="fo-lib-items" id="fitOrbitLib"></div>
+    </div>
+    <div class="fo-stats" id="fitOrbitStats">
+      <div class="fo-stat"><span>护盾</span><b class="shield" id="foStatShield">—</b></div>
+      <div class="fo-stat"><span>装甲</span><b class="armor" id="foStatArmor">—</b></div>
+      <div class="fo-stat"><span>结构</span><b class="hull" id="foStatHull">—</b></div>
+      <div class="fo-stat"><span>回避</span><b class="dodge" id="foStatDodge">—</b></div>
+    </div>
+    <div class="fo-actions">
+      <button class="sm ghost" id="fitOrbitClear">清空全部</button>
+      <button class="sm" id="fitOrbitDone">完成</button>
+    </div>
   </div>
 </div>
 
@@ -113,9 +149,11 @@
 <script src="js/engine/ship-enhancement.js?v=1"></script>
 <script src="js/engine/archaeology.js?v=3"></script>
 <script src="js/engine/repair.js?v=2"></script>
+<script src="js/engine/fleet.js?v=1"></script>
 <!-- UI 层 -->
 <script src="js/ui/planet-svg.js?v=1"></script>
 <script src="js/ui/portraits.js?v=2"></script>
-<script src="js/ui/app.js?v=87"></script>
+<script src="js/ui/fit-orbit.js?v=2"></script>
+<script src="js/ui/app.js?v=97"></script>
 </body>
 </html>

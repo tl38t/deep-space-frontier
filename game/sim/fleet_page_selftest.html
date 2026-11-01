@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舰队页 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 舰队页真机自测（2026-11-01）
+// 覆盖：页签存在 / 迁移给旧档成员补船 / 卡片数与 state.ships 一致 / 筛选 /
+//       配属弹窗 / 点成员真的换船（落盘验证）/ 三防按比例迁移 / 战损不可配属 /
+//       11 个页签在 390px 不溢出 / 全程无未捕获错误
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+
+// 捕获 iframe 内未捕获错误（每次 nav 后重新挂，旧 window 已被丢弃）
+let ERRS=[];
+function hookErrors(){
+  ERRS=[];
+  try{ W().addEventListener("error", function(e){ ERRS.push(String(e.message||e.error)); }); }catch(e){}
+  try{ W().addEventListener("unhandledrejection", function(e){ ERRS.push("promise:"+String(e.reason)); }); }catch(e){}
+}
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+
+(async function(){
+  await nav("../index.html?t="+Date.now());
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  const hasCore=await until(()=>W().NSK&&W().NSK.Core&&W().NSK.Core.save,15000);
+  ok("存档接口可用", hasCore);
+  if(!hasCore){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+
+  const Fleet=W().NSK.Engine.Fleet;
+  ok("Engine.Fleet 已注册", !!(Fleet&&Fleet.assign&&Fleet.ensure));
+
+  // 跳过序章
+  const S=W().NSK.Narrative&&W().NSK.Narrative.Story;
+  const st0=W().NSK.Core.load();
+  st0.story=st0.story||{};
+  st0.story.seen=S?S.list().map(x=>x.id):[];
+  st0.story.cur=null; st0.story.flags=st0.story.flags||{};
+
+  // 造一艘库存巡洋舰（memberId=null），并确保至少有一个待命成员可配属
+  const c0=st0.members.filter(m=>!m.destroyed&&m.status!=="dispatched"&&m.status!=="repairing");
+  ok("存在可配属的成员", c0.length>0, c0.length+" 人");
+  st0.ships=st0.ships||[];
+  // 给库存塞两门高槽武器，供后面的「舰队页装配」真操作使用
+  st0.equipment=st0.equipment||{};
+  st0.equipment["t1_small_laser"]=2;
+  const testShipId="s_selftest_000" + Math.floor(Math.random()*1e6).toString(36);
+  st0.ships.push({ id:testShipId, shipId:"cruiser", name:"铁卫级", status:"idle", nodeId:st0.base.nodeId, memberId:null });
+  // 再加一艘战损船，验「不可配属」
+  const lostId="s_lost_000" + Math.floor(Math.random()*1e6).toString(36);
+  st0.ships.push({ id:lostId, shipId:"frigate", name:"启程级", status:"lost", nodeId:st0.base.nodeId, memberId:null });
+  const shipCountBefore=st0.ships.length;
+  W().NSK.Core.save(st0);
+
+  // ── A. 进舰队页 ──
+  await nav("../index.html?a="+Date.now()+"#fleet");
+  const b1=await until(booted,25000); hookErrors();
+  ok("重载后启动", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  await until(()=>D().querySelectorAll(".fleet-card").length>0,15000);
+
+  const tabs=[...D().querySelectorAll("#nsk-tabs .tab")].map(t=>t.textContent.replace(/\s/g,""));
+  ok("页签共 11 个", tabs.length===11, tabs.join("/"));
+  ok("页签含「舰队」且排在舰基之后", tabs.indexOf("舰队")===3, "index="+tabs.indexOf("舰队"));
+  ok("舰队页是当前选中页签", !!D().querySelector("#nsk-tabs .tab.on") && D().querySelector("#nsk-tabs .tab.on").textContent.replace(/\s/g,"")==="舰队");
+
+  // ── B. 迁移：每个成员都要有船 ──
+  // ⚠️ Fleet.ensure 跑在内存态，落盘要等 App 的 5s 自动存档定时器。
+  //    这里必须轮询到「盘上船数 = 原有 + 成员数」，否则读到的是迁移前的旧档，
+  //    后续所有数量断言的基准都会错（首版就踩了这个：8 张卡 vs 2 艘）。
+  const stA=W().NSK.Core.load();
+  const memCount=stA.members.length;
+  const synced=await until(function(){
+    try{ return W().NSK.Core.load().ships.length===shipCountBefore+memCount; }catch(e){ return false; }
+  },15000);
+  ok("迁移已落盘（等自动存档）", synced, shipCountBefore+"+"+memCount+"="+(shipCountBefore+memCount));
+
+  const st1=W().NSK.Core.load();
+  ok("落盘后 state.ships = 原有 + 每个成员一艘", st1.ships.length===shipCountBefore+memCount,
+    st1.ships.length+" vs "+(shipCountBefore+memCount));
+  ok("每个成员都有有效 shipUid", st1.members.every(m=>m.shipUid&&st1.ships.some(s=>s.id===m.shipUid&&s.memberId===m.id)),
+    st1.members.map(m=>m.shipId+(m.shipUid?"✓":"✗")).join(","));
+  ok("迁移出的船舰种 = 成员原 m.shipId", st1.members.every(m=>{
+    const s=st1.ships.find(x=>x.id===m.shipUid); return s&&s.shipId===m.shipId;
+  }));
+  ok("迁移没有改变成员血量上限", st1.members.every(m=>{
+    const mx=W().NSK.Data.Ships.maxHp(m.shipId);
+    return m.hp.shield<=mx.shield&&m.hp.structure<=mx.structure;
+  }), st1.members.map(m=>m.hp.shield).join(","));
+
+  // ── C. 卡片渲染 ──
+  const cards=D().querySelectorAll(".fleet-card");
+  ok("卡片数 = state.ships 数", cards.length===st1.ships.length, cards.length+" vs "+st1.ships.length);
+  const txt=(el)=>el.textContent.replace(/\s+/g," ");
+  ok("每张卡显示舰种名与编号", [...cards].every(c=>/S-[0-9A-Z]{4}/.test(txt(c))), txt(cards[0]).slice(0,60));
+  ok("在役卡显示「驾驶者 + 名字」", [...cards].some(c=>/驾驶者/.test(txt(c))));
+  ok("库存卡显示「未配属」", [...cards].some(c=>/未配属/.test(txt(c))));
+  ok("每张卡有三防条（3 条）", [...cards].every(c=>c.querySelectorAll(".hp-row").length===3),
+    [...cards].map(c=>c.querySelectorAll(".hp-row").length).join(","));
+  ok("每张卡有四槽位标记 H/M/L/R", [...cards].every(c=>{
+    // ⚠️ 别用 \bM / \bR：文本是 "H 0/1M 0/1"，'1' 与 'M' 都是 \w，中间没有词边界。
+    return /H \d\/\d[\s\S]*M \d\/\d[\s\S]*L \d\/\d[\s\S]*R \d\/\d/.test(txt(c));
+  }), txt(cards[cards.length-1]).slice(0,80));
+
+  // 战损船：标「已损失」且无配属按钮
+  const lostCard=[...cards].find(c=>/已损失/.test(txt(c)));
+  ok("战损船单独渲染且标「已损失」", !!lostCard);
+  ok("战损船没有配属按钮", !!lostCard && !lostCard.querySelector('[data-act^="fleetPick:"]'));
+
+  // ── D. 筛选 ──
+  const segs=[...D().querySelectorAll(".seg-tab")].map(s=>s.textContent.replace(/\s/g,""));
+  ok("筛选按钮 4 个（全部/在役/库存/受损）", segs.length===4, segs.join("/"));
+  const stockBtn=[...D().querySelectorAll(".seg-tab")].find(s=>/库存/.test(s.textContent));
+  stockBtn.click(); await wait(300);
+  const stockCards=D().querySelectorAll(".fleet-card");
+  const stockExpect=st1.ships.filter(s=>!s.memberId&&s.status!=="lost").length;
+  ok("点「库存」后只剩无主船", stockCards.length===stockExpect, stockCards.length+" vs "+stockExpect);
+  ok("库存筛选下没有战损卡", ![...stockCards].some(c=>/已损失/.test(txt(c))));
+  const allBtn=[...D().querySelectorAll(".seg-tab")].find(s=>/全部/.test(s.textContent));
+  allBtn.click(); await wait(300);
+  ok("点回「全部」恢复所有船", D().querySelectorAll(".fleet-card").length===st1.ships.length);
+
+  // ── E. 配属（真操作）──
+  const targetCard=[...D().querySelectorAll(".fleet-card")].find(c=>c.querySelector('[data-act^="fleetPick:"]') && /未配属/.test(txt(c)));
+  ok("找到一艘库存船的配属按钮", !!targetCard);
+  if(targetCard){
+    const btn=targetCard.querySelector('[data-act^="fleetPick:"]');
+    const shipUid=btn.getAttribute("data-act").split(":")[1];
+    btn.click();
+    await until(()=>D().querySelector(".fleet-pick-mask"),3000);
+    const mask=D().querySelector(".fleet-pick-mask");
+    ok("配属弹窗打开", !!mask);
+    const rows=mask?mask.querySelectorAll(".fp-row"):[];
+    const assignable=W().NSK.Engine.Fleet.assignableMembers(st1).length;
+    ok("弹窗列出所有可配属成员", rows.length===assignable, rows.length+" vs "+assignable);
+    ok("弹窗有「当前驾驶」或「可配属」标记", rows.length>0 && /可配属|当前驾驶/.test(txt(mask)));
+    ok("弹窗说明三防按比例迁移", /损伤比例/.test(txt(mask)));
+
+    // 选第一个成员
+    const pickId=rows[0].getAttribute("data-act").split(":")[2];
+    const pickName=(rows[0].querySelector(".fp-nm b")||{}).textContent||"";
+    const oldShipIdBefore=(st1.members.find(m=>m.id===pickId)||{}).shipId;
+    rows[0].click();
+    await wait(500);
+    ok("选完成员后弹窗关闭", !D().querySelector(".fleet-pick-mask"));
+
+    // 等 5s 自动存档落盘，再读存档验证
+    await wait(6200);
+    const st2=W().NSK.Core.load();
+    const gotShip=st2.ships.find(s=>s.id===shipUid);
+    const gotMem=st2.members.find(m=>m.id===pickId);
+    ok("落盘后该船归属 = 选中成员", gotShip && gotShip.memberId===pickId, gotShip?String(gotShip.memberId):"无");
+    ok("落盘后成员 shipUid 指向该船", gotMem && gotMem.shipUid===shipUid, gotMem?String(gotMem.shipUid):"无");
+    ok("落盘后成员 m.shipId 同步为铁卫级（战斗/考古/维修读的就是它）",
+      gotMem && gotMem.shipId==="cruiser", gotMem?gotMem.shipId:"无");
+    ok("落盘后成员旧舰回库存（memberId=null）", st2.ships.filter(s=>!s.memberId&&s.status!=="lost").length>=1,
+      st2.ships.filter(s=>!s.memberId&&s.status!=="lost").length+" 艘库存");
+
+    // 三防按比例迁移：新上限 = 巡洋级，血量为新上限的同一比例
+    const Ships=W().NSK.Data.Ships;
+    const mxNew=Ships.maxHp("cruiser"), mxOld=Ships.maxHp(oldShipIdBefore);
+    ok("换乘后三防上限 = 巡洋级", gotMem && gotMem.hp.shield<=mxNew.shield && gotMem.hp.armor<=mxNew.armor,
+      gotMem?(gotMem.hp.shield+"/"+mxNew.shield):"无");
+    ok("换乘没有白送满血（未超过上限）", gotMem && gotMem.hp.shield<=mxNew.shield&&gotMem.hp.structure<=mxNew.structure);
+    ok("没有出现「两成员共持一船」",
+      new Set(st2.ships.filter(s=>s.memberId).map(s=>s.memberId)).size===st2.ships.filter(s=>s.memberId).length);
+
+    // UI 上该卡已换主人
+    await until(()=>[...D().querySelectorAll(".fleet-card")].some(c=>/铁卫级/.test(txt(c))&&c.textContent.indexOf(pickName)>=0),4000);
+    const ownsCard=[...D().querySelectorAll(".fleet-card")].some(c=>c.textContent.indexOf(pickName)>=0&&/铁卫级/.test(txt(c)));
+    ok("UI 卡片上已显示新驾驶者", ownsCard, "驾驶者="+pickName);
+  }
+
+  // ── F. 舰队页装配（1 代环带界面，2026-11-01 从成员档案迁入）──
+  const fitBtn=[...D().querySelectorAll('[data-act^="fleetFit:"]')][0];
+  ok("在役卡有「装配 x/y」按钮", !!fitBtn, fitBtn?fitBtn.textContent.trim():"无");
+  if(fitBtn){
+    const fitShipId=fitBtn.getAttribute("data-act").split(":")[1];
+    fitBtn.click();
+    const fitOpened=await until(()=>D().querySelector("#fitOrbitModal.active"),4000);
+    ok("环带装配弹窗打开", fitOpened);
+    const segs=[...D().querySelectorAll("#fitOrbitSvg .slot-segment")];
+    ok("环带按槽位数渲染圆点", segs.length>=2, "slots="+segs.length);
+    ok("圆点带槽位类型类名（高/中/低/改装）",
+      segs.every(g=>/\b(high|mid|low|rig)\b/.test(g.getAttribute("class")||"")));
+    ok("弹窗标出驾驶者与已装槽数", /驾驶者/.test(txt(D().querySelector("#fitOrbitSub")))&&/已装/.test(txt(D().querySelector("#fitOrbitSub"))));
+    ok("四格统计已填充（护盾/装甲/结构/回避）", (function(){
+      const v=["foStatShield","foStatArmor","foStatHull","foStatDodge"].map(id=>txt(D().getElementById(id)));
+      return v.every(x=>/^\d+$/.test(x));
+    })(), ["foStatShield","foStatArmor","foStatHull","foStatDodge"].map(id=>txt(D().getElementById(id))).join("/"));
+    ok("库存船卡提示「配属驾驶者后可装配」", (function(){
+      const stockCard=[...D().querySelectorAll(".fleet-card")].find(c=>/未配属/.test(txt(c)));
+      return !stockCard || /配属驾驶者后可装配/.test(txt(stockCard));
+    })());
+
+    // 点高槽圆点 → 候选面板 → 装一门小型激光炮
+    const highSeg=segs.find(g=>/\bhigh\b/.test(g.getAttribute("class")||""));
+    ok("找到高槽圆点", !!highSeg);
+    if(highSeg){
+      highSeg.dispatchEvent(new (W().MouseEvent)("click",{bubbles:true,cancelable:true}));
+      const panelOpen=await until(()=>D().querySelector("#fitOrbitPanel.active"),4000);
+      ok("点圆点后候选面板展开", panelOpen);
+      ok("面板标题为「高槽 · …」", /高槽/.test(txt(D().querySelector("#fitOrbitPanelTitle"))),
+        txt(D().querySelector("#fitOrbitPanelTitle")));
+      ok("面板含「当前槽」对照条", !!D().querySelector(".fo-current"));
+      const pickRow=D().querySelector('[data-equip="t1_small_laser"]');
+      ok("候选列出库存里的小型激光炮", !!pickRow);
+      if(pickRow){
+        const ownerId=(W().NSK.Core.load().ships.find(s=>s.id===fitShipId)||{}).memberId;
+        const eqBefore=W().NSK.Core.load().equipment["t1_small_laser"];
+        pickRow.click(); await wait(400);
+        ok("装配后已装条出现该装备", /小型激光炮/.test(txt(D().querySelector("#fitOrbitLib"))),
+          txt(D().querySelector("#fitOrbitLib")));
+        ok("装配后该候选卡标「已装」", (function(){
+          const card=D().querySelector('[data-equip="t1_small_laser"]');
+          return !!card && card.classList.contains("is-fitted");
+        })());
+        ok("已装条标出所在槽位", /高槽/.test(txt(D().querySelector("#fitOrbitLib"))));
+        await wait(6200);
+        const stF=W().NSK.Core.load();
+        const memF=stF.members.find(m=>m.id===ownerId);
+        ok("落盘后装备进入该驾驶者高槽",
+          !!(memF&&memF.fitted&&memF.fitted.high.indexOf("t1_small_laser")>=0),
+          memF?("high=["+memF.fitted.high.join(",")+"]"):"成员缺失");
+        ok("落盘后库存扣 1", stF.equipment["t1_small_laser"]===eqBefore-1,
+          "before="+eqBefore+" now="+stF.equipment["t1_small_laser"]);
+
+        // 同一槽位点「卸下装备」→ 归还库存
+        const unBtn=D().querySelector("[data-unfit]");
+        ok("面板底部有「卸下装备」", !!unBtn);
+        if(unBtn){ unBtn.click(); await wait(400); }
+        ok("卸下后已装条回到「暂无装备」", /暂无装备/.test(txt(D().querySelector("#fitOrbitLib"))),
+          txt(D().querySelector("#fitOrbitLib")));
+        await wait(6200);
+        const stG=W().NSK.Core.load();
+        const memG=stG.members.find(m=>m.id===ownerId);
+        ok("卸下后高槽清空", !!(memG&&memG.fitted.high.indexOf("t1_small_laser")<0));
+        ok("卸下后库存还原", stG.equipment["t1_small_laser"]===eqBefore,
+          "now="+stG.equipment["t1_small_laser"]);
+      }
+    }
+    const fitX=D().querySelector("#fitOrbitClose");
+    if(fitX) fitX.click();
+    await wait(250);
+    ok("环带弹窗可关闭", !D().querySelector("#fitOrbitModal.active"));
+  } else {
+    ok("库存船没有装配按钮（需先配属）", true);
+  }
+
+  // ── G. 390px 窄屏：11 个页签不溢出 ──
+  fr.style.width="390px";
+  await nav("../index.html?m="+Date.now()+"#fleet");
+  await until(booted,25000);
+  const tabBar=D().querySelector("#nsk-tabs");
+  const bw=tabBar.getBoundingClientRect().width;
+  ok("窄屏页签栏宽度 = 390", Math.abs(bw-390)<2, bw.toFixed(0)+"px");
+  ok("11 个页签在 390px 下不横向溢出", tabBar.scrollWidth<=tabBar.clientWidth+1,
+    tabBar.scrollWidth+" / "+tabBar.clientWidth);
+  const tabW=[...D().querySelectorAll("#nsk-tabs .tab")].map(t=>t.getBoundingClientRect().width);
+  ok("每个页签宽度 ≥ 28px（两字可读）", Math.min(...tabW)>=28, Math.min(...tabW).toFixed(1)+"px");
+  ok("页签文字没有被截断（scrollWidth ≤ clientWidth）",
+    [...D().querySelectorAll("#nsk-tabs .tab")].every(t=>t.scrollWidth<=t.clientWidth+1),
+    [...D().querySelectorAll("#nsk-tabs .tab")].map(t=>t.scrollWidth+"/"+t.clientWidth).join(" "));
+  ok("窄屏下舰队卡片单列不溢出", (function(){
+    const g=D().querySelector(".fleet-grid"); if(!g) return true;
+    const r=g.getBoundingClientRect(); return r.width<=390;
+  })(), (D().querySelector(".fleet-grid")||{getBoundingClientRect:()=>({width:0})}).getBoundingClientRect().width.toFixed(0)+"px");
+  fr.style.width="1240px";
+
+  // ── H. 全程无未捕获错误 ──
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  // 还原存档
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

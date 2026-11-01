@@ -10,7 +10,7 @@
 //   3 制造按钮总数 = 113（15 考古 + 98 迁入）
 //   4 代表性装备在位：战斗武器 / 冶炼泵 / 采矿激光 / 维修器
 //   5 槽位分组 = 3（high/mid/low，rig 无装备）
-//   6 成员页装配区存在
+//   6 舰队页有装配入口，1 代环带弹窗可开可关；成员档案已无装配区（2026-11-01 迁入舰队页）
 //   7 控制台无未捕获错误
 const out=[]; let PASS=0, FAIL=0;
 const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
@@ -70,7 +70,33 @@ const txt=(el)=>el?el.textContent.trim():"";
   })();
   ok("势力关系不足时引擎拒绝制造", /势力关系不足/.test(eqErr), eqErr);
 
-  // 成员页装配区（在成员详情面板内，需点开成员卡）
+  // 舰队页装配（2026-11-01：面板从成员档案迁到舰队页；界面改为 1 代环带版）
+  const fleetTab=q('[data-act="tab:fleet"]');
+  ok("舰队页签存在", !!fleetTab);
+  if(fleetTab) fleetTab.click();
+  const fitBtnThere=await until(()=>q('[data-act^="fleetFit:"]'),10000);
+  ok("舰队页卡片有「装配」入口", fitBtnThere);
+  if(fitBtnThere) q('[data-act^="fleetFit:"]').click();
+  const fitPanel=await until(()=>q("#fitOrbitModal.active"),6000);
+  ok("点装配后打开环带装配弹窗", fitPanel);
+  const segs=qa("#fitOrbitSvg .slot-segment");
+  ok("环带渲染槽位圆点（≥2）", segs.length>=2, "slots="+segs.length);
+  ok("每个圆点带槽位类型类名", [...segs].every(g=>/high|mid|low|rig/.test(g.className.baseVal||"")));
+  ok("弹窗标出驾驶者与槽位占用", /驾驶者/.test(txt(q("#fitOrbitSub"))) && /已装/.test(txt(q("#fitOrbitSub"))));
+  ok("统计区四项齐全", qa(".fo-stat").length===4, "stats="+qa(".fo-stat").length);
+  // 点第一个圆点 → 候选面板
+  if(segs.length){
+    segs[0].dispatchEvent(new (fr.contentWindow.MouseEvent)("click",{bubbles:true,cancelable:true}));
+    const panelOpen=await until(()=>q("#fitOrbitPanel.active"),4000);
+    ok("点槽位后候选面板展开", panelOpen);
+    ok("面板标题标出槽位类型", /槽|改装件/.test(txt(q("#fitOrbitPanelTitle"))));
+    ok("面板含「当前槽」对照条", !!q(".fo-current"));
+  }
+  const fitX=q("#fitOrbitClose"); if(fitX) fitX.click();
+  await wait(250);
+  ok("装配弹窗可关闭", !q("#fitOrbitModal.active"));
+
+  // 回归：成员档案里不该再出现装配区（面板已整体迁走）
   const memTab=q('[data-act="tab:members"]');
   ok("成员页签存在", !!memTab);
   if(memTab) memTab.click();
@@ -78,12 +104,9 @@ const txt=(el)=>el?el.textContent.trim():"";
   ok("成员页有成员卡", cardThere);
   const card=q(".member-card");
   if(card) card.click();
-  const fitThere=await until(()=>q(".npc-fit-section"),10000);
-  ok("点开成员后装配区出现", fitThere);
-  const fitSlots=qa(".npc-fit-section .fit-slot-group");
-  ok("装配区渲染槽位组", fitSlots.length>0, "groups="+fitSlots.length);
-  const fitCells=qa(".npc-fit-section .fit-cell");
-  ok("装配区渲染槽位格", fitCells.length>0, "cells="+fitCells.length);
+  const detailThere=await until(()=>q(".npc-detail"),10000);
+  ok("点开成员后档案打开", detailThere);
+  ok("成员档案里不再有装配区", !q(".npc-fit-section"));
 
   await wait(300);
   ok("控制台无未捕获错误", errs.length===0, errs.length?errs.join(" | "):"clean");

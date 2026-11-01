@@ -14,6 +14,7 @@
     { id: "starmap", name: "星图" },
     { id: "system", name: "星系" },
     { id: "base", name: "舰基" },
+    { id: "fleet", name: "舰队" },
     { id: "warehouse", name: "仓库" },
     { id: "members", name: "成员" },
     { id: "factions", name: "势力" },
@@ -975,14 +976,17 @@
     const def = Data.Ships.baseModuleByType(slot.type);
     const installed = Engine.Base.moduleAt(state, slot.id);
     const selected = baseFocus === slot.id;
-    const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", invent: "图纸研发", dock: state.ships.length + " 艘停泊", command: "小队管理", habitat: "成员舱" };
+    // 「停泊」= 库存里没人开的船（含在役数会让玩家以为造完就自动配人了）
+    // 这里直接数，不调 Fleet.summary —— 那是渲染路径，不该顺带跑 ensure 改 state。
+    const stockShips = (state.ships || []).filter(s => !s.memberId && s.status !== "lost").length;
+    const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "成员舱" };
     let label = installed ? "在线" : "待装配";
     let progress = 0;
     if (installed && slot.type === "smelt") { const q = baseQueueState("smelt", Data.Recipes.SMELT); label = q.count ? q.label : "精炼待命"; progress = q.progress; }
     if (installed && slot.type === "manufacture") { const q = baseQueueState("manufacture", Data.Recipes.COMPONENT); label = q.count ? q.label : "总装待命"; progress = q.progress; }
     if (installed && slot.type === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
     if (installed && slot.type === "cargo") label = "真实库存 · 可用";
-    if (installed && slot.type === "dock") label = "停泊 " + state.ships.length + " 艘";
+    if (installed && slot.type === "dock") label = "待配属 " + stockShips + " 艘";
     if (installed && slot.type === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
     if (installed && slot.type === "habitat") label = "成员 " + state.members.length + "/20";
     if (!installed && slot.type === "invent" && plan.invent <= 0) label = "核心 Lv.2 解锁";
@@ -1236,7 +1240,12 @@
     const now = Date.now();
     const durMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const used = Engine.Production.manufactureUsed ? Engine.Production.manufactureUsed(state) : (state.base.industry.manufactureQueue.length + (state.base.industry.buildQueue || []).length);
-    let html = '<div class="panel"><h3>造船 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3><div class="row"><span class="tag">' + state.ships.length + ' 艘已建成</span><span class="dim">核心 Lv.' + plan.lv + ' 可造舰种见下方</span></div>';
+    const fleetSum = Engine.Fleet ? Engine.Fleet.summary(state) : null;
+    let html = '<div class="panel"><h3>造船 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3>'
+      + '<div class="row"><span class="tag">' + state.ships.length + ' 艘在册</span>'
+      + (fleetSum && fleetSum.stock ? '<span class="tag warn">' + fleetSum.stock + ' 艘待配属</span>' : '<span class="tag good">全部已配属</span>')
+      + '<button class="sm ghost" data-act="tab:fleet">前往舰队配属</button></div>'
+      + '<div class="dim">新造舰船出厂进入库存，需在「舰队」页配属给成员后才能出勤驾驶。核心 Lv.' + plan.lv + ' 可造舰种见下方。</div>';
     const ships = Object.values(Data.Ships.SHIPS).sort((a, b) => a.classTier - b.classTier || a.bodyLevelReq - b.bodyLevelReq);
     for (const s of ships) {
       const ok = Data.Ships.canBuildAt(s.id, state.base.bodyLevel);
@@ -1265,7 +1274,7 @@
     const durMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const slotMeta = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
     let html = '<div class="panel"><h3>装备制造 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3>';
-    html += '<div class="dim">装备与造船、部件制造共享总装船坞槽位；制造完成入「已存装备」库存，再到成员页装配。</div>';
+    html += '<div class="dim">装备与造船、部件制造共享总装船坞槽位；制造完成入「已存装备」库存，再到「舰队」页点「装配」上舰。</div>';
     const slots = ["high", "mid", "low", "rig"];
     for (const sl of slots) {
       const items = Eq.bySlot(sl);
@@ -1308,6 +1317,222 @@
     }
     html += '<div class="dim">在舰基舱位聚焦面板可激活对应舱段增强剂：基础等级 + 持续 ' + BOOSTER_DURATION + 's，消耗 ' + resIcon("credits") + BOOSTER_COST.credits + '。同舱段再激活取最高等级并刷新时长。</div></div>';
     return html;
+  }
+
+  // ============================================================
+  // 舰队页（2026-11-01）：船只资产名册
+  // ------------------------------------------------------------
+  // 为什么要有这一页：在此之前「船」只能按成员看（成员卡上的「绑定舰船」），
+  // state.ships 里造出来的船全工程只被取 .length，玩家造完船看不到、也用不上。
+  // 本页把船当独立资产列出（在役 / 库存 / 战损），并提供换乘入口。
+  // 数据全部来自 Engine.Fleet，本函数只做呈现，不写 state。
+  // ============================================================
+  let fleetFilter = "all";     // all | crewed | stock | damaged
+  let fleetPickUid = null;     // 当前打开配属选择器的船 id
+  let fleetPickEl = null;
+
+  // 俯视舰影（纯装饰，无语义）：tier 越大体量越大
+  function shipGlyph(tier) {
+    const t = Math.max(1, Math.min(4, tier || 1));
+    return '<svg class="fc-glyph t' + t + '" viewBox="0 0 68 28" aria-hidden="true">'
+      + '<path class="fc-hull" d="M12 14 L28 6.5 L64 11.6 L64 16.4 L28 21.5 Z" />'
+      + '<rect class="fc-thr" x="4" y="11.4" width="7" height="5.2" rx="1.8" />'
+      + '<circle class="fc-dot" cx="46" cy="14" r="1.6" />'
+      + '</svg>';
+  }
+
+  function fleetShipDamaged(r) {
+    if (!r.owner || !r.hp || !r.max) return false;
+    return r.hp.shield < r.max.shield || r.hp.armor < r.max.armor || r.hp.structure < r.max.structure;
+  }
+
+  // 成员当前在干什么（舰队页「状态」列）
+  function fleetDutyOf(m) {
+    if (!m) return "—";
+    if (m.destroyed) return "阵亡";
+    if (m.status === "repairing") return "维修中";
+    if (m.assignment) {
+      const nd = Data.StarMap.nodeById(state.starMap, m.assignment.nodeId);
+      return jobName(m.assignment.type) + (nd ? " · " + nd.name : "");
+    }
+    return "舰基待命";
+  }
+
+  function viewFleet() {
+    const F = Engine.Fleet;
+    if (!F) return '<div class="panel dim">舰队模块未加载（engine/fleet.js 未引入）。</div>';
+    const all = F.rows(state);
+    const sum = F.summary(state);
+    const isLive = (r) => r.status !== "lost";
+    const cnt = {
+      all: all.length,
+      crewed: all.filter(r => isLive(r) && r.owner).length,
+      stock: all.filter(r => isLive(r) && !r.owner).length,
+      damaged: all.filter(fleetShipDamaged).length,
+    };
+    const list = all.filter(r => {
+      if (fleetFilter === "crewed") return isLive(r) && !!r.owner;
+      if (fleetFilter === "stock") return isLive(r) && !r.owner;
+      if (fleetFilter === "damaged") return fleetShipDamaged(r);
+      return true;
+    });
+
+    let html = '<div class="fleet-head"><div class="fleet-title">'
+      + '<span class="fleet-kicker">FLEET REGISTRY / 军团舰船名册</span>'
+      + '<h2>舰队 <span class="fleet-count">' + sum.total + ' 艘在册</span></h2>'
+      + '<small>按舰级排序 · 在役优先 · 点卡片可更换驾驶者</small></div>'
+      + '<div class="fleet-tally">'
+      + '<div class="ft"><b>' + sum.crewed + '</b><span>在役</span></div>'
+      + '<div class="ft"><b>' + sum.stock + '</b><span>库存</span></div>'
+      + '<div class="ft' + (sum.damaged ? " warn" : "") + '"><b>' + sum.damaged + '</b><span>受损</span></div>'
+      + '<div class="ft' + (sum.lost ? " bad" : "") + '"><b>' + sum.lost + '</b><span>战损</span></div>'
+      + '</div></div>';
+
+    html += '<div class="seg-tabs">';
+    [["all", "全部"], ["crewed", "在役"], ["stock", "库存"], ["damaged", "受损"]].forEach(function (it) {
+      html += '<span class="seg-tab' + (fleetFilter === it[0] ? " on" : "") + '" data-act="fleetTab:' + it[0] + '">'
+        + it[1] + "<i>" + cnt[it[0]] + "</i></span>";
+    });
+    html += "</div>";
+
+    if (!list.length) {
+      html += '<div class="panel dim">' + (all.length ? "该筛选下没有舰船。" : "还没有舰船。前往「舰基」页的总装船坞建造第一批舰船。") + "</div>";
+      return html;
+    }
+
+    html += '<div class="fleet-grid">';
+    for (const r of list) {
+      const lost = r.status === "lost";
+      const dmg = fleetShipDamaged(r);
+      const tierCn = ["", "护卫/驱逐", "巡洋/战巡", "战列/旗舰", "超级旗舰"][r.tier] || "舰船";
+      let tag = lost ? '<span class="tag bad">已损失</span>'
+        : r.owner ? '<span class="tag good">在役</span>' : '<span class="tag">库存</span>';
+      if (!lost && r.owner && r.owner.status === "repairing") tag += '<span class="tag warn">维修中</span>';
+      if (!lost && dmg) tag += '<span class="tag warn">受损</span>';
+
+      html += '<article class="fleet-card t' + r.tier + (lost ? " lost" : "") + (dmg && !lost ? " dmg" : "") + '">'
+        + '<div class="fc-head">' + shipGlyph(r.tier)
+        + '<div class="fc-id"><b>' + esc(r.def ? r.def.name : r.name) + '</b>'
+        + '<small>' + esc(r.label) + ' · T' + r.tier + ' · ' + esc(tierCn) + '</small></div>'
+        + '<div class="fc-tags">' + tag + '</div></div>';
+
+      // 三防：有主 → 真实值；库存/损失 → 满值灰显（让玩家看到这艘船的上限）
+      if (r.hp && r.max) {
+        html += '<div class="fc-hp">' + hpBar("shield", r.hp.shield, r.max.shield, "护盾")
+          + hpBar("armor", r.hp.armor, r.max.armor, "装甲")
+          + hpBar("struct", r.hp.structure, r.max.structure, "结构") + "</div>";
+      }
+
+      html += '<div class="fc-meta">'
+        + '<div class="fc-owner"><span>驾驶者</span><b>' + (lost ? "—" : (r.owner ? esc(r.owner.name) : "未配属")) + '</b></div>'
+        + '<div><span>槽位</span><b>' + r.fittedCount + " / " + r.slotTotal + '</b></div>'
+        + '<div><span>状态</span><b>' + esc(lost ? "战损" : (r.owner ? fleetDutyOf(r.owner) : "停泊待用")) + '</b></div>'
+        + '</div>';
+
+      html += '<div class="fc-slots">'
+        + '<span' + (r.used.high ? " class=\"on\"" : "") + '>H ' + r.used.high + "/" + (r.layout.high || 0) + "</span>"
+        + '<span' + (r.used.mid ? " class=\"on\"" : "") + '>M ' + r.used.mid + "/" + (r.layout.mid || 0) + "</span>"
+        + '<span' + (r.used.low ? " class=\"on\"" : "") + '>L ' + r.used.low + "/" + (r.layout.low || 0) + "</span>"
+        + '<span' + (r.used.rig ? " class=\"on\"" : "") + '>R ' + r.used.rig + "/" + (r.layout.rig || 0) + "</span>"
+        + "</div>";
+
+      // 底部只放操作。状态已在上面「状态」列说过一次，别重复占地方。
+      html += '<div class="fc-foot">';
+      if (lost) html += '<span class="fc-note">残骸已登记，不可再配属</span>';
+      else if (r.owner) {
+        html += '<button class="sm ghost" data-act="fleetPick:' + r.id + '">更换驾驶者</button>';
+        // 装配入口（2026-11-01 从成员档案迁入）：装备由驾驶者带上舰，所以只有在役舰可装配。
+        html += '<button class="sm fit' + (r.fittedCount < r.slotTotal ? " warn" : "") + '" data-act="fleetFit:' + r.id + '">'
+          + '装配 ' + r.fittedCount + "/" + r.slotTotal + '</button>';
+      } else {
+        html += '<button class="sm" data-act="fleetPick:' + r.id + '">配属给成员</button>';
+        html += '<span class="fc-hint">配属驾驶者后可装配</span>';
+      }
+      html += "</div></article>";
+    }
+    html += "</div>";
+    return html;
+  }
+
+  // ---- 配属选择器（“这艘船交给谁”）----
+  // 与 npc 档案同款 mask + panel：挂在 body 上，不受 1Hz 重绘影响。
+  function closeFleetPicker() {
+    if (fleetPickEl) { fleetPickEl.remove(); fleetPickEl = null; }
+    fleetPickUid = null;
+  }
+
+  function openFleetPicker(shipUid) {
+    closeFleetPicker();
+    closeFleetFit();   // 两个弹窗互斥，避免叠在同一屏
+    const F = Engine.Fleet;
+    if (!F) return;
+    const all = F.rows(state);
+    const ship = all.find(r => r.id === shipUid);
+    if (!ship) return;
+    fleetPickUid = shipUid;
+    const cands = F.assignableMembers(state);
+    const el = document.createElement("div");
+    el.className = "wh-detail-mask fleet-pick-mask";
+    el.tabIndex = -1;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "舰船配属：" + ship.name);
+
+    let rows = "";
+    for (const m of cands) {
+      const cur = ship.owner && ship.owner.id === m.id;
+      const mine = state.ships.find(s => s.id === m.shipUid) || null;
+      const mineName = mine ? (Data.Ships.shipById(mine.shipId) || {}).name || mine.shipId : "无舰";
+      rows += '<button class="fp-row' + (cur ? " cur" : "") + '" data-act="fleetAssign:' + ship.id + ":" + m.id + '">'
+        + '<span class="fp-av">' + esc(String(m.name || "?").slice(0, 1)) + "</span>"
+        + '<span class="fp-nm"><b>' + esc(m.name) + '</b><small>现任：' + esc(mineName) + " · " + esc(fleetDutyOf(m)) + "</small></span>"
+        + (cur ? '<span class="tag good">当前驾驶</span>' : '<span class="tag">可配属</span>')
+        + "</button>";
+    }
+    if (!rows) rows = '<div class="dim" style="padding:10px">没有可接收舰船的成员（全部在出勤或维修中，或已阵亡）。</div>';
+
+    el.innerHTML = '<div class="wh-detail fleet-pick">'
+      + '<button class="whd-x" data-whclose="1" title="关闭" aria-label="关闭">✕</button>'
+      + '<div class="fp-head"><span class="fp-kicker">FLEET ASSIGNMENT / 舰船配属</span>'
+      + '<h3>' + esc(ship.name) + ' <small>' + esc(ship.label) + " · T" + ship.tier + "</small></h3>"
+      + '<p>选择接收这艘舰船的成员。若对方已在驾驶另一艘舰，两舰将对调，对方的旧舰回库存。</p></div>'
+      + '<div class="fp-list">' + rows + "</div>"
+      + '<div class="fp-foot">换乘后三防按<b>当前损伤比例</b>迁移到新舰上限（不会自动修满）；'
+      + "新舰槽位不足时，多余装备自动退回仓库。</div>"
+      + "</div>";
+    el.addEventListener("click", function (ev) {
+      if (ev.target.closest(".wh-detail") && !ev.target.closest("[data-whclose]")) return;
+      closeFleetPicker();
+    });
+    el.addEventListener("keydown", function (ev) { if (ev.key === "Escape") closeFleetPicker(); });
+    document.body.appendChild(el);
+    fleetPickEl = el;
+    el.focus();
+  }
+
+  // ---- 舰船装配入口（2026-11-01）----
+  // 面板本体已迁移为 1 代环带界面，实现在 js/ui/fit-orbit.js（NSK.UI.FitOrbit）。
+  // 本处只负责「哪艘船 → 谁在开 → 交给环带面板」，不参与渲染。
+  // 数据层不变：仍写驾驶者的 m.fitted（combat / archaeology / repair / equipment
+  // 四条链路直读它）；库存舰没有驾驶者 = 没人把装备带上来 → 先配属成员再装配。
+  function fleetFitRow(shipUid) {
+    if (!shipUid || !Engine.Fleet) return null;
+    return Engine.Fleet.rows(state).find(r => r.id === shipUid) || null;
+  }
+
+  function closeFleetFit() {
+    const FO = NSK.UI && NSK.UI.FitOrbit;
+    if (FO && FO.isOpen()) FO.close();
+  }
+
+  function openFleetFit(shipUid) {
+    closeFleetPicker();   // 与配属弹窗互斥
+    const row = fleetFitRow(shipUid);
+    if (!row) return;
+    if (!row.owner) { toast("该舰还没有驾驶者，先配属成员再装配"); return; }
+    const FO = NSK.UI && NSK.UI.FitOrbit;
+    if (!FO) { toast("装配界面未加载（js/ui/fit-orbit.js 缺失）"); return; }
+    FO.open(row.owner.id);
   }
 
   function viewMembers() {
@@ -2238,7 +2463,6 @@
   }
   let npcDetailEl = null;
   let pendingFireId = null;   // 解雇二次确认：待确认解雇的成员 id（null=无）
-  let openFitSlot = null;     // 成员详情：当前展开的装备选择槽 {memberId, slot}（1-E 装配）
   function npcPortraitUrl(m) {
     if (m.portraitUrl) return m.portraitUrl;
     // 出身 → 立绘原型：每个出身各有独立原型（2026-10-25 起，新出身不再复用老原型）。
@@ -2316,59 +2540,6 @@
       return '<div class="npc-vital"><div class="npc-vital-label"><span>' + label + '</span><b>' + Math.round(cur) + '<i> / ' + Math.round(max) + '</i></b></div>'
         + '<div class="hp-track"><span class="hp-fill ' + kind + '" style="width:' + pct.toFixed(1) + '%"></span></div></div>';
     }).join("");
-  }
-
-  // ---------- 1-E：成员舰船装配面板（四槽，复用 1 代 fitted 数组模型） ----------
-  const FIT_SLOT_META = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
-  function fitBonusChips(eq) {
-    const Eq = Data.Equipment;
-    if (!eq || !eq.bonuses) return "";
-    return Object.keys(eq.bonuses).map(bk => (Eq.BONUS_LABELS[bk] || bk)).join(" · ");
-  }
-  function memberFitSection(m) {
-    const Eq = Data.Equipment;
-    if (!Eq) return "";
-    const layout = Data.Ships.slotLayout(m.shipId);
-    const slots = ["high", "mid", "low", "rig"];
-    let html = '<section class="npc-panel-section npc-fit-section"><div class="npc-section-head"><span>舰船装配 · 四槽</span><small>FIT MATRIX</small></div>';
-    html += '<div class="dim" style="margin-bottom:8px">从「已存装备」库存装配；卸下自动归还库存。装配即时生效（如考古扫描强度）。</div>';
-    let any = false;
-    for (const sl of slots) {
-      const cap = layout[sl] || 0;
-      if (cap <= 0) continue;
-      any = true;
-      html += '<div class="fit-slot-group"><b>' + FIT_SLOT_META[sl] + " ×" + cap + "</b>";
-      const arr = (m.fitted && m.fitted[sl]) || [];
-      for (let i = 0; i < cap; i++) {
-        const eqId = arr[i];
-        if (eqId) {
-          const e = Eq.byId(eqId);
-          const bn = fitBonusChips(e);
-          html += '<div class="fit-cell fitted"><span>' + esc(e ? e.name : eqId)
-            + (bn ? ' <i class="fit-bonus">· ' + esc(bn) + "</i>" : "") + '</span>'
-            + '<button class="sm ghost" data-act="unfit:' + m.id + ":" + sl + ":" + eqId + '">卸下</button></div>';
-        } else if (openFitSlot && openFitSlot.memberId === m.id && openFitSlot.slot === sl) {
-          const inv = Object.entries(state.equipment || {})
-            .filter(([k, v]) => v > 0 && Eq.byId(k) && Eq.byId(k).slot === sl);
-          html += '<div class="fit-picker">';
-          if (!inv.length) html += '<div class="dim">无可用装备（前往舰基总装船坞制造）。</div>';
-          else for (const [k, v] of inv) {
-            const e = Eq.byId(k);
-            html += '<div class="fit-pick-row"><span>' + esc(e.name)
-              + ' <i class="fit-bonus">· ' + esc(fitBonusChips(e)) + "</i></span>"
-              + '<button class="sm" data-act="fit:' + m.id + ":" + sl + ":" + k + '">装备 ×' + v + '</button></div>';
-          }
-          html += '<button class="sm ghost" data-act="fit_picker_close">关闭</button></div>';
-        } else {
-          html += '<div class="fit-cell empty"><span class="dim">空槽</span>'
-            + '<button class="sm" data-act="open_fit_picker:' + m.id + ":" + sl + '">装配</button></div>';
-        }
-      }
-      html += "</div>";
-    }
-    if (!any) html += '<div class="dim">该舰无装配槽位。</div>';
-    html += "</section>";
-    return html;
   }
 
   // ---------- 1-E：成员舰船状态（三防 + 修复状态） ----------
@@ -2494,7 +2665,6 @@
       + memberRepairStatusLine(m)
       + '</section>'
       + '</div>'
-      + memberFitSection(m)
       + '<section class="npc-panel-section npc-goals-section"><div class="npc-section-head"><span>人生目的</span><small>PERSONAL DIRECTIVES <b>全经验 ×' + goalXp.toFixed(3) + '</b></small></div>'
       + '<div class="goal-list">' + goalDetailRows(m) + '</div></section>'
       + '<section class="npc-panel-section npc-ms-section"><div class="npc-section-head"><span>里程碑</span><small>MILESTONES <b>' + earnedIds.length + " / " + allMs.length + '</b></small></div>'
@@ -2675,7 +2845,7 @@
     // 焦点战场：只有正看着星系页、且该星系里有我们在打的仗，才走逐轮真仿真；
     // 其余一律闭式（成本与离线时长无关）。切页签时引擎会自动退回闭式，进度不丢。
     state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
-    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
+    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, fleet: viewFleet, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
     // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，
     // 避免 207 节点 SVG 每秒销毁重建导致的整图刷新 / 脉冲重播 / 视角闪烁。
@@ -2699,7 +2869,18 @@
   function onAction(act, e) {
     hideNodeMenu();   // 任何操作先收起星图节点浮层
     const [cmd, a, b] = act.split(":");
-    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); tab = a; renderTabs(); renderView(); return; }
+    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); tab = a; renderTabs(); renderView(); return; }
+    // ---- 舰队页（船只是独立资产，见 engine/fleet.js）----
+    if (cmd === "fleetTab") { fleetFilter = a || "all"; renderView(); return; }
+    if (cmd === "fleetPick") { openFleetPicker(a); return; }
+    if (cmd === "fleetAssign") {
+      const r = Engine.Fleet.assign(state, a, b);
+      if (!r.ok) { toast(r.err); return; }
+      closeFleetPicker();
+      toast(r.shipName + (r.swapped ? " 与 " + r.memberName + " 的现役舰对调完成" : " 已配属给 " + r.memberName));
+      renderView();
+      return;
+    }
     if (cmd === "story") {
       const S = storyRuntime();
       if (!S) return;
@@ -2861,28 +3042,8 @@
       if (r.ok) toast("开始制造 " + (r.equip ? r.equip.name : "装备"));
       else toast(r.err);
     }
-    else if (cmd === "open_fit_picker") {
-      const mid = a, slot = b;
-      openFitSlot = { memberId: mid, slot: slot };
-      openNpcDetail(mid);
-    }
-    else if (cmd === "fit_picker_close") {
-      const mid = openFitSlot && openFitSlot.memberId;
-      openFitSlot = null;
-      if (mid) openNpcDetail(mid);
-    }
-    else if (cmd === "fit") {
-      const mid = a, slot = b, eqId = act.split(":")[3];
-      const r = Engine.Production.fitEquipment(state, mid, slot, eqId);
-      if (r.ok) { openFitSlot = null; openNpcDetail(mid); }
-      else toast(r.err);
-    }
-    else if (cmd === "unfit") {
-      const mid = a, slot = b, eqId = act.split(":")[3];
-      const r = Engine.Production.unfitEquipment(state, mid, slot, eqId);
-      if (r.ok) openNpcDetail(mid);
-      else toast(r.err);
-    }
+    // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
+    else if (cmd === "fleetFit") { openFleetFit(a); }
     else if (cmd === "booster") {
       if ((state.res.credits || 0) < BOOSTER_COST.credits) toast("星币不足，无法激活增强剂");
       else {
@@ -3471,6 +3632,9 @@
     await portraitsReady;
     if (!state) { state = Engine.State.defaultState(Date.now(), Data); if (Persistence) Persistence.save(state); else Core.save(state); }
     if (Engine.Base && Engine.Base.normalize) Engine.Base.normalize(state);
+    // 舰队名册迁移（幂等，不升 STATE_VERSION）：旧档每个成员自动获得一艘「初始配发舰」，
+    // 舰种沿用其现有 m.shipId、血量不动。见 engine/fleet.js 顶部注释。
+    if (Engine.Fleet && Engine.Fleet.ensure) Engine.Fleet.ensure(state);
     if (Engine.Recruit) Engine.Recruit.ensureRecruitState(state, Data, Date.now()); // 招募中心补档 + 生成首批候选
     // 剧情：补齐 state.story（旧档没这个字段也能直接跑）+ 找首个 trigger:"firstBoot" 且未看过的场景自动开播
     const StoryMod = storyRuntime();
@@ -3483,6 +3647,10 @@
     renderTabs(); renderHUD(); renderView();
     bind();
     bindSettings();
+    // 舰船装配 · 环带面板（js/ui/fit-orbit.js）：注入 state 读取与操作后回调。
+    // 面板自己处理点击与渲染，这里只给数据入口；onChanged 让舰队页卡片（槽位计数）同步刷新。
+    const FitOrbit = NSK.UI && NSK.UI.FitOrbit;
+    if (FitOrbit && FitOrbit.init) FitOrbit.init({ getState: () => state, toast: toast, onChanged: () => renderView() });
     // 4Hz：结算 + HUD；1Hz：视图
     setInterval(() => {
       if (Engine.Recruit) Engine.Recruit.refreshDue(state, Data, Date.now()); // 招募中心 4h 自然刷新（免费、清零手动次数）
