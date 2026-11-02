@@ -40,7 +40,7 @@ const txt=(el)=>el?el.textContent.trim():"";
   ok("舰基页出现「装备制造」面板", panel);
   if(!panel){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
 
-  const btns=qa('[data-act^="build_equip:"]');
+  const btns=qa('[data-act^="batch:build_equip:"]');
   ok("制造按钮总数 = 113", btns.length===113, "count="+btns.length);
 
   const groups=qa(".eq-slot-group");
@@ -55,7 +55,7 @@ const txt=(el)=>el?el.textContent.trim():"";
     ["sansha_mineral_assimilation","矿物同化注入器（势力装备）"],
   ];
   for(const [id,label] of need){
-    ok("在位：" + label, !!qa('[data-act="build_equip:'+id+'"]').length);
+    ok("在位：" + label, !!qa('[data-act="batch:build_equip:'+id+'"]').length);
   }
 
   // 势力门槛应体现在名称/成本上（按钮存在即可，实际拦截在引擎层）

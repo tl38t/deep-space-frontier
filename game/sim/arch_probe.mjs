@@ -677,8 +677,8 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     const sYes = Engine.State.defaultState(now, Data);
     Engine.Mastery.award(sYes, 10, "t"); Engine.Mastery.spend(sYes, "industry");
     for (const st of [sNo, sYes]) { st.res.fe_ore = 1000; Engine.Production.enqueue(st, "smelt", "smelt_fe_alloy", 100); st.res.fe_alloy = 0; }
-    Engine.Settle.settle(sNo, now + 120 * 1000);
-    Engine.Settle.settle(sYes, now + 120 * 1000);
+    Engine.Settle.settle(sNo, now + 600 * 1000);
+    Engine.Settle.settle(sYes, now + 600 * 1000);
     ok("精通:工业强化使同窗口精炼产出>对照", sYes.res.fe_alloy > sNo.res.fe_alloy,
       "no=" + (sNo.res.fe_alloy || 0).toFixed(1) + " yes=" + (sYes.res.fe_alloy || 0).toFixed(1));
   }
@@ -726,7 +726,13 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     // 3) 冶炼 → 矿材；制造 → 部件
     s25.res.fe_ore = Math.max(s25.res.fe_ore || 0, 800);
     const alloy0 = s25.res.fe_alloy || 0;
-    const eq = Engine.Production.enqueue(s25, "smelt", "smelt_fe_alloy", 2);
+    // 部件配方现吃 fe_alloy:40 + ni_alloy:6 + planet_lava:7 + planet_gas:4（1 代复合组合）；
+    // 给足矿材/行星产物，避免 mk_struct 扣料掩盖精炼产出、且保证可入队（开局行星产物为 0）。
+    s25.res.fe_alloy = (s25.res.fe_alloy || 0) + 200;
+    s25.res.ni_alloy = (s25.res.ni_alloy || 0) + 100;
+    s25.res.planet_lava = (s25.res.planet_lava || 0) + 100;
+    s25.res.planet_gas = (s25.res.planet_gas || 0) + 100;
+    const eq = Engine.Production.enqueue(s25, "smelt", "smelt_fe_alloy", 10);
     const cs0 = s25.res.struct || 0;
     const ec = Engine.Production.enqueue(s25, "manufacture", "mk_struct", 1);
     Engine.Settle.settle(s25, now + 30 * 60 * 1000 + 120 * 1000);
@@ -760,6 +766,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
     s25.res.ni_alloy = (s25.res.ni_alloy || 0) + 200;
     s25.res.struct = (s25.res.struct || 0) + 100;
     s25.res.prop = (s25.res.prop || 0) + 100;
+    s25.res.weapon = (s25.res.weapon || 0) + 100; // 1 代部件配比 cost 现含 weapon:4
     const ships0 = s25.ships.length;
     const bc = Engine.Production.buildShip(s25, "cruiser");
     Engine.Settle.settle(s25, now + 2 * 3600 * 1000);

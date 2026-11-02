@@ -911,6 +911,142 @@
     if (note) note.textContent = "成功率按「" + m.name + "」的考古等级估算，换成员会变。";
   }
 
+  // ---------- 批量制造确认弹窗（1 代式 ×N，服务于精炼 / 部件制造 / 装备制造 / 造船）----------
+  // 思路复用 1 代「按材料算上限 + 总耗时 = 单次 × 次数」，但本作自写：
+  // 1 代 action-modal 绑死其 getActionConfirmationDisplayState 契约 + i18n + 资源系统，不可直接搬。
+  let _batchTarget = null, _batchMax = 0, _batchSingleDur = 0;
+
+  // 解析目标为「单次成本 / 单次耗时 / 产出 / 门禁」，三种队列共用。
+  function batchResolve(target) {
+    const durMult = Engine.Base.queueDurationMultiplier(state, target.kind === "enqueue" ? target.queueType : "manufacture");
+    if (target.kind === "enqueue") {
+      const tbl = target.queueType === "smelt" ? Data.Recipes.SMELT : Data.Recipes.COMPONENT;
+      const r = (tbl || []).find(x => x.id === target.recipeId);
+      if (!r) return null;
+      return { name: resName(r.out), cost: r.in, dur: r.dur * durMult, qty: r.qty, out: r.out,
+        gateOk: r.bodyLevelReq == null || state.base.bodyLevel >= r.bodyLevelReq };
+    }
+    if (target.kind === "build_equip") {
+      const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(target.equipId) : null;
+      if (!Eq) return null;
+      return { name: Eq.name, cost: Eq.cost, dur: Eq.time * durMult, qty: 1, out: target.equipId,
+        gateOk: state.base.bodyLevel >= Engine.Production.equipGateLevel(Eq.level) };
+    }
+    if (target.kind === "build") {
+      const s = Data.Ships.shipById(target.shipId);
+      if (!s) return null;
+      return { name: s.name, cost: s.cost, dur: s.buildTime * durMult, qty: 1, out: target.shipId,
+        gateOk: Data.Ships.canBuildAt(s.id, state.base.bodyLevel) };
+    }
+    return null;
+  }
+
+  // 按材料算「当前可产批数」：floor(min(库存 / 单次成本))。这是 1 代 maxCount 的等价实现。
+  function batchMaxCount(cost) {
+    let m = Infinity;
+    for (const k in cost) m = Math.min(m, Math.floor((state.res[k] || 0) / cost[k]));
+    return m === Infinity ? 0 : m;
+  }
+
+  // 可用生产线槽位（1 个队列项占 1 槽但吃 N 批；满则无法入队）。
+  function batchFreeSlots(target) {
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    if (target.kind === "enqueue") {
+      const t = target.queueType;
+      const slots = t === "smelt" ? plan.smelt : t === "manufacture" ? plan.manufacture : plan.invent;
+      return slots - (state.base.industry[t + "Queue"] || []).length;
+    }
+    return plan.manufacture - Engine.Production.manufactureUsed(state);
+  }
+
+  function batchNormCost(info) {
+    return (typeof info.cost === "object" && info.cost) ? info.cost : { [info.cost]: (info.qty || 1) };
+  }
+
+  function updateBatchSummary() {
+    const input = document.getElementById("bm-count");
+    let n = Math.max(1, parseInt(input.value) || 1);
+    if (_batchMax > 0) n = Math.min(n, _batchMax);
+    input.value = n;
+    document.querySelectorAll(".bm-q").forEach(q => q.classList.remove("on"));
+    document.getElementById("bm-summary").innerHTML = "总耗时 ≈ <b>" + fmtDur(_batchSingleDur * n) + "</b> · 共 <b>" + n + "</b> 批";
+  }
+
+  function batchRender() {
+    const info = batchResolve(_batchTarget);
+    const ov = document.getElementById("nsk-batch-modal");
+    if (!info) { ov.classList.remove("active"); return; }
+    const cost = batchNormCost(info);
+    _batchMax = batchMaxCount(cost);
+    _batchSingleDur = info.dur;
+    const verb = _batchTarget.kind === "build" ? "建造" : (_batchTarget.kind === "build_equip" ? "制造" : "排产");
+    const slotFree = batchFreeSlots(_batchTarget);
+    const blocked = !info.gateOk || slotFree <= 0;
+    if (blocked) _batchMax = 0;
+    const input = document.getElementById("bm-count");
+    input.max = _batchMax > 0 ? _batchMax : 1;
+    input.value = (_batchMax > 0) ? 1 : 0;
+    document.getElementById("bm-title").textContent = verb + " · " + info.name;
+    document.getElementById("bm-info").innerHTML =
+      '<div>单次耗时 <b>' + (Math.round(info.dur * 10) / 10) + 's</b>（基础，不含增强剂 / 驻舱 / 精通）</div>'
+      + '<div>单次产出 ' + ((_batchTarget.kind === "enqueue")
+        ? (resIcon(info.out) + resName(info.out) + " ×" + info.qty)
+        : (esc(info.name) + " ×" + info.qty)) + '</div>';
+    document.getElementById("bm-res").innerHTML = Object.keys(cost).map(k => {
+      const stock = state.res[k] || 0, enough = stock >= cost[k];
+      return '<div class="bm-row' + (enough ? "" : " short") + '"><span class="bm-name">'
+        + resIcon(k) + resName(k) + " ×" + cost[k] + '</span><span class="bm-stock">库存 ' + fmt(stock) + "</span></div>";
+    }).join("");
+    document.getElementById("bm-maxhint").innerHTML = _batchMax > 0
+      ? '材料可产 <b>' + _batchMax + '</b> 批' + (slotFree <= 0 ? '（生产线槽位已满）' : '')
+      : (blocked ? (slotFree <= 0 ? '生产线槽位已满（需升级舰基）' : '当前门禁未满足，无法' + verb) : '材料不足，无法' + verb);
+    const confirmBtn = document.getElementById("bm-confirm");
+    confirmBtn.textContent = "确认" + verb;
+    confirmBtn.disabled = _batchMax <= 0;
+    updateBatchSummary();
+    ov.classList.add("active");
+  }
+
+  function openBatchModal(target) { _batchTarget = target; batchRender(); }
+  function closeBatchModal() { _batchTarget = null; const ov = document.getElementById("nsk-batch-modal"); if (ov) ov.classList.remove("active"); }
+
+  function initBatchModal() {
+    const ov = document.getElementById("nsk-batch-modal");
+    if (!ov) return;
+    const input = document.getElementById("bm-count");
+    input.addEventListener("input", updateBatchSummary);
+    document.querySelectorAll(".bm-q").forEach(btn => btn.addEventListener("click", function () {
+      const q = btn.getAttribute("data-q");
+      let n = (q === "max") ? (_batchMax > 0 ? _batchMax : 1) : (parseInt(q) || 1);
+      if (_batchMax > 0) n = Math.min(n, _batchMax);
+      input.value = n;
+      document.querySelectorAll(".bm-q").forEach(x => x.classList.remove("on"));
+      btn.classList.add("on");
+      updateBatchSummary();
+    }));
+    document.getElementById("bm-cancel").addEventListener("click", closeBatchModal);
+    document.getElementById("bm-confirm").addEventListener("click", function () {
+      const info = batchResolve(_batchTarget);
+      if (!info) { closeBatchModal(); return; }
+      const cost = batchNormCost(info);
+      let n = Math.max(1, parseInt(document.getElementById("bm-count").value) || 1);
+      // 确认时再 clamp 一次：防静默丢批（材料可能在开弹窗后被别处消耗，导致 repeat>可产批数）。
+      const cap = batchMaxCount(cost);
+      if (n > cap) { n = cap; toast("材料仅够 " + n + " 批，已调整"); }
+      if (n <= 0) { toast("材料不足"); closeBatchModal(); return; }
+      const t = _batchTarget;
+      let r;
+      if (t.kind === "enqueue") r = Engine.Production.enqueue(state, t.queueType, t.recipeId, n);
+      else if (t.kind === "build_equip") r = Engine.Production.buildEquipment(state, t.equipId, n);
+      else if (t.kind === "build") r = Engine.Production.buildShip(state, t.shipId, n);
+      if (r && r.ok) toast((t.kind === "build" ? "开始建造 " : t.kind === "build_equip" ? "开始制造 " : "已排产 ") + info.name + " ×" + n);
+      else toast((r && r.err) || "操作失败");
+      closeBatchModal();
+      renderView();
+    });
+    ov.addEventListener("click", function (e) { if (e.target === ov) closeBatchModal(); });
+  }
+
   function baseQueueState(type, recipes) {
     const q = state.base.industry[type + "Queue"] || [];
     const it = q[0];
@@ -1207,11 +1343,13 @@
         ? Object.entries(r.in).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ")
         : resIcon(r.in) + resName(r.in) + " " + r.qty;
       const outStr = resIcon(r.out) + resName(r.out) + " ×" + r.qty;
-      const can = Engine.Production.canAfford(state.res, typeof r.in === "object" ? r.in : { [r.in]: r.qty });
+      const gateOk = r.bodyLevelReq == null || state.base.bodyLevel >= r.bodyLevelReq;
+      const gateTag = gateOk ? "" : ' <span class="tag bad">🔒 需舰基 Lv' + (r.bodyLevelReq + 1) + '</span>';
+      const can = gateOk && Engine.Production.canAfford(state.res, typeof r.in === "object" ? r.in : { [r.in]: r.qty });
       const adjustedDur = Math.round(r.dur * durationMult * 10) / 10;
       const durLabel = durationMult < 0.995 ? r.dur + "s → " + adjustedDur + "s" : r.dur + "s";
-      html += '<div class="row"><span>' + inStr + " → " + outStr + ' <span class="dim">(' + durLabel + "/批)</span></span>" +
-        '<button class="sm" data-act="enqueue:' + type + ":" + r.id + '"' + (can ? "" : " disabled") + ">排产</button></div>";
+      html += '<div class="row"><span>' + inStr + " → " + outStr + gateTag + ' <span class="dim">(' + durLabel + "/批)</span></span>" +
+        '<button class="sm" data-act="batch:enqueue:' + type + ":" + r.id + '"' + (can ? "" : " disabled") + ">排产</button></div>";
     }
     // 进行中
     for (const it of q) {
@@ -1254,7 +1392,7 @@
       const canAfford = Engine.Production.canAfford(state.res, s.cost);
       const lockNote = ok ? "" : "（核心 Lv." + (s.bodyLevelReq + 1) + " 解锁）";
       html += '<div class="row"><span>' + esc(s.name) + lockNote + ' · ' + costStr + ' · ' + adjDur + 's</span>'
-        + '<button class="sm" data-act="build:' + s.id + '"' + ((ok && canAfford) ? "" : " disabled") + '>建造</button></div>';
+        + '<button class="sm" data-act="batch:build:' + s.id + '"' + ((ok && canAfford) ? "" : " disabled") + '>建造</button></div>';
     }
     const bs = Engine.Production.buildStatus ? Engine.Production.buildStatus(state, now) : [];
     for (const it of bs) {
@@ -1296,7 +1434,7 @@
         const note = lvLocked ? "（核心 Lv." + (gate + 1) + " 解锁）"
                    : bpLocked ? "（需蓝图）" : "";
         html += '<div class="row"><span>' + esc(eq.name) + " T" + tier + note + " · " + costStr + " · " + adjDur + 's</span>'
-          + '<button class="sm" data-act="build_equip:' + eq.id + '"' + dis + ">制造</button></div>";
+          + '<button class="sm" data-act="batch:build_equip:' + eq.id + '"' + dis + ">制造</button></div>";
       }
       html += "</div>";
     }
@@ -3031,16 +3169,12 @@
       const r = Engine.Base.resetSlotPos(state);
       if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
     }
-    else if (cmd === "enqueue") Engine.Production.enqueue(state, a, b, 1);
-    else if (cmd === "build") {
-      const r = Engine.Production.buildShip(state, a);
-      if (r.ok) toast("开始建造 " + r.ship.name);
-      else toast(r.err);
-    }
-    else if (cmd === "build_equip") {
-      const r = Engine.Production.buildEquipment(state, a);
-      if (r.ok) toast("开始制造 " + (r.equip ? r.equip.name : "装备"));
-      else toast(r.err);
+    else if (cmd === "batch") {
+      // 批量制造确认弹窗入口：enqueue / build_equip / build 三种目标，N 在弹窗内选。
+      const p = act.split(":");
+      if (p[1] === "enqueue") openBatchModal({ kind: "enqueue", queueType: p[2], recipeId: p[3] });
+      else if (p[1] === "build_equip") openBatchModal({ kind: "build_equip", equipId: p[2] });
+      else if (p[1] === "build") openBatchModal({ kind: "build", shipId: p[2] });
     }
     // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
     else if (cmd === "fleetFit") { openFleetFit(a); }
@@ -3651,6 +3785,7 @@
     // 面板自己处理点击与渲染，这里只给数据入口；onChanged 让舰队页卡片（槽位计数）同步刷新。
     const FitOrbit = NSK.UI && NSK.UI.FitOrbit;
     if (FitOrbit && FitOrbit.init) FitOrbit.init({ getState: () => state, toast: toast, onChanged: () => renderView() });
+    initBatchModal(); // 批量制造确认弹窗（精炼/制造/造船 ×N）
     // 4Hz：结算 + HUD；1Hz：视图
     setInterval(() => {
       if (Engine.Recruit) Engine.Recruit.refreshDue(state, Data, Date.now()); // 招募中心 4h 自然刷新（免费、清零手动次数）

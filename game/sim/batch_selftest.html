@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>batch selftest</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1280px;height:1000px;border:1px solid #ccc"></iframe>
+<script>
+// 批量制造 ×N 自测（真实打开 index.html，用真实 DOM 驱动）
+// 覆盖：① 引擎级 repeat 存储 + 单批扣料 + 材料不足/门禁拒绝
+//       ② UI 级：三按钮命令改写 batch: / 弹窗打开 / maxhint / 输入框级 clamp / 确认级再 clamp(toast) / repeat 经 DOM 落地
+// 注意：开局 bodyLevel=0 → smelt:1 / manufacture:1 槽；造船与装备制造共享那 1 个 manufacture 槽。
+//       故 UI 确认流程顺序：精炼确认 → 造船冒烟(不确认) → 装备超量确认。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+async function until(fn,ms,step){ ms=ms||25000; step=step||120; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const D=()=>fr.contentDocument;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+
+function parseMaxHint(){ const h=txt(q("#bm-maxhint")); const m=/材料可产\s*(\d+)\s*批/.exec(h); return m?parseInt(m[1]):null; }
+function lastBatchRow(denom){ // 找「批 X/Y」行（Y=denom 可指定）
+  const rows=[...qa(".row")].filter(r=>/批\s*\d+\/\d+/.test(r.textContent));
+  if(!rows.length) return null;
+  if(denom==null) return rows[rows.length-1];
+  return rows.find(r=>new RegExp("批\\s*\\d+\\/"+denom+"\\b").test(r.textContent))||null;
+}
+function clickBtn(sel){ const b=q(sel); if(!b) return false; b.click(); return true; }
+
+(async function(){
+  const errs=[];
+  fr.src="../index.html#base";
+  const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },25000);
+  ok("游戏启动完成", booted);
+  if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  try{ fr.contentWindow.addEventListener("error", e=>errs.push(e.message)); }catch(e){}
+  const NSK=fr.contentWindow.NSK;
+
+  // ---------- 引擎级确定性测试（fresh state，直接调 Production）----------
+  const fresh=()=>NSK.Engine.State.defaultState(Date.now(), NSK.Data);
+
+  // (E1) 精炼：repeat + 仅扣首批(1×fe_ore)
+  {
+    const st=fresh(); const before=st.res.fe_ore;
+    const r=NSK.Engine.Production.enqueue(st,"smelt","smelt_fe_alloy",5);
+    ok("引擎·精炼 enqueue ok", r&&r.ok, JSON.stringify(r));
+    const it=(st.base.industry.smeltQueue||[])[0];
+    ok("引擎·精炼 队列项 repeat=5", it&&it.repeat===5, it?("repeat="+it.repeat):"no item");
+    ok("引擎·精炼 入队只扣首批(1×fe_ore)", st.res.fe_ore===before-1, "fe_ore "+before+"->"+st.res.fe_ore);
+  }
+  // (E2) 装备制造：repeat + 扣成本
+  {
+    const st=fresh(); st.base.bodyLevel=0;
+    const c=NSK.Data.Equipment.byId("t1_mining_laser").cost;
+    const before=Object.assign({},st.res);
+    const r=NSK.Engine.Production.buildEquipment(st,"t1_mining_laser",3);
+    ok("引擎·装备制造 buildEquipment ok", r&&r.ok, JSON.stringify(r));
+    const it=(st.base.industry.manufactureQueue||[])[0];
+    ok("引擎·装备制造 队列项 repeat=3", it&&it.repeat===3, it?("repeat="+it.repeat):"no item");
+    const dFe=(before.fe_alloy||0)-(st.res.fe_alloy||0), dNi=(before.ni_alloy||0)-(st.res.ni_alloy||0);
+    ok("引擎·装备制造 扣成本(fe_alloy "+c.fe_alloy+" / ni_alloy "+c.ni_alloy+")", dFe===c.fe_alloy && dNi===c.ni_alloy, "Δfe="+dFe+" Δni="+dNi);
+  }
+  // (E3) 造船：repeat + 扣成本（1 代部件配比 cost: { struct, prop, weapon }）
+  {
+    const st=fresh(); st.base.bodyLevel=0;
+    const s=NSK.Data.Ships.shipById("frigate"); const c=s.cost;
+    const before=Object.assign({},st.res);
+    const r=NSK.Engine.Production.buildShip(st,"frigate",2);
+    ok("引擎·造船 buildShip ok", r&&r.ok, JSON.stringify(r));
+    const it=(st.base.industry.buildQueue||[])[0];
+    ok("引擎·造船 队列项 repeat=2", it&&it.repeat===2, it?("repeat="+it.repeat):"no item");
+    const dSt=(before.struct||0)-(st.res.struct||0), dPr=(before.prop||0)-(st.res.prop||0), dWp=(before.weapon||0)-(st.res.weapon||0);
+    ok("引擎·造船 扣成本(struct "+c.struct+" / prop "+c.prop+" / weapon "+c.weapon+")", dSt===c.struct && dPr===c.prop && dWp===c.weapon, "Δst="+dSt+" Δpr="+dPr+" Δwp="+dWp);
+  }
+  // (E4) 材料不足应拒绝
+  {
+    const st=fresh(); st.res.fe_alloy=0; st.res.ni_alloy=0;
+    const r=NSK.Engine.Production.buildEquipment(st,"t1_mining_laser",1);
+    ok("引擎·材料不足时拒绝制造", r&&!r.ok, JSON.stringify(r));
+  }
+  // (E5) 门禁：bodyLevel 不足拒绝造 cruiser(需 Lv1)
+  {
+    const st=fresh(); st.base.bodyLevel=0;
+    const r=NSK.Engine.Production.buildShip(st,"cruiser",1);
+    ok("引擎·核心等级不足拒绝造 cruiser", r&&!r.ok, JSON.stringify(r));
+  }
+
+  // ---------- UI 级流程测试（真实 DOM 驱动）----------
+  const btnSmelt = await until(()=>q('[data-act="batch:enqueue:smelt:smelt_fe_alloy"]'),8000);
+  ok("UI·精炼按钮带 batch:enqueue 命令", !!btnSmelt);
+  ok("UI·装备按钮带 batch:build_equip 命令", qa('[data-act^="batch:build_equip:"]').length>0);
+  ok("UI·造船按钮带 batch:build 命令", qa('[data-act^="batch:build:"]').length>0);
+
+  // (U1) 精炼流程：开弹窗→maxhint→输入框clamp→确认→repeat=5
+  clickBtn('[data-act="batch:enqueue:smelt:smelt_fe_alloy"]');
+  let opened=await until(()=>q("#nsk-batch-modal.active"),4000);
+  ok("UI·精炼 点排产打开批量弹窗", opened);
+  if(opened){
+    const max0=parseMaxHint();
+    ok("UI·精炼 maxhint 显示材料可产批数(=fe_ore 200)", max0===200, "max0="+max0);
+    const inp=q("#bm-count"); inp.value="9999"; inp.dispatchEvent(new (fr.contentWindow.Event)("input",{bubbles:true}));
+    await wait(30);
+    ok("UI·精炼 输入框超量被 clamp 到 max", q("#bm-count").value===String(max0), "value="+q("#bm-count").value);
+    ok("UI·精炼 摘要显示「共 "+max0+" 批」", new RegExp("共\\s*"+max0+"\\s*批").test(txt(q("#bm-summary"))), txt(q("#bm-summary")));
+    inp.value="5"; inp.dispatchEvent(new (fr.contentWindow.Event)("input",{bubbles:true}));
+    await wait(30);
+    q("#bm-confirm").click();
+    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
+    ok("UI·精炼 确认后弹窗关闭", closed);
+    await wait(80);
+    const t1=txt(q("#nsk-toast"));
+    ok("UI·精炼 确认后 toast 显示「已排产 ×5」(N=5 进引擎)", /已排产/.test(t1) && /×5\b/.test(t1), t1);
+  }
+
+  // (U3) 造船冒烟：开弹窗→maxhint=2（此时 manufacture 槽仍空闲，仅冒烟不确认）
+  clickBtn('[data-act="batch:build:frigate"]');
+  opened=await until(()=>q("#nsk-batch-modal.active"),4000);
+  ok("UI·造船 点建造打开批量弹窗", opened);
+  if(opened){
+    const max0=parseMaxHint();
+    ok("UI·造船 maxhint 显示材料可产批数(=2)", max0===2, "max0="+max0);
+    q("#bm-cancel").click();
+    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
+    ok("UI·造船 取消关闭弹窗", closed);
+  }
+
+  // (U2) 装备流程：开弹窗→maxhint=3→直设9999(绕过输入框clamp)→确认→确认级re-clamp→repeat=3 + toast
+  clickBtn('[data-act="batch:build_equip:t1_mining_laser"]');
+  opened=await until(()=>q("#nsk-batch-modal.active"),4000);
+  ok("UI·装备 点制造打开批量弹窗", opened);
+  if(opened){
+    const max0=parseMaxHint();
+    ok("UI·装备 maxhint 显示材料可产批数(=3)", max0===3, "max0="+max0);
+    // 绕过输入框 clamp：直接写值不派发 input 事件
+    const inp=q("#bm-count"); inp.value="9999";
+    q("#bm-confirm").click();
+    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
+    ok("UI·装备 确认后弹窗关闭", closed);
+    await wait(80);
+    const t2=txt(q("#nsk-toast"));
+    // 确认处理里 re-clamp 先 toast「材料仅够 3 批」、随即被「开始制造 ×3」覆盖；
+    // 最终 ×3（而非 ×9999）即证明确认级再 clamp 把 9999 截到可产上限 3。
+    ok("UI·装备 确认级 re-clamp：toast 显示「×3」而非「×9999」", /×3\b/.test(t2) && !/9999/.test(t2), t2);
+  }
+
+  await wait(300);
+  ok("控制台无未捕获错误", errs.length===0, errs.length?errs.join(" | "):"clean");
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

@@ -306,6 +306,7 @@ function smeltRun({ occupy, lv, sec }) {
 }
 {
   const st = fresh();
+  st.res.planet_lava = 100000; st.res.planet_gas = 100000; // 部件配方现需行星产物（1 代复合组合）
   const m = solo(st);
   station(st, "manufacture", m);
   const r = Prod.enqueue(st, "manufacture", Data.Recipes.COMPONENT[0].id, 20);

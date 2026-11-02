@@ -54,6 +54,9 @@
       : Data.Recipes.INVENT;
     const r = tbl.find(x => x.id === recipeId);
     if (!r) return { ok: false, err: "配方不存在" };
+    // 精炼门禁（复用 1 代精炼等级语义，落到本作 bodyLevel 轴）：bodyLevelReq 未满足拒绝入队
+    if (r.bodyLevelReq != null && state.base.bodyLevel < r.bodyLevelReq)
+      return { ok: false, err: "舰基等级不足，无法精炼该矿材" };
     const q = state.base.industry[queueType + "Queue"];
 
     // 总装整船走 manufacture 但引用 ships（此处仅部件/矿材/图纸）
@@ -131,7 +134,7 @@
 
   // ---- 造船队列（总装船坞，共享 manufacture 槽位；完成入 state.ships）----
   // 入队：检查总装槽位 + 核心门禁 + 材料，扣材料，写 buildQueue 项。
-  function buildShip(state, shipId) {
+  function buildShip(state, shipId, repeat) {
     const Ship = Data.Ships;
     const ship = Ship.shipById(shipId);
     if (!ship) return { ok: false, err: "舰船不存在" };
@@ -142,7 +145,7 @@
     spend(state.res, ship.cost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
     const q = state.base.industry.buildQueue || (state.base.industry.buildQueue = []);
-    q.push({ shipId: shipId, dur: ship.buildTime * durationMult, startedAt: Date.now(), repeat: 1, done: 0 });
+    q.push({ shipId: shipId, dur: ship.buildTime * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, ship: ship };
   }
 
@@ -150,7 +153,7 @@
   // 复刻 1 代舰船装配：装备按 T1-T5 分档（equipment.level: 1/15/35/55/80），
   // 映射到舰基核心等级门禁（bodyLevel 0-3，提议值）；消耗 equipment.cost，耗时 equipment.time。
   function equipGateLevel(equipLevel) { return Math.min(3, Math.floor((equipLevel - 1) / 20)); }
-  function buildEquipment(state, equipId) {
+  function buildEquipment(state, equipId, repeat) {
     const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
     if (!Eq) return { ok: false, err: "装备不存在" };
     // 蓝图门禁（1 代 actions.js:339 同口径）：requiresBlueprint 为真且没解锁 → 拒绝。
@@ -183,7 +186,7 @@
     spend(state.res, Eq.cost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
     const q = state.base.industry.manufactureQueue;
-    q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: Eq.cost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: 1, done: 0 });
+    q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: Eq.cost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, equip: Eq };
   }
 
