@@ -60,11 +60,14 @@
     if (rate > 0) state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + rate * dt);
   }
 
-  // 距离惩罚：基础 HOP_PENALTY，受精通点「航线优化」按级下调（惰性取用 Mastery，最低 5pp）
+  // 距离惩罚：基础 HOP_PENALTY，受精通点「航线优化」按级下调（惰性取用 Mastery，最低 5pp），
+  //   再被科技树·航线优化减项进一步下压（两条独立减项，非重复逻辑）。
   function hopPenaltyOf(state) {
     const M = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Mastery : null;
-    if (M && M.hopPenalty) return M.hopPenalty(state);
-    return HOP_PENALTY;
+    let pen = (M && M.hopPenalty) ? M.hopPenalty(state) : HOP_PENALTY;
+    const T = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
+    if (T && T.hopReduce) pen = Math.max(0.05, pen - T.hopReduce(state));
+    return pen;
   }
 
   // 最终物流效率（独立乘区）：clamp(1 − penalty×hops + comp/100, 0, 1)

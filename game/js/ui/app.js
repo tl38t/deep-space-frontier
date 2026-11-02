@@ -28,10 +28,7 @@
   const SKILL_CN = { mining: "采矿", gas: "采气", archaeology: "考古", combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", refine: "冶炼", manufacture: "制造", research: "科研", capacitor: "电容管理", logistics: "物流" };
   const SKILL_KEYS = Object.keys(SKILL_CN);
 
-  // 增强剂（整舱生效）经济参数（MVP 提议值，待标定）：基础等级 1、持续 10 分钟、消耗星币。
-  const BOOSTER_LEVEL = 1;
-  const BOOSTER_DURATION = 600;        // 秒（10 分钟）
-  const BOOSTER_COST = { credits: 2000 };
+  // （增强剂旧「逐舱段激活」经济参数已废弃；新系统见 engine/booster.js，瓶身由反应实验室制造。）
 
   let state = null;
   let tab = "starmap";
@@ -1162,11 +1159,9 @@
       html += '<div class="base-module-instance">模块编号 <code>' + esc(instance ? instance.id : "—") + '</code></div>';
       // 驻舱（2026-11-01 技能体系）：一人一岗，驻舱只提供技能倍率，不产经验。
       html += stationPanel(state, slot);
-      // 增强剂（整舱生效）：对当前舱段类型激活基础等级（持续 + 消耗星币）
-      const bl = Engine.Booster ? Engine.Booster.levelOf(state, slot.type) : 0;
-      if (bl > 0) html += '<div class="base-focus-effect">本舱段增强剂生效中 · Lv.' + bl + '</div>';
-      const canBooster = (state.res.credits || 0) >= BOOSTER_COST.credits;
-      html += '<button class="sm ghost base-module-action" data-act="booster:' + slot.id + '"' + (canBooster ? "" : " disabled") + '>激活' + esc(def.name) + '增强剂 · ' + fmtDur(BOOSTER_DURATION) + '</button>';
+      // 增强剂（新系统）：全局 16 槽 + 反应实验室制造，统一在舰基页「增强剂」面板装载/续瓶，此处仅提示生效数。
+      const bCount = (state.boosters && state.boosters.active) ? Object.keys(state.boosters.active).length : 0;
+      if (bCount > 0) html += '<div class="base-focus-effect">全局增强剂生效中 · ' + bCount + ' 槽</div>';
       html += '<button class="sm ghost base-module-action" data-act="moduleRemove:' + slot.id + '">拆卸并收入模块库</button>';
     } else {
       const choices = Engine.Base.availableModules(state, slot.id);
@@ -1258,13 +1253,8 @@
     html += '</div><div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent) + '</span></div></div>';
     html += '<aside class="base-focus-panel">' + baseFocusPanel(plan, hull) + '</aside></div>';
     html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
-    // 升级
-    // 工业三队列
-    html += queueBlock("smelt", "精炼（矿→矿材）", Data.Recipes.SMELT, plan.smelt, "out");
-    html += queueBlock("manufacture", "制造（部件 / 弹药）", Data.Recipes.COMPONENT, plan.manufacture, "out");
-    if (plan.invent > 0) html += queueBlock("invent", "发明（→改装图纸）", Data.Recipes.INVENT, plan.invent, "out");
-    else html += '<div class="panel dim">发明需舰基升至星堡（Lv.2）解锁。</div>';
-    html += shipyardBlock();
+    // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
+    html += '<div class="panel dim">精炼 / 制造 / 发明 / 造船 统一在「舱段工作台」中操作：点击舰基页对应的 <b>精炼环 · 总装船坞 · 发明舱</b> 卡片即可打开弹窗（可连续冶炼、加队列、随时取消）。</div>';
     html += equipCraftBlock();
     html += repairDockBlock();
     // 剿匪编制上限（科技解锁 1→2→3，见「科技」页）——原先的「花钱升级小队协议」已退役
@@ -1332,37 +1322,6 @@
     return list.map(ms => '<span class="ms-chip" title="' + esc(ms.desc) + '">' + ms.icon + " " + esc(ms.title) + "</span>").join("");
   }
 
-  function queueBlock(type, title, recipes, slots, _ign) {
-    const q = state.base.industry[type + "Queue"];
-    const now = Date.now();
-    const durationMult = Engine.Base.queueDurationMultiplier(state, type);
-    let html = "<h3>" + title + " · 生产线 " + q.length + "/" + slots + "</h3><div class='panel'>";
-    // 配方按钮
-    for (const r of recipes) {
-      const inStr = typeof r.in === "object"
-        ? Object.entries(r.in).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ")
-        : resIcon(r.in) + resName(r.in) + " " + r.qty;
-      const outStr = resIcon(r.out) + resName(r.out) + " ×" + r.qty;
-      const gateOk = r.bodyLevelReq == null || state.base.bodyLevel >= r.bodyLevelReq;
-      const gateTag = gateOk ? "" : ' <span class="tag bad">🔒 需舰基 Lv' + (r.bodyLevelReq + 1) + '</span>';
-      const can = gateOk && Engine.Production.canAfford(state.res, typeof r.in === "object" ? r.in : { [r.in]: r.qty });
-      const adjustedDur = Math.round(r.dur * durationMult * 10) / 10;
-      const durLabel = durationMult < 0.995 ? r.dur + "s → " + adjustedDur + "s" : r.dur + "s";
-      html += '<div class="row"><span>' + inStr + " → " + outStr + gateTag + ' <span class="dim">(' + durLabel + "/批)</span></span>" +
-        '<button class="sm" data-act="batch:enqueue:' + type + ":" + r.id + '"' + (can ? "" : " disabled") + ">排产</button></div>";
-    }
-    // 进行中
-    for (const it of q) {
-      const p = Core.clamp((now - it.startedAt) / 1000 / it.dur, 0, 1);
-      const r = recipes.find(x => x.id === it.recipeId);
-      html += '<div class="row"><span>' + (r ? resIcon(r.out) + resName(r.out) : it.recipeId) +
-        " · 批 " + (it.done + 1) + "/" + it.repeat + '</span><span class="dim">' + Math.round(p * 100) + "%</span></div>" +
-        '<div class="bar"><i style="width:' + (p * 100) + '%"></i></div>';
-    }
-    html += "</div>";
-    return html;
-  }
-
   // 秒 → 简洁时长（用于增强剂倒计时）
   function fmtDur(sec) {
     sec = Math.max(0, Math.round(sec));
@@ -1370,39 +1329,6 @@
     const m = Math.floor(sec / 60), s = sec % 60;
     return m + "m" + (s ? " " + s + "s" : "");
   }
-  function modName(type) { const d = Data.Ships.baseModuleByType(type); return d ? d.name : type; }
-
-  // 造船面板（总装船坞，共享 manufacture 槽位；完成入 state.ships）
-  function shipyardBlock() {
-    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    const now = Date.now();
-    const durMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
-    const used = Engine.Production.manufactureUsed ? Engine.Production.manufactureUsed(state) : (state.base.industry.manufactureQueue.length + (state.base.industry.buildQueue || []).length);
-    const fleetSum = Engine.Fleet ? Engine.Fleet.summary(state) : null;
-    let html = '<div class="panel"><h3>造船 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3>'
-      + '<div class="row"><span class="tag">' + state.ships.length + ' 艘在册</span>'
-      + (fleetSum && fleetSum.stock ? '<span class="tag warn">' + fleetSum.stock + ' 艘待配属</span>' : '<span class="tag good">全部已配属</span>')
-      + '<button class="sm ghost" data-act="tab:fleet">前往舰队配属</button></div>'
-      + '<div class="dim">新造舰船出厂进入库存，需在「舰队」页配属给成员后才能出勤驾驶。核心 Lv.' + plan.lv + ' 可造舰种见下方。</div>';
-    const ships = Object.values(Data.Ships.SHIPS).sort((a, b) => a.classTier - b.classTier || a.bodyLevelReq - b.bodyLevelReq);
-    for (const s of ships) {
-      const ok = Data.Ships.canBuildAt(s.id, state.base.bodyLevel);
-      const costStr = Object.entries(s.cost).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ");
-      const adjDur = Math.round(s.buildTime * durMult);
-      const canAfford = Engine.Production.canAfford(state.res, s.cost);
-      const lockNote = ok ? "" : "（核心 Lv." + (s.bodyLevelReq + 1) + " 解锁）";
-      html += '<div class="row"><span>' + esc(s.name) + lockNote + ' · ' + costStr + ' · ' + adjDur + 's</span>'
-        + '<button class="sm" data-act="batch:build:' + s.id + '"' + ((ok && canAfford) ? "" : " disabled") + '>建造</button></div>';
-    }
-    const bs = Engine.Production.buildStatus ? Engine.Production.buildStatus(state, now) : [];
-    for (const it of bs) {
-      html += '<div class="row"><span>' + esc(it.name) + ' · 第 ' + (it.done + 1) + ' 艘建造中</span><span class="dim">' + Math.round(it.progress * 100) + '%</span></div>'
-        + '<div class="bar"><i style="width:' + (it.progress * 100) + '%"></i></div>';
-    }
-    html += '<div class="dim">「部件制造」与「造船」共享总装船坞槽位；升级舰基核心（Lv.2）解锁中级舰（铁卫级/闪刃级）。</div></div>';
-    return html;
-  }
-
   // 装备制造面板（总装船坞，共享 manufacture 槽位；完成入 state.equipment 库存）
   function equipCraftBlock() {
     const Eq = Data.Equipment;
@@ -1446,15 +1372,165 @@
     return html;
   }
 
-  // 增强剂（整舱生效）状态面板
-  function boosterPanel() {
-    const list = Engine.Booster ? Engine.Booster.list(state) : [];
-    let html = '<div class="panel"><div class="row"><b>增强剂（整舱生效）</b>' + (list.length ? '<span class="tag good">生效中 ' + list.length + '</span>' : '<span class="tag">未激活</span>') + '</div>';
-    if (list.length) {
-      html += list.map(b => '<div class="row"><span>' + modName(b.type) + ' Lv.' + b.level + '</span><span class="dim">剩 ' + fmtDur(b.remaining) + ' · 加速 ×' + (1 + 0.1 * b.level).toFixed(2) + '</span></div>').join("");
+  // ===== 增强剂面板（并入「舰基」页 · Task #52）=====
+  const QUALITY_CN = { n: "普通", r: "精工", l: "传奇" };
+  const BOOSTER_SLOT_CN = {
+    miningSpeed: "采矿速度", miningYield: "采矿产出",
+    gasSpeed: "采气速度", gasYield: "采气产出",
+    archaeologySpeed: "考古速度", archaeologyRare: "考古稀有",
+    smeltSpeed: "冶炼速度", smeltYield: "冶炼产出",
+    shipSpeed: "舰船工程速度", shipYield: "舰船工程材料",
+    equipmentSpeed: "装备制造速度", equipmentYield: "装备制造材料",
+    boosterSpeed: "增幅剂速度", boosterYield: "增幅剂产出",
+    combatWeapon: "战斗武器", combatRepair: "战斗维修",
+  };
+
+  function boosterFxLabel(item) {
+    if (!item) return "";
+    const v = item.effectValue;
+    const pct = function (x) { return Math.round(x * 100) + "%"; };
+    switch (item.effectType) {
+      case "miningSpeed": return "采矿速度 +" + pct(v);
+      case "doubleMineral": return "矿物翻倍概率 " + pct(v);
+      case "archaeologySpeed": return "考古周期 " + pct(v);
+      case "rareShift": return "稀有发现 ×" + v.toFixed(2);
+      case "damageMultiplier": { const wt = { laser: "激光", missile: "导弹", cannon: "射弹" }[item.weaponType] || item.weaponType; return wt + "伤害 +" + pct(v); }
+      case "repairAmount": { const tn = { shield: "护盾", armor: "装甲", structure: "结构" }[item.repairTarget] || "维修"; return tn + "维修量 +" + pct(v); }
+      case "gasSpeed": return "采气速度 +" + pct(v);
+      case "gasDouble": return "采气翻倍概率 " + pct(v);
+      case "smeltSpeed": return "冶炼速度 +" + pct(v);
+      case "smeltDouble": return "冶炼翻倍概率 " + pct(v);
+      case "shipSpeed": return "舰船工程速度 +" + pct(v);
+      case "equipmentSpeed": return "装备制造速度 +" + pct(v);
+      case "shipMaterialDiscount": return "材料减免 -" + pct(v);
+      case "boosterSpeed": return "增幅剂制造速度 +" + pct(v);
+      case "boosterDouble": return "增幅剂翻倍概率 " + pct(v);
+      case "skillXpMultiplier": return "对应技能经验 +" + pct(v);
+      case "skillLevelBonus": return "技能等级 +" + Math.round(v);
+      default: return item.effectType;
     }
-    html += '<div class="dim">在舰基舱位聚焦面板可激活对应舱段增强剂：基础等级 + 持续 ' + BOOSTER_DURATION + 's，消耗 ' + resIcon("credits") + BOOSTER_COST.credits + '。同舱段再激活取最高等级并刷新时长。</div></div>';
+  }
+
+  function boosterInventoryChips() {
+    const B = Engine.Booster;
+    const owned = [];
+    for (const k in (state.res || {})) {
+      if (!k.startsWith("booster:") || (state.res[k] || 0) <= 0) continue;
+      const it = B.getItem(k);
+      if (!it) continue;
+      owned.push('<span class="eq-chip">' + esc(it.name) + " ×" + state.res[k] + "</span>");
+    }
+    if (!owned.length) return '<span class="dim">暂无瓶身（先用下方「反应实验室」制造）</span>';
+    return owned.join("");
+  }
+
+  // 增强剂面板：反应实验室（制造）+ 16 槽装载 + 瓶身库存一览。纯呈现，写操作经 command。
+  function boosterPanel() {
+    const B = Engine.Booster;
+    const now = Date.now();
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    const durMult = Engine.Base.queueDurationMultiplier(state, "booster");
+    const active = (state.boosters && state.boosters.active) ? Object.keys(state.boosters.active).length : 0;
+    let html = '<div class="panel"><div class="row"><b>增强剂 · 全局 ' + active + '/16 槽</b>'
+      + (active ? '<span class="tag good">生效中</span>' : '<span class="tag">未装载</span>')
+      + '<span class="tag">反应实验室 ' + (state.base.industry.boosterQueue || []).length + '/' + plan.booster + '</span></div>';
+    html += '<div class="dim">瓶身由下方「反应实验室」制造，装入 16 个全局槽位后自动续瓶（库存耗尽自动从瓶身库存拉取）。效果整军团共享。</div>';
+
+    // —— 反应实验室（制造）——
+    html += '<div class="booster-sec"><h4>反应实验室（增幅剂制造）</h4>';
+    const recipes = B.recipes();
+    for (const r of recipes) {
+      const cc = B.canCraft(state, r.id);
+      const cost = B.craftCost(state, r.id);
+      const costStr = Object.entries(cost).map(function (e) { return resIcon(e[0]) + resName(e[0]) + " " + e[1]; }).join(" ");
+      const adjDur = Math.round(r.time * durMult);
+      const bpLocked = !cc.ok;
+      const can = cc.ok && Engine.Production.canAfford(state.res, cost);
+      const lockTag = bpLocked ? ' <span class="tag bad">需蓝图</span>' : "";
+      const dis = (bpLocked || !can) ? " disabled" : "";
+      html += '<div class="row"><span>' + esc(r.name) + lockTag + " · " + costStr + ' · <span class="dim">' + adjDur + "s</span></span>"
+        + '<button class="sm" data-act="booster:craft:' + r.id + '"' + dis + ">制造</button></div>";
+    }
+    const bq = state.base.industry.boosterQueue || [];
+    for (const it of bq) {
+      const r = B.getRecipe(it.recipeId);
+      const p = Core.clamp((now - it.startedAt) / 1000 / it.dur, 0, 1);
+      html += '<div class="row"><span>' + (r ? esc(r.name) : it.recipeId) + " · 批 " + (it.done + 1) + "/" + it.repeat + '</span><span class="dim">' + Math.round(p * 100) + "%</span></div>"
+        + '<div class="bar"><i style="width:' + (p * 100) + '%"></i></div>';
+    }
+    html += '</div>';
+
+    // —— 16 槽装载 ——
+    html += '<div class="booster-sec"><h4>槽位装载（16 槽全局生效）</h4>';
+    const ds = B.getDisplayState(state, now);
+    html += '<div class="booster-grid">';
+    for (const g of ds.groups) {
+      html += '<div class="booster-group-head">' + esc(g.label) + '</div>';
+      for (const s of g.slots) {
+        const slotName = BOOSTER_SLOT_CN[s.slot] || s.slot;
+        if (s.empty) {
+          html += '<div class="booster-slot empty"><div class="bs-label">' + esc(slotName) + '</div>'
+            + '<button class="sm ghost" data-act="booster:load:' + s.slot + '">装载</button></div>';
+        } else {
+          const it = B.getItem(s.itemId);
+          const fx = boosterFxLabel(it || { effectType: s.effectType, effectValue: s.effectValue });
+          const qcn = QUALITY_CN[s.quality] || s.quality;
+          const sec = Math.max(0, Math.ceil(s.remainingMs / 1000));
+          const totalSec = B.DURATION_MS / 1000;
+          const pct = Math.round(sec / totalSec * 100);
+          html += '<div class="booster-slot">'
+            + '<div class="bs-label">' + esc(slotName) + '</div>'
+            + '<div class="bs-name">' + esc(s.name) + ' <span class="q q-' + s.quality + '">' + qcn + '</span></div>'
+            + '<div class="bs-fx">' + esc(fx) + '</div>'
+            + '<div class="bs-meta"><span>剩余 ' + s.remainingText + '</span><span>库存 ×' + s.inventory + '</span></div>'
+            + '<div class="bs-bar"><i style="width:' + pct + '%"></i></div>'
+            + '<div class="bs-acts"><button class="sm" data-act="booster:load:' + s.slot + '">替换</button>'
+            + '<button class="sm ghost" data-act="booster:unequip:' + s.slot + '">卸下</button></div>'
+            + '</div>';
+        }
+      }
+    }
+    html += '</div>';
+    // 瓶身库存一览
+    html += '<div class="booster-inv"><b style="width:100%;font-size:12px;color:#cdd8ea">瓶身库存</b>' + boosterInventoryChips() + '</div>';
+    html += '</div>';
+
+    html += '</div>';
     return html;
+  }
+
+  // 增强剂装载选择器（body-level 弹窗，复用批量弹窗遮罩样式）
+  let boosterPickSlot = null;
+  function openBoosterPicker(slot) {
+    const B = Engine.Booster;
+    boosterPickSlot = slot;
+    const items = B.items();
+    const owned = [];
+    for (const id in items) {
+      if (!B.canEquip(state, slot, id).ok) continue;   // 兼容性 + 库存 > 0
+      const it = items[id];
+      const fx = boosterFxLabel(it);
+      const qcn = QUALITY_CN[it.quality] || it.quality;
+      const inv = B.inventoryCount(state, it.itemId);
+      owned.push('<button class="bp-item" data-act="booster:equip:' + slot + ':' + id + '">'
+        + '<span class="bp-left"><span class="bp-name">' + esc(it.name) + ' <span class="q q-' + it.quality + '">' + qcn + '</span></span>'
+        + '<span class="bp-meta">' + esc(fx) + ' · 库存 ×' + inv + '</span></span>'
+        + '<span class="bp-q">装载 ▸</span></button>');
+    }
+    const list = owned.length ? owned.join("") : '<div class="bp-empty">没有可用的瓶身（先用「反应实验室」制造，或瓶身库存为 0）。</div>';
+    const titleEl = document.getElementById("bp-title"); if (titleEl) titleEl.textContent = (BOOSTER_SLOT_CN[slot] || slot) + " · 选择瓶身";
+    const listEl = document.getElementById("bp-list"); if (listEl) listEl.innerHTML = list;
+    const ov = document.getElementById("nsk-booster-picker"); if (ov) ov.classList.add("active");
+  }
+  function closeBoosterPicker() {
+    boosterPickSlot = null;
+    const ov = document.getElementById("nsk-booster-picker"); if (ov) ov.classList.remove("active");
+  }
+  function initBoosterPicker() {
+    const ov = document.getElementById("nsk-booster-picker");
+    if (!ov) return;
+    const cancel = document.getElementById("bp-cancel"); if (cancel) cancel.addEventListener("click", closeBoosterPicker);
+    ov.addEventListener("click", function (e) { if (e.target === ov) closeBoosterPicker(); });
   }
 
   // ============================================================
@@ -2980,6 +3056,9 @@
   function renderView() {
     // 正在拖动舱段时冻结重绘（1Hz 定时器会打断拖拽）。pointerup/cancel 必定清空 baseDragState。
     if (baseDragState) return;
+    // 舱段工作台弹窗：每秒随主视图刷新队列进度 / 槽位 / 计数（不重建配方网格，避免丢 hover/滚动）。
+    const Wb = window.NSK.UI && NSK.UI.Workbench;
+    if (Wb && Wb.isOpen && Wb.isOpen()) Wb.refresh();
     // 焦点战场：只有正看着星系页、且该星系里有我们在打的仗，才走逐轮真仿真；
     // 其余一律闭式（成本与离线时长无关）。切页签时引擎会自动退回闭式，进度不丢。
     state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
@@ -3007,7 +3086,31 @@
   function onAction(act, e) {
     hideNodeMenu();   // 任何操作先收起星图节点浮层
     const [cmd, a, b] = act.split(":");
-    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); tab = a; renderTabs(); renderView(); return; }
+    if (cmd === "workbench") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.handle) Wb.handle(act); return; }
+    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); tab = a; renderTabs(); renderView(); return; }
+    if (cmd === "booster") {
+      const parts = act.split(":");
+      const sub = parts[1];
+      if (sub === "craft") {
+        const r = Engine.Production.enqueue(state, "booster", parts[2], 1);
+        if (!r.ok) toast(r.err || "无法制造"); else toast("已排入反应实验室");
+        renderView();
+      } else if (sub === "load") {
+        openBoosterPicker(parts[2]);
+      } else if (sub === "equip") {
+        const slot = parts[2], id = parts[3];
+        const r = Engine.Booster.equip(state, slot, id);
+        if (!r.ok) toast(r.err || "装载失败"); else toast("已装载 " + ((Engine.Booster.getItem(id) || {}).name || id));
+        closeBoosterPicker(); renderView();
+      } else if (sub === "unequip") {
+        const r = Engine.Booster.unequip(state, parts[2]);
+        if (!r.ok) toast(r.err || "卸下失败"); else toast("已卸下");
+        renderView();
+      } else if (sub === "cancel") {
+        closeBoosterPicker();
+      }
+      return;
+    }
     // ---- 舰队页（船只是独立资产，见 engine/fleet.js）----
     if (cmd === "fleetTab") { fleetFilter = a || "all"; renderView(); return; }
     if (cmd === "fleetPick") { openFleetPicker(a); return; }
@@ -3063,7 +3166,14 @@
     if (cmd === "openSettings") { openSettings(); return; }
     if (cmd === "nodeinfo") { openNodeMenu(a, e); return; }
     if (cmd === "body") { showBody(a, b); return; }
-    if (cmd === "baseinfo") { baseFocus = a || "core"; renderView(); return; }
+    if (cmd === "baseinfo") {
+      baseFocus = a || "core";
+      const Wb = window.NSK.UI && NSK.UI.Workbench;
+      const ind = Wb && Wb.slotIfIndustrial ? Wb.slotIfIndustrial(state, a) : null;
+      renderView();
+      if (ind) Wb.open(a);
+      return;
+    }
     // 驻舱（2026-11-01 技能体系）：派/撤/换演训技能。一舱一人由 Dispatch.assign 兜底校验。
     if (cmd === "station") {
       const B = Engine.Base, D = Engine.Dispatch;
@@ -3178,20 +3288,6 @@
     }
     // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
     else if (cmd === "fleetFit") { openFleetFit(a); }
-    else if (cmd === "booster") {
-      if ((state.res.credits || 0) < BOOSTER_COST.credits) toast("星币不足，无法激活增强剂");
-      else {
-        const r = Engine.Booster.apply(state, a, BOOSTER_LEVEL, BOOSTER_DURATION);
-        if (r.ok) {
-          state.res.credits -= BOOSTER_COST.credits;
-          const def = Data.Ships.baseModuleByType(a);
-          pushReport("增强剂激活 · " + (def ? def.name : a),
-            ["已对「" + (def ? def.name : a) + "」舱段施加 Lv." + r.level + " 增强剂，持续 " + BOOSTER_DURATION + "s。",
-             "该舱段工业队列加速 ×" + (1 + 0.1 * r.level).toFixed(2) + "（耗时 -" + Math.round(0.1 * r.level * 100) + "%）。"]);
-          toast("已激活 " + (def ? def.name : a) + " 增强剂 Lv." + r.level);
-        }
-      }
-    }
     else if (cmd === "dispatch") {
       // 剿匪只能从具名据点发起（2026-11-01）：本星系有据点就开派遣面板，否则引导去星图
       if (b === "combat") {
@@ -3785,7 +3881,10 @@
     // 面板自己处理点击与渲染，这里只给数据入口；onChanged 让舰队页卡片（槽位计数）同步刷新。
     const FitOrbit = NSK.UI && NSK.UI.FitOrbit;
     if (FitOrbit && FitOrbit.init) FitOrbit.init({ getState: () => state, toast: toast, onChanged: () => renderView() });
+    const Workbench = NSK.UI && NSK.UI.Workbench;
+    if (Workbench && Workbench.init) Workbench.init({ getState: () => state, renderView: renderView, toast: toast, resIcon: resIcon, resName: resName, esc: esc, fmt: fmt });
     initBatchModal(); // 批量制造确认弹窗（精炼/制造/造船 ×N）
+    initBoosterPicker(); // 增强剂装载选择器弹窗
     // 4Hz：结算 + HUD；1Hz：视图
     setInterval(() => {
       if (Engine.Recruit) Engine.Recruit.refreshDue(state, Data, Date.now()); // 招募中心 4h 自然刷新（免费、清零手动次数）

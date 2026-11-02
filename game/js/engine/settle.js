@@ -97,11 +97,14 @@
     const base = p === "major" ? 1.5 : p === "minor" ? 1.0 : 0.35;
     return base * ((m && m.mods && m.mods.learnMult) || 1);
   }
-  // 词条技能经验倍率（O(1) 查预聚合 mods）；再叠人生目的全局乘区 goalXp（⑤）
-  function xpMultOf(m, key) {
+  // 词条技能经验倍率（O(1) 查预聚合 mods）；再叠人生目的全局乘区 goalXp（⑤）；
+  // 末接增强剂神经训练催化器乘区（Engine.Booster.skillXpMultiplierFor，按本作技能键读取，combat 桶已广播到战斗子键）。
+  function xpMultOf(state, m, key) {
     const base = (m && m.mods && m.mods.xpMult && m.mods.xpMult[key]) || 1;
     const goal = (m && m.mods && m.mods.goalXp) || 1;
-    return base * goal;
+    const Bm = (state && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
+    const bXp = Bm ? Bm.skillXpMultiplierFor(state, key) : 1;
+    return base * goal * bXp;
   }
 
   // rng 解耦：种子只依赖存档 rngSeed + 语义盐 + 单调计数器，与 now/调用频率无关 → 在线离线 parity。
@@ -125,11 +128,14 @@
     if (!edge) return { ok: false, err: "无直达航线" };
     const node = Data.StarMap.nodeById(state.starMap, toNodeId);
     if (node && node.trialOpen === false) return { ok: false, err: "该星域试玩期未开放" };
-    if (state.base.fuel < edge.fuelCost) return { ok: false, err: "跃迁燃料不足" };
-    state.base.fuel -= edge.fuelCost;
+    const T = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
+    const fuelMult = (T && T.fuelMult) ? T.fuelMult(state) : 1;
+    const need = edge.fuelCost * fuelMult;   // 科技树·跃迁增效：实测消耗折算（校验与扣减同一值）
+    if (state.base.fuel < need) return { ok: false, err: "跃迁燃料不足" };
+    state.base.fuel -= need;
     state.base.nodeId = toNodeId;
     if (node && !node.discovered) { node.discovered = true; state.starMap.discovered.push(toNodeId); }
-    return { ok: true, fuelCost: edge.fuelCost };
+    return { ok: true, fuelCost: need };
   }
 
   // 战斗受击：把该节点本 tick 的敌方总伤害平摊给参战成员，按 shield→armor→structure 扣除。
@@ -199,6 +205,10 @@
     // 舰基自动修复（§14）：受损成员回港后排队修复，每 tick 推进
     const Repair = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Repair : null;
     if (Repair) Repair.tick(state, dt);
+
+    // 增强剂计时（忠实 1 代逐瓶模型）：按当前在岗活动消耗对应槽位，工业四槽常驻运行。
+    const Booster = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
+    if (Booster && Booster.tick) Booster.tick(state, now);
 
     // 0) 剿匪结算：每个「有参战成员」的据点结算一次。
     //    焦点节点（state.combatFocus）走逐轮真仿真，其余（含离线大 dt）走一次乘除闭式；
@@ -331,19 +341,29 @@
             ? 1 + (fitB.gasEfficiency || 0) + (fitB.gasLaserEfficiency || 0)
             : 1 + (fitB.miningEfficiency || 0) + (fitB.miningLaserEfficiency || 0);
         }
-        const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff;
+        // 增强剂（忠实 1 代）：采矿/气云速度与「翻倍概率」由全局 16 槽聚合。
+        // 连续产出模型下，翻倍概率按期望值并入（×(1+chance)），避免离线大 dt 单次掷骰的剧烈波动。
+        const Bm = (window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
+        const bEff = Bm ? Bm.getEffectState(state) : null;
+        const bSpeed = bEff ? (isGas ? bEff.gasSpeedMultiplier : bEff.miningSpeedMultiplier) : 1;
+        const bDouble = bEff ? (isGas ? bEff.doubleGasChance : bEff.doubleMineralChance) : 0;
+        const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff * bSpeed * (1 + bDouble);
         state.res[ore] = (state.res[ore] || 0) + y;
-        m.skills[mineKey] = (m.skills[mineKey] || 0) + XP_RATE[mineKey] * dt * passionMult(m, mineKey) * xpMultOf(m, mineKey);
+        m.skills[mineKey] = (m.skills[mineKey] || 0) + XP_RATE[mineKey] * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
       } else if (a.type === "explore" && node) {
         // 残骸场考古：装配 analyzer 的 archaeologyCycleReduction 缩短遗址周期（封顶 0.50）
         const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
         const cycRed = Arch ? Arch.cycleReduction(m) : 0;
-        const period = 120 * (1 - Math.min(0.50, cycRed));
+        let period = 120 * (1 - Math.min(0.50, cycRed));
+        // 增强剂（遗迹解析液 archaeologySpeed，-8%/-16%/-25% → 周期 ×0.92/0.84/0.75）
+        const Bm = (window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
+        const bEff = Bm ? Bm.getEffectState(state) : null;
+        if (bEff) period *= bEff.archaeologySpeedMultiplier;
         a.exploreProgress += dt / period;
         const ebody = Dispatch.bodyById ? Dispatch.bodyById(state.starMap, a.nodeId, a.bodyId) : null;
         if (ebody && ebody.kind === "derelict") {
           // —— 残骸场考古（焦点自选）：每个遗址周期按焦点算成功率/掉落/反噬（含船体损伤）——
-          m.skills.archaeology = (m.skills.archaeology || 0) + XP_RATE.archaeology * dt * passionMult(m, "archaeology") * xpMultOf(m, "archaeology");
+          m.skills.archaeology = (m.skills.archaeology || 0) + XP_RATE.archaeology * dt * passionMult(m, "archaeology") * xpMultOf(state, m, "archaeology");
           if (a.exploreProgress >= 1) {
             a.exploreProgress = 0;
             const focus = a.focus || "salvage";
@@ -377,20 +397,20 @@
         // 避免「节点级产出」在成员循环里被重复累加。无逐波仿真、无每击杀簿记。
         // 战斗同时增长三武器技能（激光/炮台/导弹，各满额）+ 防御（副，0.6×）。
         // 2026-11-01：command 已删除，导弹用自己的 missile 键（1 代 missileOperations 的对应物）。
-        m.skills.combatLaser = (m.skills.combatLaser || 0) + XP_RATE.combatLaser * dt * passionMult(m, "combatLaser") * xpMultOf(m, "combatLaser");
-        m.skills.combatTurret = (m.skills.combatTurret || 0) + XP_RATE.combatTurret * dt * passionMult(m, "combatTurret") * xpMultOf(m, "combatTurret");
-        m.skills.missile = (m.skills.missile || 0) + XP_RATE.missile * dt * passionMult(m, "missile") * xpMultOf(m, "missile");
-        m.skills.defense = (m.skills.defense || 0) + XP_RATE.defense * 0.6 * dt * passionMult(m, "defense") * xpMultOf(m, "defense");
+        m.skills.combatLaser = (m.skills.combatLaser || 0) + XP_RATE.combatLaser * dt * passionMult(m, "combatLaser") * xpMultOf(state, m, "combatLaser");
+        m.skills.combatTurret = (m.skills.combatTurret || 0) + XP_RATE.combatTurret * dt * passionMult(m, "combatTurret") * xpMultOf(state, m, "combatTurret");
+        m.skills.missile = (m.skills.missile || 0) + XP_RATE.missile * dt * passionMult(m, "missile") * xpMultOf(state, m, "missile");
+        m.skills.defense = (m.skills.defense || 0) + XP_RATE.defense * 0.6 * dt * passionMult(m, "defense") * xpMultOf(state, m, "defense");
       } else if (a.type === "train") {
         // 演训 = 主动技能训练，增长所选技能。白名单校验：旧存档里可能写着已删除的键（command 等），
         // 直接当键名用会给一个不存在的技能发经验（白算），落到 combatLaser 更安全。
         const sk = (a.trainSkill && XP_RATE[a.trainSkill]) ? a.trainSkill : "combatLaser";
-        m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(m, sk);
+        m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
       } else if (a.type === "logistics") {
         // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景；
         // 电容管理作副技能（0.5×）——它管的是航程开销，与调度是同一件事的两面。
-        m.skills.logistics = (m.skills.logistics || 0) + XP_RATE.logistics * dt * passionMult(m, "logistics") * xpMultOf(m, "logistics");
-        m.skills.capacitor = (m.skills.capacitor || 0) + XP_RATE.capacitor * 0.5 * dt * passionMult(m, "capacitor") * xpMultOf(m, "capacitor");
+        m.skills.logistics = (m.skills.logistics || 0) + XP_RATE.logistics * dt * passionMult(m, "logistics") * xpMultOf(state, m, "logistics");
+        m.skills.capacitor = (m.skills.capacitor || 0) + XP_RATE.capacitor * 0.5 * dt * passionMult(m, "capacitor") * xpMultOf(state, m, "capacitor");
       } else if (a.type === "station") {
         // 驻舱（2026-11-01，用户定「驻舱不涨技能」）：**只有演训舱按时间涨经验** ——
         // 全游戏唯一「不产出也涨」的通道，玩家付的是一个人力。
@@ -398,7 +418,7 @@
         // 工业经验只在「真的产出一批」时结算（见 production.js → Settle.grantBatchXp）。
         if (a.slotType === "habitat" && a.trainSkill && a.trainSkill !== "train" && XP_RATE[a.trainSkill]) {
           const sk = a.trainSkill;
-          m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(m, sk);
+          m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
         }
       }
 
@@ -460,7 +480,7 @@
     if (!m || !key || key === "train" || !XP_RATE[key]) return 0;
     const gain = XP_RATE[key] * (batchSec || 0) * BATCH_XP_RATIO;
     if (!m.skills) m.skills = {};
-    m.skills[key] = (m.skills[key] || 0) + gain * passionMult(m, key) * xpMultOf(m, key);
+    m.skills[key] = (m.skills[key] || 0) + gain * passionMult(m, key) * xpMultOf(state, m, key);
     return gain;
   }
 

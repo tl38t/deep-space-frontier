@@ -16,6 +16,8 @@ const files = [
   "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js",   "js/engine/sites.js", "js/narrative/events.js",
   "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
+  // 内置 1 代增强剂数据（window.BOOSTER_* 事实来源；booster_selftest 同口径）
+  "js/lib/eveidle/host-stubs.js", "js/lib/eveidle/data/boosters.js",
 ];
 
 // 构造最小 window/global 环境（UMD 走 window 分支）
@@ -454,10 +456,12 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("off-by-one:battleship需bodyLevel>=2", Data.Ships.canBuildAt("battleship", 1) === false && Data.Ships.canBuildAt("battleship", 2) === true);
   ok("off-by-one:supercapital需bodyLevel>=3", Data.Ships.canBuildAt("supercapital", 2) === false && Data.Ships.canBuildAt("supercapital", 3) === true);
 
-  // 22b) 默认档能源电网：预算 = 本体外壳80 + 已装能源舱×100 = 180；负载 = 非能源模块占用之和 = 125
+  // 22b) 默认档能源电网：预算 = 本体外壳80 + 已装能源舱×100 = 180；负载 = 非能源模块占用之和（含反应实验室 25）
   const sb = Engine.State.defaultState(now, Data);
+  const _defBase = Data.Ships.createInitialBase();
+  const _expEnergy = _defBase.modules.owned.reduce(function (s, m) { return s + ((Data.Ships.BASE_MODULES[m.type] || {}).energy || 0); }, 0);
   ok("能源:默认预算=180(外壳80+能源舱100)", Math.abs(Engine.Base.energyBudget(sb) - 180) < 1e-9, "budget=" + Engine.Base.energyBudget(sb));
-  ok("能源:默认负载=125", Math.abs(Engine.Base.energyUsed(sb) - 125) < 1e-9, "used=" + Engine.Base.energyUsed(sb));
+  ok("能源:默认负载=" + _expEnergy, Math.abs(Engine.Base.energyUsed(sb) - _expEnergy) < 1e-9, "used=" + Engine.Base.energyUsed(sb));
   ok("能源:默认供能充足", Engine.Base.powerReport(sb).ok === true);
   ok("能源:默认棕化系数=1", Math.abs(Engine.Base.powerMult(sb) - 1) < 1e-9);
 
@@ -524,33 +528,21 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("造船:counters.builtShips累计=2", (sb.counters.builtShips || 0) === 2, "built=" + sb.counters.builtShips);
   ok("造船:总装槽位已释放", Engine.Production.manufactureUsed(sb) === 0, "used=" + Engine.Production.manufactureUsed(sb));
 
-  // 23b) 增强剂整舱生效：apply → levelOf / mult；同类型取 max 等级 + 刷新；不同类型独立；过期清理
-  const sb2 = Engine.State.defaultState(now, Data);
-  const a1 = Engine.Booster.apply(sb2, "smelt", 1, 600);
-  ok("增强剂:apply成功level1", a1.ok && a1.level === 1, JSON.stringify(a1));
-  ok("增强剂:levelOf=1", Engine.Booster.levelOf(sb2, "smelt") === 1);
-  ok("增强剂:mult>1(加速)", Engine.Booster.mult(sb2, "smelt") > 1, "mult=" + Engine.Booster.mult(sb2, "smelt").toFixed(2));
-  const a2 = Engine.Booster.apply(sb2, "smelt", 1, 600); // 同类型再激活：等级不变，时长刷新
-  ok("增强剂:同类型再激活等级不变", a2.level === 1 && Engine.Booster.levelOf(sb2, "smelt") === 1);
-  const a3 = Engine.Booster.apply(sb2, "smelt", 3, 600); // 更高等级 → 取 max
-  ok("增强剂:同类型取max等级", Engine.Booster.levelOf(sb2, "smelt") === 3, "lv=" + Engine.Booster.levelOf(sb2, "smelt"));
-  Engine.Booster.apply(sb2, "manufacture", 1, 600); // 不同类型独立
-  ok("增强剂:不同类型独立", Engine.Booster.levelOf(sb2, "manufacture") === 1 && Engine.Booster.levelOf(sb2, "smelt") === 3);
-  // 过期：用未来时间戳查询 → 返回 0（惰性清理）
-  const futureMs = now + 700 * 1000;
-  ok("增强剂:过期后levelOf=0", Engine.Booster.levelOf(sb2, "smelt", futureMs) === 0, "lv=" + Engine.Booster.levelOf(sb2, "smelt", futureMs));
-  ok("增强剂:过期已惰性清理", (sb2.base.boosters || []).length === 0, "boosters=" + (sb2.base.boosters || []).length);
-
-  // 23c) 增强剂进入 production 热路径：smelt 增强剂使同窗口精炼产出 > 无增强剂对照
-  // 用较长窗口 + 大量批次，使两态都持续生产、B 始终领先 speed 比率（避免窗口恰好落在同一批次边界）。
+  // 23b) 增强剂整舱生效（新系统）：装备 smeltSpeed 增强剂 → smeltSpeedMultiplier 生效；同窗口精炼产出 > 无增强剂对照
+  // （旧 apply/levelOf/mult 整舱 API 已迁移至 engine/booster.js 的 16 槽 + 瓶身库存模型，详见 booster_selftest.mjs）
   const sNoB = Engine.State.defaultState(now, Data);
   const sB = Engine.State.defaultState(now, Data);
-  Engine.Booster.apply(sB, "smelt", 1, 600);
-  for (const s of [sNoB, sB]) { s.res.fe_ore = 1000; const e = Engine.Production.enqueue(s, "smelt", "smelt_fe_alloy", 100); s.res.fe_alloy = 0; if (!e.ok) ok("增强剂:对照入队", false, JSON.stringify(e)); }
-  Engine.Settle.settle(sNoB, now + 120 * 1000);
-  Engine.Settle.settle(sB, now + 120 * 1000);
+  // 注入足量瓶身（自动续瓶保持整窗生效，避免单瓶 180s 耗尽后效果失效）
+  Engine.Booster.addToInventory(sB, "booster:high_temp_flux_n", 100);
+  const eqB = Engine.Booster.equip(sB, "smeltSpeed", "high_temp_flux_n");
+  ok("增强剂:smeltSpeed装备成功", eqB.ok, JSON.stringify(eqB));
+  ok("增强剂:smeltSpeed效果=1.08", Math.abs(Engine.Booster.getEffectState(sB).smeltSpeedMultiplier - 1.08) < 1e-9, Engine.Booster.getEffectState(sB).smeltSpeedMultiplier);
+  // repeat=10000 确保不被批次上限截断；3000s 窗口 ×1.08 速度稳定多产；100 瓶自动续瓶保整窗生效
+  for (const s of [sNoB, sB]) { s.res.fe_ore = 9000000000; const e = Engine.Production.enqueue(s, "smelt", "smelt_fe_alloy", 10000); s.res.fe_alloy = 0; if (!e.ok) ok("增强剂:对照入队", false, JSON.stringify(e)); }
+  Engine.Settle.settle(sNoB, now + 3000 * 1000);
+  Engine.Settle.settle(sB, now + 3000 * 1000);
   const yNoB = sNoB.res.fe_alloy || 0, yB = sB.res.fe_alloy || 0;
-  ok("增强剂:加速后精炼产出>对照", yB > yNoB && yB > 0, "noB=" + yNoB.toFixed(1) + " B=" + yB.toFixed(1) + " (差 " + (yB - yNoB).toFixed(1) + ")");
+  ok("增强剂:smeltSpeed使精炼产出>对照", yB > yNoB && yB > 0, "noB=" + yNoB.toFixed(1) + " B=" + yB.toFixed(1) + " (差 " + (yB - yNoB).toFixed(1) + ")");
 
   // 23d) XP 速率调慢：成员自带 seedSkills 起始等级（设计性差异），这里验证「运行时成长」幅度——
   //   60s 内等级增量有限（可见成长但不瞬满）；1h 后明显增长但未冲到离谱高度。

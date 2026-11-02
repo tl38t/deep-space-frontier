@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段工作台 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 舱段工作台真机自测（2026-11-02）
+// 覆盖：点击精炼环弹出工作台 / 配方渲染 / 选配方 / 加入队列 / 取消 / 连续=9999 /
+//       总装船坞含「部件+造船」两页签 / 造船页签渲染舰船 / 全程无未捕获错误
+// ⚠️ iframe 必须指向 ../index.html（本文件在 game/sim/ 下）。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error", e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection", e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+const q=(sel)=>{ try{ return D().querySelector(sel); }catch(e){ return null; } };
+const qa=(sel)=>{ try{ return [...D().querySelectorAll(sel)]; }catch(e){ return []; } };
+function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return false; } return false; }
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#base");
+  const b0=await until(booted,25000); hookErrors();
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("存档键已备份", !!KEY, KEY||"未找到");
+  ok("UI.Workbench 已注册", !!(W().NSK&&W().NSK.UI&&W().NSK.UI.Workbench));
+
+  // 进入舰基页（兜底点击）
+  clickEl(q('[data-act="tab:base"]')); await wait(700);
+  const baseRendered=await until(()=>qa(".base-module").length>0, 10000);
+  ok("舰基页渲染出舱段卡片", baseRendered, qa(".base-module").length);
+
+  // === 精炼环：点击弹出工作台 ===
+  const smeltBtn=q("button.base-smelt");
+  ok("找到精炼环卡片", !!smeltBtn);
+  if(smeltBtn){ clickEl(smeltBtn); }
+  const wbOpen=await until(()=>q(".wb-overlay.active"), 8000);
+  ok("点击精炼环弹出工作台弹窗", wbOpen);
+  ok("工作台面板渲染", !!q(".wb-panel"));
+  const recipes=qa(".wb-recipe");
+  ok("精炼配方卡片渲染（≥1）", recipes.length>=1, recipes.length);
+  // 头部槽位 / 加速
+  ok("头部显示槽位与加速", !!q(".wb-head b") && !!q(".wb-sub"));
+
+  // 选第一个配方 → 高亮
+  if(recipes.length){ clickEl(recipes[0]); await wait(120); }
+  ok("点击配方后高亮选中", q(".wb-recipe.sel")!==null);
+
+  // 连续 chip → 数量 9999
+  const contChip=qa(".wb-chip").find(c=>/连续/.test(c.textContent));
+  if(contChip){ clickEl(contChip); await wait(120); }
+  const cnt=q(".wb-count");
+  ok("「连续」把数量置为 9999", cnt && cnt.textContent.replace(/[^\d]/g,"")==="9999", cnt?cnt.textContent:"无");
+
+  // 把数量调回 1（点 ×1）
+  const x1=qa(".wb-chip").find(c=>c.textContent.trim()==="×1");
+  if(x1){ clickEl(x1); await wait(120); }
+  // 加入队列
+  clickEl(q(".wb-add")); await wait(600);
+  const jobs1=qa(".wb-job");
+  ok("加入队列后出现队列任务", jobs1.length>=1, jobs1.length);
+
+  // 取消第一个任务
+  const xBtn=q(".wb-x");
+  if(xBtn){ clickEl(xBtn); await wait(600); }
+  const jobs2=qa(".wb-job");
+  ok("取消后队列清空", jobs2.length===0, jobs2.length);
+
+  // 关闭工作台
+  clickEl(q(".wb-close")); await wait(300);
+  ok("关闭后弹窗消失", q(".wb-overlay.active")===null);
+
+  // === 总装船坞：含「部件 + 造船」两页签，造船页签渲染舰船 ===
+  const manuBtn=q("button.base-manufacture");
+  ok("找到总装船坞卡片", !!manuBtn);
+  if(manuBtn){ clickEl(manuBtn); }
+  const wbOpen2=await until(()=>q(".wb-overlay.active"), 8000);
+  ok("点击总装船坞弹出工作台", wbOpen2);
+  const tabs=qa(".wb-tab");
+  ok("总装船坞含两个页签（部件/造船）", tabs.length===2, tabs.length);
+  // 切到造船页签
+  const shipTab=tabs.find(t=>/造船/.test(t.textContent));
+  if(shipTab){ clickEl(shipTab); await wait(200); }
+  const shipCards=qa(".wb-recipe");
+  ok("造船页签渲染出舰船卡片（≥1）", shipCards.length>=1, shipCards.length);
+
+  clickEl(q(".wb-close")); await wait(200);
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

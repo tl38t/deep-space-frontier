@@ -101,6 +101,36 @@
     return cap;
   }
 
+  // 通用：把某 bonus 键按「每级增量 × 当前等级」汇总（全节点求和，与 squadCap 同一口径）。
+  // 新乘区（命中 / 赏金 / 冶炼 / 制造 / 跳数 / 燃料）都走这里聚合，引擎热路径只消费下面的派生访问器。
+  function bonusSum(state, key) {
+    const T = _Tech();
+    if (!T) return 0;
+    ensure(state);
+    let s = 0;
+    for (const node of T.all()) {
+      const lv = levelOf(state, node.id);
+      if (lv < 1) continue;
+      const b = (node.bonus && node.bonus[key]) || 0;
+      if (b) s += b * lv;
+    }
+    return s;
+  }
+
+  // —— 方案 A 六乘区访问器（纯 O(节点)，热路径可安全调用）——
+  // 命中：加性叠加到武器 hit（独立于指挥塔的命中加成，不同乘区）
+  function hitBonus(state) { return bonusSum(state, "hitAdd"); }
+  // 剿匪赏金：连乘（1 + Σ 每级比例）。本作赏金的**唯一**活源，不接精通点死代码 combatYieldMult。
+  function bountyMult(state) { return 1 + bonusSum(state, "bountyMult"); }
+  // 冶炼产出：连乘（仅 smelt 队列）
+  function smeltYieldMult(state) { return 1 + bonusSum(state, "smeltYield"); }
+  // 制造耗时：缩短因子（<1 缩短；封顶 90% 缩减，防止除零/反向）。仅 manufacture 分支。
+  function manuSpeedFactor(state) { return Math.max(0.1, 1 - bonusSum(state, "manuSpeed")); }
+  // 跳数惩罚：在精通点·航线优化之后再减的 pp 量（最低地板由 logistics.hopPenaltyOf 收口）
+  function hopReduce(state) { return bonusSum(state, "hopReduce"); }
+  // 燃料消耗：缩短因子（<1 减耗；封顶 90% 缩减）
+  function fuelMult(state) { return Math.max(0.1, 1 - bonusSum(state, "fuelEff")); }
+
   // 研究某项的可行性（不扣费，纯判定，供 UI 与 start 共用）
   function canStart(state, id) {
     const T = _Tech();
@@ -299,5 +329,6 @@
   return {
     ensure, levelOf, isDone, squadCapacity, canStart, start, cancel, advance,
     progress, savedProgressOf, nodeView, list, reset, STATUS_CN, researchSpeedMult,
+    bonusSum, hitBonus, bountyMult, smeltYieldMult, manuSpeedFactor, hopReduce, fuelMult,
   };
 });

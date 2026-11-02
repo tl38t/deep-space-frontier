@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>增强剂 UI 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:1000px;border:1px solid #ccc"></iframe>
+<script>
+// 增强剂（增幅剂）UI 真机自测（2026-11-02）
+// 覆盖：舰基页签存在 / 反应实验室区块 / 16 槽元素 / 8 分组标题 /
+//       制造按钮（蓝图+买得起）点击 → 反应实验室产出（队列+1 或 原料已扣 或 瓶身已入库）/
+//       装载选择器开/关 / 兼容瓶身列出 / 装载（equip）落库 + 库存-1 + UI 反映 /
+//       卸下（unequip）落库 + UI 回到空槽 / 全程无未捕获错误
+// 注：Core.load() 返回 localStorage 反序列化副本（非游戏实时 state），故每次点击后
+//     等一次 5s 自动存档把实时 state 刷入 localStorage，再用 Core.load() 读真实结果。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+const flushRead=async()=>{ await wait(6200); return W().NSK.Core.load(); };  // 等一次自动存档刷盘
+
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error", e=>ERRS.push(String(e.message||e.error))); }catch(e){} try{ W().addEventListener("unhandledrejection", e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+
+(async function(){
+  await nav("../index.html?t="+Date.now());
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  hookErrors();
+  const hasApi=await until(()=>W().NSK&&W().NSK.Core&&W().NSK.Core.save,15000);
+  ok("存档接口可用", hasApi);
+  if(!hasApi){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+
+  const B=W().NSK.Engine.Booster;
+  ok("Engine.Booster 已注册", !!B, typeof B);
+  ok("BOOSTER_ITEMS 全局可读", !!W().BOOSTER_ITEMS && Object.keys(W().BOOSTER_ITEMS).length>0, Object.keys(W().BOOSTER_ITEMS||{}).length+" 项");
+  ok("BOOSTER_SLOTS = 16", !!W().BOOSTER_SLOTS && W().BOOSTER_SLOTS.length===16, (W().BOOSTER_SLOTS||[]).length+" 槽");
+  ok("BOOSTER_RECIPES 可读", !!W().BOOSTER_RECIPES && W().BOOSTER_RECIPES.length>0, (W().BOOSTER_RECIPES||[]).length+" 配方");
+
+  // 跳过序章（避免遮挡）
+  const S=W().NSK.Narrative&&W().NSK.Narrative.Story;
+  const st0=W().NSK.Core.load();
+  st0.story=st0.story||{};
+  st0.story.seen=S?S.list().map(x=>x.id):[];
+  st0.story.cur=null; st0.story.flags=st0.story.flags||{};
+
+  // 给所有瓶身灌库存 5（供 equip 测试）；所有配方解锁+买得起（供 craft 测试）
+  st0.res=st0.res||{};
+  for(const id in W().BOOSTER_ITEMS){ const it=W().BOOSTER_ITEMS[id]; B.addToInventory(st0, it.itemId, 5); }
+  for(const r of W().BOOSTER_RECIPES){
+    const c=B.craftCost(st0, r.id);
+    for(const k in c){ st0.res[k]=(st0.res[k]||0)+Math.max(c[k],1)*10; }
+    if(r.requiresBlueprint){ st0.ownedBlueprints=st0.ownedBlueprints||[]; if(!st0.ownedBlueprints.includes("booster:"+r.id)) st0.ownedBlueprints.push("booster:"+r.id); }
+  }
+  W().NSK.Core.save(st0);
+
+  // 重载，让测试存档生效
+  await nav("../index.html?a="+Date.now());
+  const b1=await until(booted,25000); hookErrors();
+  ok("重载后启动", b1);
+  if(!b1){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 切到舰基页
+  const baseTab=D().querySelector('[data-act="tab:base"]');
+  ok("存在「舰基」页签", !!baseTab);
+  if(baseTab) baseTab.click();
+  const panelShown=await until(()=>D().querySelector(".booster-grid"),15000);
+  ok("舰基页已渲染增强剂面板", panelShown);
+
+  // 渲染结构断言
+  ok("反应实验室 + 16槽 两个区块", D().querySelectorAll(".booster-sec").length===2, D().querySelectorAll(".booster-sec").length+" 个 .booster-sec");
+  ok("16 个槽位元素", D().querySelectorAll(".booster-slot").length===16, D().querySelectorAll(".booster-slot").length+" 个");
+  ok("8 个分组标题", D().querySelectorAll(".booster-group-head").length===8, D().querySelectorAll(".booster-group-head").length+" 个");
+  ok("反应实验室标题存在", /反应实验室/.test(D().querySelector("#nsk-view").textContent));
+  ok("装载选择器弹窗元素存在", !!D().querySelector("#nsk-booster-picker"));
+  ok("瓶身库存区存在", /瓶身库存/.test(D().querySelector("#nsk-view").textContent));
+
+  // 制造测试：点 craft 按钮。等自动存档刷盘后，以「队列+1 / 原料已扣 / 瓶身已入库」任一成立判通过。
+  const r0=W().BOOSTER_RECIPES[0];
+  const craftBtn=D().querySelector('[data-act="booster:craft:'+r0.id+'"]');
+  ok("找到可制造的配方按钮（已解锁+买得起）", !!craftBtn && !craftBtn.disabled, craftBtn?(craftBtn.disabled?"disabled":"enabled"):"无");
+  const qBefore=(W().NSK.Core.load().base.industry.boosterQueue||[]).length;
+  const invBefore=(W().NSK.Core.load().res[r0.itemId])||0;
+  const cost0=B.craftCost(W().NSK.Core.load(), r0.id);
+  const rbk=Object.keys(cost0)[0];
+  const resBefore=(W().NSK.Core.load().res[rbk])||0;
+  if(craftBtn && !craftBtn.disabled){ craftBtn.click(); }
+  const stPost=await flushRead();
+  const qAfter=(stPost.base.industry.boosterQueue||[]).length;
+  const invAfter=(stPost.res[r0.itemId])||0;
+  const resAfter=(stPost.res[rbk])||0;
+  ok("点制造后反应实验室产出生效（队列+1 / 原料已扣 / 瓶身已入库）",
+     (qAfter>qBefore)||(invAfter>invBefore)||(resAfter<resBefore),
+     "q:"+qBefore+"→"+qAfter+" inv:"+invBefore+"→"+invAfter+" res("+rbk+"):"+resBefore+"→"+resAfter);
+
+  // 选择器开/关测试
+  const loadBtn=D().querySelector('[data-act^="booster:load:"]');
+  ok("存在「装载/替换」按钮", !!loadBtn);
+  if(loadBtn){ loadBtn.click(); await wait(300); }
+  ok("点装载后选择器弹窗打开", !!D().querySelector("#nsk-booster-picker.active"));
+  ok("选择器内有可装载瓶身或空提示", !!D().querySelector("#bp-list .bp-item") || !!D().querySelector("#bp-list") && /没有可用/.test(D().querySelector("#bp-list").textContent));
+  const cancel=D().querySelector("#bp-cancel"); if(cancel) cancel.click();
+  await wait(200);
+  ok("取消后选择器关闭", !D().querySelector("#nsk-booster-picker.active"));
+
+  // equip 真操作：找一个兼容的 slot + item
+  let target=null;
+  const stNow=W().NSK.Core.load();
+  for(const slot of W().BOOSTER_SLOTS){
+    for(const id in W().BOOSTER_ITEMS){
+      if(B.canEquip(stNow, slot, id).ok){ target={slot,id}; break; }
+    }
+    if(target) break;
+  }
+  ok("找到一个可装载的 槽+瓶身", !!target, target?(target.slot+"/"+target.id):"无");
+  if(target){
+    const slotEl=D().querySelector('[data-act="booster:load:'+target.slot+'"]');
+    if(slotEl){ slotEl.click(); await wait(300); }
+    const eqBtn=D().querySelector('[data-act="booster:equip:'+target.slot+':'+target.id+'"]');
+    ok("选择器列出该兼容瓶身", !!eqBtn);
+    const itemId=W().BOOSTER_ITEMS[target.id].itemId;
+    const invBefore2=(W().NSK.Core.load().res[itemId])||0;
+    if(eqBtn){ eqBtn.click(); }
+    const stE=await flushRead();
+    const act=stE.boosters && stE.boosters.active && stE.boosters.active[target.slot];
+    ok("装载后 state.boosters.active[slot] 已写入（刷盘后）", !!act && act.itemId===itemId, act?act.itemId:"无");
+    const invAfter2=(stE.res[itemId])||0;
+    ok("装载后瓶身库存 -1（刷盘后）", invAfter2===invBefore2-1, invBefore2+"→"+invAfter2);
+    ok("UI 该槽出现「卸下」按钮（已装载）", !!D().querySelector('[data-act="booster:unequip:'+target.slot+'"]'));
+    ok("UI 该槽不再是 .empty", !D().querySelector('.booster-slot.empty [data-act="booster:load:'+target.slot+'"]'));
+
+    // unequip 真操作
+    const unBtn=D().querySelector('[data-act="booster:unequip:'+target.slot+'"]');
+    ok("找到「卸下」按钮", !!unBtn);
+    if(unBtn){ unBtn.click(); }
+    const stU=await flushRead();
+    ok("卸下后 state.boosters.active[slot] 清除（刷盘后）", !(stU.boosters && stU.boosters.active && stU.boosters.active[target.slot]));
+    ok("卸下后 UI 回到「装载」空槽", !!D().querySelector('.booster-slot.empty [data-act="booster:load:'+target.slot+'"]'));
+  }
+
+  // 全程无未捕获错误
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  // 还原存档
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

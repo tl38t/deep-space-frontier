@@ -108,7 +108,30 @@
     ammo_cannon:  { id: "ammo_cannon",  name: "射弹装药", icon: "💥", cat: "ammo", desc: "射弹炮专用装药，由标准钛材浇铸。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET);
+  // 战术材料（增强剂高阶配方消耗，step 2 战斗掉落才可得；此处仅注册键名与显示名，不进 HUD/初始库存）。
+  // 内部键 tactic:t1..t5（IP 解耦，禁 EVE 裸名）；名称沿用 1 代 BOOSTER 系统语义。
+  const TACTIC = {
+    "tactic:t1": { id: "tactic:t1", name: "战术残液", icon: "🩸", cat: "tactic", desc: "高频战斗掉落材料（T1），高阶增强剂配方消耗。" },
+    "tactic:t2": { id: "tactic:t2", name: "活性战术凝胶", icon: "🧫", cat: "tactic", desc: "高频战斗掉落材料（T2），高阶增强剂配方消耗。" },
+    "tactic:t3": { id: "tactic:t3", name: "高能战术萃取物", icon: "⚗", cat: "tactic", desc: "高频战斗掉落材料（T3），高阶增强剂配方消耗。" },
+    "tactic:t4": { id: "tactic:t4", name: "极化战术介质", icon: "🌑", cat: "tactic", desc: "高频战斗掉落材料（T4），高阶增强剂配方消耗。" },
+    "tactic:t5": { id: "tactic:t5", name: "深层适应性样本", icon: "🧬", cat: "tactic", desc: "高频战斗掉落材料（T5），高阶增强剂配方消耗。" },
+  };
+
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC);
+
+  // 增强剂瓶身（booster:<id>）与战术材料（tactic:*）的显示名回退：
+  // 增强剂数据由 js/lib/eveidle/data/boosters.js 运行时全局加载（window.BOOSTER_ITEMS），
+  // 此处不在 ALL 静态展开，避免重复维护；meta() 在调用期（库已加载）查表即可。
+  function meta(id) {
+    if (!id) return null;
+    if (ALL[id]) return ALL[id];
+    if (typeof id === "string" && id.startsWith("booster:")) {
+      const it = (typeof window !== "undefined" && window.BOOSTER_ITEMS) ? (window.BOOSTER_ITEMS[id.slice(8)] || null) : null;
+      if (it) return { id: it.itemId, name: it.name, icon: "🧪", cat: "booster", desc: it.description || "" };
+    }
+    return null;
+  }
 
   // 仓库初始资源
   function startingResources() {
@@ -135,7 +158,5 @@
     "ammo_laser", "ammo_missile", "ammo_cannon",
     "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag"];
 
-  function meta(id) { return ALL[id]; }
-
-  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, ALL, HUD_ORDER, startingResources, meta };
+  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, ALL, HUD_ORDER, startingResources, meta };
 });

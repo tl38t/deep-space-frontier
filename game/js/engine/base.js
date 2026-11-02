@@ -38,10 +38,13 @@
     if (Array.isArray(state.members)) {
       for (const m of state.members) if (!Array.isArray(m.milestones)) m.milestones = [];
     }
-    // 向后兼容：旧档（version<8）缺工业 buildQueue / 增强剂 boosters 字段时兜底（MVP 周五新增）
-    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [] };
+    // 向后兼容：旧档（version<8）缺工业 buildQueue / boosterQueue 字段时兜底（MVP 周五新增）
+    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [] };
     else if (!Array.isArray(base.industry.buildQueue)) base.industry.buildQueue = [];
-    if (!Array.isArray(base.boosters)) base.boosters = [];
+    if (!Array.isArray(base.industry.boosterQueue)) base.industry.boosterQueue = [];
+    // 增强剂状态迁移到 state.boosters（全局 16 槽 + 库存=state.res["booster:<id>"]），见 engine/booster.js。
+    // 旧档残留的 base.boosters（整舱生效简化版数组）在此清掉，避免与新模型混淆。
+    if (Array.isArray(base.boosters)) delete base.boosters;
     const defaults = Ships.createInitialBase();
     if (!base.coreId) base.coreId = "base_core_" + (state.createdAt || 1).toString(36) + "_" + (state.rngSeed || 1).toString(36);
     if (!Ships.baseHullById(base.hullId)) base.hullId = defaults.hullId;
@@ -321,9 +324,9 @@
 
   // ===== 驻舱（2026-11-01 技能体系）：一人一岗，与出征互斥 =====
   // 队列 → 承担该队列的舱段模块类型（造船与部件制造共用总装船坞）
-  const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture" };
+  const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture", booster: "booster" };
   // 队列 → 驻舱者决定耗时的技能键
-  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture" };
+  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture", booster: "booster" };
   const UNMANNED_PENALTY = 1.4;   // 舱段无人：该队列耗时 ×1.4（约 71% 速度）
 
   function stationedAt(state, slotId) {

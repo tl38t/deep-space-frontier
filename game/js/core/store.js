@@ -204,7 +204,14 @@
       const R = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Resources : null;
       if (R && R.ALL && s.res && typeof s.res === "object") {
         for (const k in s.res) {
-          if (!R.ALL[k] || typeof s.res[k] !== "number" || !isFinite(s.res[k])) delete s.res[k];
+          // ⚠️ 增强剂瓶身（booster:<id>）存在 state.res 但不进 R.ALL 静态白名单
+          // （见 data/resources.js 注释：避免与 1 代增强剂数据重复维护）。
+          // 若在此按「非注册键」删除，会在每次读档时清空玩家全部瓶身库存 → 增强剂系统失效。
+          // 故对 booster: 前缀的有限数值键予以保留（非有限数值仍清除，防御脏数据）。
+          const isBooster = (typeof k === "string" && k.indexOf("booster:") === 0);
+          const validNum = typeof s.res[k] === "number" && isFinite(s.res[k]);
+          if (isBooster) { if (!validNum) delete s.res[k]; continue; }
+          if (!R.ALL[k] || !validNum) delete s.res[k];
         }
         for (const k in R.ALL) if (typeof s.res[k] !== "number") s.res[k] = 0;
       }

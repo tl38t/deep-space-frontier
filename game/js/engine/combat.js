@@ -170,10 +170,14 @@
   //   命中 = baseHit + lv×4     伤害 = baseDamage × (1 + lv×0.02)
   // ⚠️ 旧实现是「三技能 skillBonus 取算术平均」再统一乘到所有武器：既不按类型分，
   //    练指挥也会让激光炮变强，与 1 代不符，已删（见架构设计「六次修订」之前的一节）。
-  function scanFit(m, evasion, split, cmd) {
+  function scanFit(m, evasion, split, cmd, state) {
     const Eq = _Eq(), Arch = _Arch(), Settle = _Settle();
+    const Bm = (state && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
+    const eff = (Bm && Bm.getEffectState) ? Bm.getEffectState(state) : null;
     const hitAdd = (cmd && cmd.hitAdd) || 0;      // 指挥塔给全队的命中加成
     const dmgMult = (cmd && cmd.dmgMult) || 1;    // 指挥塔给全队的伤害乘区
+    const Th = (state && typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Tech) ? window.NSK.Engine.Tech : null;
+    const techHit = (Th && Th.hitBonus) ? Th.hitBonus(state) : 0;   // 科技树·精准瞄准（加性，独立于指挥塔）
     const out = {
       weapons: [], dpsByType: { laser: 0, missile: 0, cannon: 0 },
       ammoRate: { laser: 0, missile: 0, cannon: 0 },
@@ -191,15 +195,20 @@
         if (c.kind === "weapon") {
           const skKey = SKILL_OF_WEAPON[c.weaponType];
           const lv = (Settle && m.skills && skKey) ? Settle.levelOf(m.skills[skKey]) : 1;
-          const ht = (c.baseHit || 100) + lv * 4 + hitAdd;           // 1 代命中加值（selectors.js:2575）+ 指挥塔
+          const ht = (c.baseHit || 100) + lv * 4 + hitAdd + techHit;           // 1 代命中加值（selectors.js:2575）+ 指挥塔 + 科技树
           const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式 hit^1.4/(hit^1.4+dodge^1.4)
-          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult; // 1 代伤害乘区（selectors.js:2603）× 指挥塔
+          // 增强剂武器伤害乘区（忠实 1 代 combat.js:1788-1792：按主武器 weaponType 查 weaponDamageMultiplier 表）
+          const wbm = (eff && eff.weaponDamageMultiplier && eff.weaponDamageMultiplier[c.weaponType]) ? eff.weaponDamageMultiplier[c.weaponType] : 1;
+          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult * wbm; // 1 代伤害乘区（selectors.js:2603）× 指挥塔 × 增强剂
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
           // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
           out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
           out.ammoRate[c.weaponType] = (out.ammoRate[c.weaponType] || 0) + (c.ammoCost || 0) / ROUND_SEC;
         } else if (c.kind === "repair") {
-          out.repair += (c.amount || 0) / ROUND_SEC;                // 1 代每轮恢复绝对值 → 每秒
+          // 增强剂维修乘区：1 代 repairMultiplier 分 shield/armor/structure 三层；本作维修为单一池（不分层），
+          // 故取三层平均值作为整池乘区（与 1 代「维修器按层恢复」语义近似，且任一维修增强剂都生效）。
+          const rpm = (eff && eff.repairMultiplier) ? (eff.repairMultiplier.shield + eff.repairMultiplier.armor + eff.repairMultiplier.structure) / 3 : 1;
+          out.repair += (c.amount || 0) / ROUND_SEC * rpm;          // 1 代每轮恢复绝对值 → 每秒，再乘增强剂
         }
       }
     }
@@ -233,6 +242,7 @@
   function prepareNode(state, nodeId) {
     const Data = _Data(), Settle = _Settle(), Pirates = _Pirates();
     if (!Data || !Settle) return null;
+    const Tch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Tech) ? window.NSK.Engine.Tech : null;
     // 战斗只发生在星图上的具名据点（node.raid，见 data/raids.js）。
     // 普通采矿节点不再产战斗：否则「去哪个节点打」不构成决策，207 个节点等于难度自选菜单。
     const Raids = (Data && Data.Raids) ? Data.Raids : null;
@@ -261,7 +271,7 @@
       modCreditSum += (m.mods && m.mods.creditMult && m.mods.creditMult.combat) || 1;
 
       // 装配战斗贡献（每门武器按自己的类型取技能：命中 +lv×4、伤害 ×(1+lv×0.02)，见 scanFit）
-      const f = scanFit(m, fleet.evasion, fleet.split, cmdBuff);
+      const f = scanFit(m, fleet.evasion, fleet.split, cmdBuff, state);
       for (const t of AMMO_TYPES) {
         dpsByType[t] += f.dpsByType[t] || 0;
         ammoRate[t] += f.ammoRate[t] || 0;
@@ -300,7 +310,9 @@
     const incomingDps = Math.max(0, incomingRaw * (1 - dmgReduction) - repairPerSec);
 
     // 每波掉落（成员星币倍率进掉落，声望不吃）
-    const dropCredits = DROP_CREDIT_BASE * raid.iskMult * modCreditSum;
+    // ⚠️ 科技树·战利品协议是赏金**唯一**活乘区；精通点的 combatYieldMult 是死代码（本作不接）。
+    const bountyMult = (Tch && Tch.bountyMult) ? Tch.bountyMult(state) : 1;
+    const dropCredits = DROP_CREDIT_BASE * raid.iskMult * modCreditSum * bountyMult;
     const dropRep = DROP_REP_BASE * raid.repMult * cnt;
 
     const fleetHp = fleet.totalHp;

@@ -43,6 +43,27 @@
   // 入队：检查槽位 + 原料，扣原料，写队列项
   function enqueue(state, queueType, recipeId, repeat) {
     const Ship = Data.Ships;
+    // —— 增强剂制造队列（反应实验室）：配方来自 1 代 BOOSTER_RECIPES，瓶身入库 state.res ——
+    if (queueType === "booster") {
+      const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
+      if (state.base.industry.boosterQueue.length >= plan.booster)
+        return { ok: false, err: "反应实验室槽位已满（需升级舰基）" };
+      const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
+      if (!B) return { ok: false, err: "增强剂系统未就绪" };
+      const cc = B.canCraft(state, recipeId);
+      if (!cc.ok) return cc;
+      const r = cc.recipe;
+      const cost = B.craftCost(state, recipeId); // 已重映射到本作资源键
+      repeat = repeat || 1;
+      if (!canAfford(state.res, cost)) return { ok: false, err: "原料不足" };
+      spend(state.res, cost);
+      const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "booster") : 1;
+      state.base.industry.boosterQueue.push({
+        recipeId: recipeId, dur: r.time * durationMult, out: r.itemId, qty: 1, outType: "res",
+        in: cost, startedAt: Date.now(), repeat: repeat, done: 0,
+      });
+      return { ok: true };
+    }
     const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
     const slots = queueType === "smelt" ? plan.smelt : queueType === "manufacture" ? plan.manufacture : plan.invent;
     // manufacture 槽位由「部件制造队列」与「造船队列」共享（同为总装船坞）
@@ -61,24 +82,46 @@
 
     // 总装整船走 manufacture 但引用 ships（此处仅部件/矿材/图纸）
     repeat = repeat || 1;
-    if (!canAfford(state.res, r.in)) return { ok: false, err: "原料不足" };
-    spend(state.res, r.in);
+    // 精密配给剂材料折扣：仅总装部件(manufacture)享受舰船材料折扣（与 1 代 getShipBuildingQuote kind:"component" 同口径）；
+    // 精炼/发明输入不受影响。折扣在入队时锁定到 it.in（与 1 代「报价即扣料」一致）。
+    const inCost = (queueType === "manufacture" && Booster && Booster.discountedCost)
+      ? Booster.discountedCost(state, r.in, "ship") : r.in;
+    if (!canAfford(state.res, inCost)) return { ok: false, err: "原料不足" };
+    spend(state.res, inCost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, queueType) : 1;
     q.push({
       recipeId: recipeId, dur: r.dur * durationMult, out: r.out, qty: r.qty, outType: "res",
-      in: r.in,
+      in: inCost,
       startedAt: Date.now(), repeat: repeat, done: 0,
     });
     return { ok: true };
+  }
+
+  // 增强剂速度乘区（按队列 + 队列项类型）：忠实 1 代 getBoosterEffectState 语义。
+  // 总装队列里「装备制造」走装备工程加速，「部件/整船」走舰船工程加速；其余队列一一对应。
+  function boosterSpeedFor(state, queueType, it) {
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
+    if (!B || !B.getEffectState) return 1;
+    const eff = B.getEffectState(state);
+    if (queueType === "smelt") return eff.smeltSpeedMultiplier;
+    if (queueType === "invent") return 1;
+    if (queueType === "booster") return eff.boosterSpeedMultiplier;
+    if (queueType === "manufacture") {
+      const isEquip = !!(it && it.recipeId && Data.Equipment && Data.Equipment.byId && Data.Equipment.byId(it.recipeId));
+      return isEquip ? eff.equipmentSpeedMultiplier : eff.shipSpeedMultiplier;
+    }
+    return 1;
   }
 
   // 结算某队列（推进批次）。powerMult：电网棕化系数（§1.5 运行时降速，正常为 1）；
   //   boosterMult：增强剂整舱加速倍率（>=1，production 已在等效耗时中除以它）。返回产出日志 [{out, qty}]
   function processQueue(state, queueType, now, powerMult) {
     const pm = (powerMult && powerMult > 0) ? powerMult : 1;
-    const bm = (Booster && Booster.mult) ? Booster.mult(state, queueType) : 1; // 增强剂加速（整舱生效）
     const M = _Mastery();
     const mm = (M && M.industryTimeMult) ? M.industryTimeMult(state) : 1;     // 精通点·工业调度（耗时乘区）
+    const Tech = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Tech) ? window.NSK.Engine.Tech : null;
+    const smeltYieldMult = (Tech && Tech.smeltYieldMult) ? Tech.smeltYieldMult(state) : 1;   // 科技树·精炼工艺（仅 smelt 产出）
+    const techManu = (Tech && Tech.manuSpeedFactor) ? Tech.manuSpeedFactor(state) : 1;       // 科技树·柔性产线（仅 manufacture 耗时）
     // 冶炼速度（Phase 2）：外接精炼泵是「any」槽外接设备，作用于舰基冶炼队列。
     // 取全军团装配之和（封顶 50%）——泵是基地设施，不随成员出勤失效，故不走单成员判定。
     let smeltFit = 0;
@@ -96,22 +139,35 @@
     // 布局乘区（物理结构不变），而驻舱的人随时会被撤走 —— 撤走就该立刻变慢，所以放这里。
     // 无人驻舱时 sf = 1.4（UNMANNED_PENALTY），不会被布局那一层的 clamp(0.65~1) 钳掉。
     const sf = (Base && Base.stationSpeedMult) ? Base.stationSpeedMult(state, queueType) : 1;
-    const effDur = (it) => it.dur / (pm * bm) * mm / (1 + smeltFit) * sf; // 棕化(pm<1)拉长；增强剂(bm>1)缩短；精通(mm<1)缩短；精炼泵缩短；驻舱技能缩短/无人拉长
-    const q = state.base.industry[queueType + "Queue"];
+    const effDur = (it) => it.dur / (pm * boosterSpeedFor(state, queueType, it)) * mm / (1 + smeltFit) * sf * (queueType === "manufacture" ? techManu : 1); // 棕化(pm<1)拉长；增强剂(逐队列项乘区)缩短；精通(mm<1)缩短；精炼泵缩短；驻舱技能缩短/无人拉长；科技树·柔性产线(manufacture)缩短
+    // 增强剂双倍产出（冶炼/增幅剂）：取双倍概率；逐批确定性掷骰（派生 rng，避免在线/离线分歧）。
+    const eff = (Booster && Booster.getEffectState) ? Booster.getEffectState(state) : null;
+    const dblChance = (queueType === "smelt") ? (eff ? eff.doubleSmeltChance : 0)
+      : (queueType === "booster") ? (eff ? eff.doubleBoosterChance : 0) : 0;
+    const q = state.base.industry[queueType + "Queue"] || (state.base.industry[queueType + "Queue"] = []);
     const log = [];
     let guard = 0;
     while (q.length && guard < MAX_BATCHES) {
       const it = q[0];
       const elapsed = (now - it.startedAt) / 1000; // 真实流逝（秒）
-      if (typeof console !== "undefined" && state.__dbg) console.log("  PQ", queueType, "elapsed=", elapsed.toFixed(2), "effDur=", effDur(it).toFixed(2), "pm=", pm, "bm=", bm, "done=", it.done);
+      if (typeof console !== "undefined" && state.__dbg) console.log("  PQ", queueType, "elapsed=", elapsed.toFixed(2), "effDur=", effDur(it).toFixed(2), "pm=", pm, "done=", it.done);
       if (elapsed < effDur(it)) break; // 队首未到一批
       // 完成一批：装备入库，部件/矿材/图纸入 state.res
+      // 双倍产出（冶炼/增幅剂）：以「本批起始时刻 + 队列类型盐」派生确定性 rng 掷骰，命中则产量翻倍。
+      // 该种子与在线/离线无关（恒由 it.startedAt 决定），保证在线离线一致。
+      let outQty = it.qty;
+      if (dblChance > 0) {
+        const seed = ((state.rngSeed || 0) ^ Math.imul(it.startedAt >>> 0, 0x9E3779B1) ^ (queueType === "smelt" ? 0x5001 : 0x5002)) >>> 0;
+        const rng = Core.makeRng(seed);
+        if (rng() < dblChance) outQty = it.qty * 2;
+      }
+      if (queueType === "smelt") outQty = outQty * smeltYieldMult;   // 科技树·精炼工艺（在双倍之后叠加，连乘）
       if (it.outType === "equipment") {
-        state.equipment[it.out] = (state.equipment[it.out] || 0) + it.qty;
-        log.push({ out: it.out, qty: it.qty, outType: "equipment" });
+        state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
+        log.push({ out: it.out, qty: outQty, outType: "equipment" });
       } else {
-        gain(state.res, it.out, it.qty);
-        log.push({ out: it.out, qty: it.qty });
+        gain(state.res, it.out, outQty);
+        log.push({ out: it.out, qty: outQty });
       }
       it.done += 1;
       // 驻舱工头经验（2026-11-01）：**真产出一批才涨**，与 1 代「真正使用才涨」同口径。
@@ -141,8 +197,10 @@
     if (!Ship.canBuildAt(shipId, state.base.bodyLevel)) return { ok: false, err: "核心等级不足（需 Lv." + (ship.bodyLevelReq + 1) + "）" };
     const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
     if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
-    if (!canAfford(state.res, ship.cost)) return { ok: false, err: "材料不足" };
-    spend(state.res, ship.cost);
+    // 精密配给剂舰船材料折扣（与 1 代 getShipBuildingQuote kind:"assembly" 同口径）
+    const shipCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, ship.cost, "ship") : ship.cost;
+    if (!canAfford(state.res, shipCost)) return { ok: false, err: "材料不足" };
+    spend(state.res, shipCost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
     const q = state.base.industry.buildQueue || (state.base.industry.buildQueue = []);
     q.push({ shipId: shipId, dur: ship.buildTime * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
@@ -182,18 +240,21 @@
     if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
     if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
-    if (!canAfford(state.res, Eq.cost)) return { ok: false, err: "原料不足" };
-    spend(state.res, Eq.cost);
+    // 精密配给剂装备材料折扣（与 1 代 getEquipEngBuildingQuote 同口径）
+    const eqCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, Eq.cost, "equip") : Eq.cost;
+    if (!canAfford(state.res, eqCost)) return { ok: false, err: "原料不足" };
+    spend(state.res, eqCost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
     const q = state.base.industry.manufactureQueue;
-    q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: Eq.cost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
+    q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: eqCost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, equip: Eq };
   }
 
   // 结算造船队列：完成一艘 → 推入 state.ships（{id, shipId, name, status, nodeId}），并记 counters.builtShips。
   function processBuildQueue(state, now) {
     const pm = (Base && Base.powerMult) ? Base.powerMult(state) : 1;
-    const bm = (Booster && Booster.mult) ? Booster.mult(state, "manufacture") : 1; // 造船复用总装增强剂
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
+    const bm = (B && B.getEffectState) ? B.getEffectState(state).shipSpeedMultiplier : 1; // 造船复用舰船工程增强剂
     const M = _Mastery();
     const mm = (M && M.industryTimeMult) ? M.industryTimeMult(state) : 1;
     const effDur = (it) => it.dur / (pm * bm) * mm;
@@ -271,13 +332,13 @@
     all.push(...processQueue(state, "smelt", now, pm));
     all.push(...processQueue(state, "manufacture", now, pm));
     all.push(...processQueue(state, "invent", now, pm));
-    if (Booster && Booster.clean) Booster.clean(state, now); // 惰性清理过期增强剂（O(active)）
+    all.push(...processQueue(state, "booster", now, pm));
     all.push(...processBuildQueue(state, now));
     return all;
   }
 
   function queueStatus(state, queueType, now) {
-    const q = state.base.industry[queueType + "Queue"];
+    const q = state.base.industry[queueType + "Queue"] || [];
     return q.map(it => {
       const p = Core.clamp((now - it.startedAt) / 1000 / it.dur, 0, 1);
       return { recipeId: it.recipeId, progress: p, repeat: it.repeat, done: it.done };

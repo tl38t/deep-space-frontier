@@ -280,19 +280,19 @@
       if (state.res[k] < 0) state.res[k] = 0; // 资源不出现负数
     }
   }
-  function applySkill(member, key, amount) {
+  function applySkill(state, member, key, amount) {
     if (!member || !key || !amount) return;
     const S = _Settle();
     let mult = 1;
     if (S && S.passionMult) mult = S.passionMult(member, key);
-    if (S && S.xpMultOf) mult *= S.xpMultOf(member, key);
+    if (S && S.xpMultOf) mult *= S.xpMultOf(state, member, key);
     if (!member.skills) member.skills = {};
     member.skills[key] = (member.skills[key] || 0) + amount * mult;
   }
   function applyPayload(state, payload, member) {
     if (!payload) return;
     applyDeltas(state, payload.deltas, member);
-    if (payload.skillKey && payload.skill) applySkill(member, payload.skillKey, payload.skill);
+    if (payload.skillKey && payload.skill) applySkill(state, member, payload.skillKey, payload.skill);
   }
 
   function pushReport(state, title, lines) {
@@ -305,7 +305,7 @@
   function applyEvent(state, ev, member) {
     if (!ev) return;
     applyDeltas(state, ev.deltas, member);
-    if (ev.skillKey && ev.skill) applySkill(member, ev.skillKey, ev.skill);
+    if (ev.skillKey && ev.skill) applySkill(state, member, ev.skillKey, ev.skill);
     pushReport(state, ev.title, ev.lines || []);
   }
 

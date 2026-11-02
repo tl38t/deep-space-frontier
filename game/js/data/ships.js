@@ -70,6 +70,7 @@
     dock:        { type: "dock",        name: "舰队泊位", icon: "◈",  color: "#b28cff", desc: "停泊与维护舰队。", energy: 10 },
     command:     { type: "command",     name: "指挥塔",   icon: "⌁",  color: "#e8c46a", desc: "统筹成员、舰队与基地行动。", energy: 10 },
     habitat:     { type: "habitat",     name: "居住舱",   icon: "⌂",  color: "#ef7b87", desc: "供成员生活与训练。", energy: 10 },
+    booster:     { type: "booster",     name: "反应实验室", icon: "⚗", color: "#c98bff", desc: "制造增强剂瓶身（反应实验室）。", energy: 25 },
   };
 
   const BASE_HULLS = [
@@ -77,49 +78,49 @@
       id: "hull_frontier", name: "拓荒者级", factionId: "settlers", tagline: "边境通用母舰",
       shape: "frontier", accent: "#b5c46a", bodyLevelReq: 0, relationReq: 0, blueprintCost: {},
       specialSlot: { id: "smelt", name: "矿脉导流舱", queue: "smelt", speedMult: 0.94, effect: "精炼耗时 -6%" },
-      layout: { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2], invent:[2,2], dock:[2,3], command:[3,4], habitat:[3,5] },
+      layout: { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2], invent:[2,2], dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5] },
     },
     {
       id: "hull_angel_raider", name: "苍穹掠袭舰", factionId: "angel", tagline: "高速突入 / 分散舱列",
       shape: "raider", accent: "#5ad1a0", bodyLevelReq: 0, relationReq: 0, blueprintCost: { credits: 8000 },
       specialSlot: { id: "manufacture", name: "战利品快装位", queue: "manufacture", speedMult: 0.90, effect: "制造耗时 -10%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[2,2], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[2,2], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5] },
     },
     {
       id: "hull_blood_oath", name: "赤誓堡垒舰", factionId: "blood", tagline: "纵向装甲 / 中轴指挥",
       shape: "bastion", accent: "#e879a8", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 18000 },
       specialSlot: { id: "manufacture", name: "军规装配位", queue: "manufacture", speedMult: 0.88, effect: "制造耗时 -12%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[2,3], smelt:[1,3], manufacture:[4,3], invent:[3,1], dock:[5,3], command:[2,4], habitat:[4,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[2,3], smelt:[1,3], manufacture:[4,3], invent:[3,1], dock:[5,3], command:[2,4], habitat:[4,4], booster:[5,5] },
     },
     {
       id: "hull_mining_ark", name: "矿脉工造方舟", factionId: "mining_guild", tagline: "宽幅工业翼 / 矿冶强化",
       shape: "ark", accent: "#b5793f", bodyLevelReq: 0, relationReq: 4, blueprintCost: { credits: 12000 },
       specialSlot: { id: "smelt", name: "深层熔炼槽", queue: "smelt", speedMult: 0.84, effect: "精炼耗时 -16%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[4,4], invent:[2,2], dock:[5,3], command:[3,4], habitat:[2,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[4,4], invent:[2,2], dock:[5,3], command:[3,4], habitat:[2,4], booster:[5,5] },
     },
     {
       id: "hull_salvage_union", name: "残骸拼接舰", factionId: "salvage_union", tagline: "非对称拼装 / 模块外露",
       shape: "salvage", accent: "#c9772e", bodyLevelReq: 0, relationReq: 4, blueprintCost: { credits: 16000 },
       specialSlot: { id: "manufacture", name: "回收件快装位", queue: "manufacture", speedMult: 0.90, effect: "制造耗时 -10%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[5,2], manufacture:[4,3], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[5,2], manufacture:[4,3], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5] },
     },
     {
       id: "hull_lone_star", name: "孤星商队母舰", factionId: "lone_star", tagline: "紧凑货运 / 双侧生产线",
       shape: "caravan", accent: "#d8c07a", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 24000 },
       specialSlot: { id: "cargo", name: "冷链货运接口", queue: "manufacture", speedMult: 0.91, effect: "制造耗时 -9%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[2,3], invent:[2,2], dock:[5,3], command:[2,4], habitat:[3,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[2,3], invent:[2,2], dock:[5,3], command:[2,4], habitat:[3,4], booster:[5,5] },
     },
     {
       id: "hull_abyssal", name: "深空研习母舰", factionId: "abyssal_inst", tagline: "环形实验区 / 发明强化",
       shape: "research", accent: "#9b8fd0", bodyLevelReq: 1, relationReq: 12, blueprintCost: { credits: 32000 },
       specialSlot: { id: "invent", name: "先驱遗物实验位", queue: "invent", speedMult: 0.82, effect: "发明耗时 -18%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[3,4], invent:[2,2], dock:[2,3], command:[2,4], habitat:[4,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[3,4], invent:[2,2], dock:[2,3], command:[2,4], habitat:[4,4], booster:[5,5] },
     },
     {
       id: "hull_bounty", name: "悬赏者突击母舰", factionId: "bounty_league", tagline: "箭形舰首 / 前线总装",
       shape: "spear", accent: "#b02a1f", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 20000 },
       specialSlot: { id: "manufacture", name: "前线换装位", queue: "manufacture", speedMult: 0.88, effect: "制造耗时 -12%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[4,2], invent:[2,3], dock:[4,3], command:[2,4], habitat:[3,4] },
+      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[4,2], invent:[2,3], dock:[4,3], command:[2,4], habitat:[3,4], booster:[5,5] },
     },
   ];
 
@@ -147,11 +148,12 @@
   }
 
   // 各级本体电网基础容量（energy）。总供能预算 = 本项 + 已装能源舱数 × ENERGY_OUTPUT。MVP 提议值，待标定。
+  // booster = 反应实验室制造队列槽位（增强剂制造）。起步 1 槽可用（与精炼/总装同级），随本体升级扩容。
   const BODY_LEVELS = [
-    { lv: 1, name: "空间站",   smelt: 1, manufacture: 1, invent: 0, energy: 80 },
-    { lv: 2, name: "星堡",     smelt: 2, manufacture: 2, invent: 1, energy: 180 },
-    { lv: 3, name: "星城",     smelt: 3, manufacture: 3, invent: 2, energy: 320 },
-    { lv: 4, name: "深空要塞", smelt: 3, manufacture: 3, invent: 3, energy: 520 },
+    { lv: 1, name: "空间站",   smelt: 1, manufacture: 1, invent: 0, booster: 1, energy: 80 },
+    { lv: 2, name: "星堡",     smelt: 2, manufacture: 2, invent: 1, booster: 1, energy: 180 },
+    { lv: 3, name: "星城",     smelt: 3, manufacture: 3, invent: 2, booster: 2, energy: 320 },
+    { lv: 4, name: "深空要塞", smelt: 3, manufacture: 3, invent: 3, booster: 3, energy: 520 },
   ];
 
   function bodyLevelPlan(lv) { return BODY_LEVELS[Math.max(0, Math.min(3, lv))] || BODY_LEVELS[0]; }

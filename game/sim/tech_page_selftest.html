@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>科技页渲染 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 科技页渲染真机自测（2026-11-02）
+// 覆盖：页签存在 / 进科技页渲染出 8 个节点方块 / 6 新 + 2 旧 节点名称齐全 /
+//       节点分布在 3 个分类列（战斗/工业/后勤）/ 全程无未捕获错误
+// ⚠️ 关键：iframe 必须指向 ../index.html（本文件在 game/sim/ 下），
+//    写 "index.html" 会解析到 game/sim/index.html（404 → 跨源 error 页 → W().NSK 读不到）。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error", e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection", e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#tech");
+  const b0=await until(booted,25000); hookErrors();
+  ok("游戏启动完成（停在科技页）", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("找到存档键并已备份", !!KEY, KEY||"未找到");
+  ok("Engine.Tech 已注册", !!(W().NSK&&W().NSK.Engine&&W().NSK.Engine.Tech));
+  ok("Data.Tech 已注册且 8 节点", (function(){
+    const T=W().NSK.Data.Tech; return T&&T.all&&T.all().length===8;
+  })(), (function(){ const T=W().NSK.Data.Tech; return T&&T.all?T.all().length:"无"; })());
+
+  // 页签按钮存在
+  const tabBtn=D().querySelector('[data-act="tab:tech"]');
+  ok("找到科技页签按钮", !!tabBtn);
+  // 若 hash 没把页签切到科技，则点击（兜底）
+  if(tabBtn && !D().querySelector('[data-act="techOpen:combat_squad_1"]') && !D().querySelector(".rt-node")){
+    tabBtn.click(); await wait(700);
+  } else { await wait(700); }
+
+  // 等方块渲染
+  const rendered=await until(()=>D().querySelectorAll(".rt-node").length>0,15000);
+  ok("科技页渲染出节点方块", rendered);
+  const nodes=D().querySelectorAll(".rt-node");
+  ok("节点方块数 = 8", nodes.length===8, nodes.length);
+
+  // 列头：3 个分类列（战斗/工业/后勤）
+  const heads=[...D().querySelectorAll(".rt-era-head")].map(h=>h.textContent.replace(/\s+/g,""));
+  ok("有 3 个分类列头", heads.length===3, heads.join("/"));
+
+  // 节点名称：6 新 + 2 旧 全部出现
+  const txt=D().body.innerText||"";
+  const expectNames=["精准瞄准","战利品协议","精炼工艺","柔性产线","航线优化","跃迁增效","战斗编制 I","战斗编制 II"];
+  const missing=expectNames.filter(n=>!txt.includes(n));
+  ok("6 新 + 2 旧 节点名称均出现", missing.length===0, missing.join(","));
+
+  // 列分布：方块 style="left:..px" 应有 3 个互异值（每列一个 x 基准）
+  const xs={};
+  nodes.forEach(n=>{ const m=/left:(\d+(?:\.\d+)?)px/.exec(n.getAttribute("style")||""); if(m){ const x=Math.round((+m[1])/10)*10; xs[x]=(xs[x]||0)+1; } });
+  ok("节点分布在 3 个分类列（互异 left 数 = 3）", Object.keys(xs).length===3, JSON.stringify(xs));
+
+  // 至少有一条跨列连线（战斗编制的二级/新节点需要前置连线，验证连线渲染不崩）
+  ok("渲染出前置连线（.rt-edge）", D().querySelectorAll(".rt-edge").length>0, D().querySelectorAll(".rt-edge").length);
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>
