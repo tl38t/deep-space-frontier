@@ -106,6 +106,8 @@
     if (queueType === "smelt") return eff.smeltSpeedMultiplier;
     if (queueType === "invent") return 1;
     if (queueType === "booster") return eff.boosterSpeedMultiplier;
+    // 制造车间（2026-11-03 独立队列）：吃「装备制造速度」增强剂
+    if (queueType === "equip") return eff.equipmentSpeedMultiplier;
     if (queueType === "manufacture") {
       const isEquip = !!(it && it.recipeId && Data.Equipment && Data.Equipment.byId && Data.Equipment.byId(it.recipeId));
       return isEquip ? eff.equipmentSpeedMultiplier : eff.shipSpeedMultiplier;
@@ -139,7 +141,7 @@
     // 布局乘区（物理结构不变），而驻舱的人随时会被撤走 —— 撤走就该立刻变慢，所以放这里。
     // 无人驻舱时 sf = 1.4（UNMANNED_PENALTY），不会被布局那一层的 clamp(0.65~1) 钳掉。
     const sf = (Base && Base.stationSpeedMult) ? Base.stationSpeedMult(state, queueType) : 1;
-    const effDur = (it) => it.dur / (pm * boosterSpeedFor(state, queueType, it)) * mm / (1 + smeltFit) * sf * (queueType === "manufacture" ? techManu : 1); // 棕化(pm<1)拉长；增强剂(逐队列项乘区)缩短；精通(mm<1)缩短；精炼泵缩短；驻舱技能缩短/无人拉长；科技树·柔性产线(manufacture)缩短
+    const effDur = (it) => it.dur / (pm * boosterSpeedFor(state, queueType, it)) * mm / (1 + smeltFit) * sf * ((queueType === "manufacture" || queueType === "equip") ? techManu : 1); // 棕化(pm<1)拉长；增强剂(逐队列项乘区)缩短；精通(mm<1)缩短；精炼泵缩短；驻舱技能缩短/无人拉长；科技树·柔性产线(manufacture)缩短
     // 增强剂双倍产出（冶炼/增幅剂）：取双倍概率；逐批确定性掷骰（派生 rng，避免在线/离线分歧）。
     const eff = (Booster && Booster.getEffectState) ? Booster.getEffectState(state) : null;
     const dblChance = (queueType === "smelt") ? (eff ? eff.doubleSmeltChance : 0)
@@ -207,7 +209,9 @@
     return { ok: true, ship: ship };
   }
 
-  // ---- 装备制造（总装船坞，共享 manufacture 槽位；完成入 state.equipment 库存）----
+  // ---- 装备制造（制造车间，独立 equip 队列；完成入 state.equipment 库存）----
+  // 2026-11-03 从总装船坞独立出来：此前与部件/造船共用 manufacture 槽位，现走 equipQueue，
+  // 槽位上限 = BODY_LEVELS[].equip（1/1/2/3）。舰体特化加成仍沿用总装坞的（见 Base.queueDurationMultiplier）。
   // 复刻 1 代舰船装配：装备按 T1-T5 分档（equipment.level: 1/15/35/55/80），
   // 映射到舰基核心等级门禁（bodyLevel 0-3，提议值）；消耗 equipment.cost，耗时 equipment.time。
   function equipGateLevel(equipLevel) { return Math.min(3, Math.floor((equipLevel - 1) / 20)); }
@@ -239,13 +243,14 @@
     const gate = equipGateLevel(Eq.level);
     if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
+    const eqUsed = (state.base.industry.equipQueue || []).length;
+    if (eqUsed >= plan.equip) return { ok: false, err: "制造车间槽位已满（需升级舰基）" };
     // 精密配给剂装备材料折扣（与 1 代 getEquipEngBuildingQuote 同口径）
     const eqCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, Eq.cost, "equip") : Eq.cost;
     if (!canAfford(state.res, eqCost)) return { ok: false, err: "原料不足" };
     spend(state.res, eqCost);
-    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
-    const q = state.base.industry.manufactureQueue;
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "equip") : 1;
+    const q = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
     q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: eqCost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, equip: Eq };
   }
@@ -331,6 +336,7 @@
     const all = [];
     all.push(...processQueue(state, "smelt", now, pm));
     all.push(...processQueue(state, "manufacture", now, pm));
+    all.push(...processQueue(state, "equip", now, pm));
     all.push(...processQueue(state, "invent", now, pm));
     all.push(...processQueue(state, "booster", now, pm));
     all.push(...processBuildQueue(state, now));

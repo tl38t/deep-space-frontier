@@ -1048,7 +1048,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   ok("考古:同种子周期序列可复现", JSON.stringify(seq1) === JSON.stringify(seq2), JSON.stringify(seq1.slice(0, 8)));
 })();
 
-// 27) 装备制造闭环（总装船坞）：buildEquipment 入 manufacture 队列 → 结算入库 state.equipment
+// 27) 装备制造闭环（制造车间 · 2026-11-03 独立队列）：buildEquipment 入 equip 队列 → 结算入库 state.equipment
 (function probeEquipment() {
   const P = Engine.Production;
   // 27a) T1 装备（analyzer_t1, level1→gate0）在起始档可造：扣原料 + 入队 + 结算入库
@@ -1057,10 +1057,11 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   for (const k in eq.cost) sb.res[k] = (sb.res[k] || 0) + eq.cost[k] + 100; // 备足原料
   const before = sb.equipment["analyzer_t1"] || 0;
   const r = P.buildEquipment(sb, "analyzer_t1");
-  ok("装备:起始档T1可造且入队", r.ok && (sb.base.industry.manufactureQueue || []).length === 1, JSON.stringify(r));
+  ok("装备:起始档T1可造且入队(equipQueue)", r.ok && (sb.base.industry.equipQueue || []).length === 1
+    && (sb.base.industry.manufactureQueue || []).length === 0, "equip=" + (sb.base.industry.equipQueue || []).length + " manu=" + (sb.base.industry.manufactureQueue || []).length);
   Engine.Settle.settle(sb, now + 60 * 1000); // time 20s × durationMult，结算完成
   ok("装备:结算后入库 state.equipment", (sb.equipment["analyzer_t1"] || 0) === before + 1, "equip=" + (sb.equipment["analyzer_t1"] || 0));
-  ok("装备:总装槽位已释放", P.manufactureUsed(sb) === 0, "used=" + P.manufactureUsed(sb));
+  ok("装备:结算后制造车间队列清空", (sb.base.industry.equipQueue || []).length === 0, "equipQueue=" + (sb.base.industry.equipQueue || []).length);
 
   // 27b) 等级门禁：T5（level80→gate3）在起始档被拒
   const sb2 = Engine.State.defaultState(now, Data);
@@ -1073,13 +1074,15 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   const r3 = P.buildEquipment(sb3, "analyzer_t1");
   ok("装备:原料不足被拒", r3.ok === false && r3.err.indexOf("原料不足") === 0, JSON.stringify(r3));
 
-  // 27d) 与造船共享总装槽位：造船占满后装备入队被拒
+  // 27d) 独立产线：造船占满总装坞不影响装备；装备自己按 plan.equip 卡槽位（起始档 1/1）
   const sb4 = Engine.State.defaultState(now, Data);
-  for (const k in eq.cost) sb4.res[k] = (sb4.res[k] || 0) + eq.cost[k] + 100;
+  for (const k in eq.cost) sb4.res[k] = (sb4.res[k] || 0) + (eq.cost[k] || 0) * 4 + 400;
   const bs = P.buildShip(sb4, "frigate"); // 占 1 个总装槽（起始档 manufacture=1）
-  ok("装备:先造舰占满总装槽", bs.ok && P.manufactureUsed(sb4) === 1, "used=" + P.manufactureUsed(sb4));
+  ok("装备:先造舰占满总装坞", bs.ok && P.manufactureUsed(sb4) === 1, "used=" + P.manufactureUsed(sb4));
   const rEq = P.buildEquipment(sb4, "analyzer_t1");
-  ok("装备:总装槽满后装备入队被拒", rEq.ok === false && rEq.err.indexOf("槽位已满") > -1, JSON.stringify(rEq));
+  ok("装备:总装坞满不影响装备入队（独立产线）", rEq.ok === true && (sb4.base.industry.equipQueue || []).length === 1, JSON.stringify(rEq).slice(0, 80));
+  const rEq2 = P.buildEquipment(sb4, "analyzer_t1");
+  ok("装备:制造车间槽满(1/1)时被拒", rEq2.ok === false && rEq2.err.indexOf("制造车间槽位已满") > -1, JSON.stringify(rEq2));
 
   // 27e) 蓝图门禁（1 代 ownedBlueprints 原样）：势力商店未实装期间由 BP_GRANT_ALL 全量授予
   const sb5 = Engine.State.defaultState(now, Data);

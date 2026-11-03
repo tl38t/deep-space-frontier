@@ -19,12 +19,14 @@
 
   const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
     ? window.NSK.Data.Ships : require("../data/ships.js");
-  const QUEUE_NAMES = { smelt: "精炼", manufacture: "制造", invent: "发明" };
+  const QUEUE_NAMES = { smelt: "精炼", manufacture: "制造", invent: "发明", booster: "增幅剂", equip: "装备" };
   const LINK_RULES = [
     { a: "energy", b: "smelt", queue: "smelt", mult: 0.92, name: "能源直供" },
     { a: "energy", b: "manufacture", queue: "manufacture", mult: 0.94, name: "能源直供" },
+    { a: "energy", b: "equip", queue: "equip", mult: 0.94, name: "能源直供" },
     { a: "cargo", b: "smelt", queue: "smelt", mult: 0.96, name: "短链物流" },
     { a: "cargo", b: "manufacture", queue: "manufacture", mult: 0.94, name: "短链物流" },
+    { a: "cargo", b: "equip", queue: "equip", mult: 0.94, name: "短链物流" },
   ];
 
   function normalize(state) {
@@ -39,9 +41,12 @@
       for (const m of state.members) if (!Array.isArray(m.milestones)) m.milestones = [];
     }
     // 向后兼容：旧档（version<8）缺工业 buildQueue / boosterQueue 字段时兜底（MVP 周五新增）
-    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [] };
+    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [] };
     else if (!Array.isArray(base.industry.buildQueue)) base.industry.buildQueue = [];
     if (!Array.isArray(base.industry.boosterQueue)) base.industry.boosterQueue = [];
+    // 2026-11-03：装备制造独立成「制造车间」队列。旧档只补空队列（不升版本、不迁移在制任务 ——
+    // 旧档 manufactureQueue 里已在造的装备任务 outType="equipment"，会照旧在总装坞跑完）。
+    if (!Array.isArray(base.industry.equipQueue)) base.industry.equipQueue = [];
     // 增强剂状态迁移到 state.boosters（全局 16 槽 + 库存=state.res["booster:<id>"]），见 engine/booster.js。
     // 旧档残留的 base.boosters（整舱生效简化版数组）在此清掉，避免与新模型混淆。
     if (Array.isArray(base.boosters)) delete base.boosters;
@@ -292,10 +297,13 @@
   function queueDurationMultiplier(state, queueType) {
     const slots = stateSlots(state).filter(s => s.type !== "core");
     const installedTypes = new Map(slots.map(s => [s.id, (moduleAt(state, s.id) || {}).type || null]));
+    // 制造车间（equip）沿用总装坞的特化舱位加成（军规装配位 / 战利品快装位…），
+    // 否则独立成舱后舰体特化对装备制造完全失效，等于白送一个负面。相邻增效另由 LINK_RULES 的 equip 条目给。
+    const specialKey = queueType === "equip" ? "manufacture" : queueType;
     let multiplier = 1;
     for (const slot of slots) {
       if (!installedTypes.get(slot.id)) continue;
-      if (slot.special && slot.special.id === slot.type && slot.special.queue === queueType) multiplier *= slot.special.speedMult;
+      if (slot.special && slot.special.id === slot.type && slot.special.queue === specialKey) multiplier *= slot.special.speedMult;
       if (slot.type !== "energy" && slot.type !== "cargo") continue;
       for (const other of slots) {
         if (Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) !== 1) continue;
@@ -324,9 +332,10 @@
 
   // ===== 驻舱（2026-11-01 技能体系）：一人一岗，与出征互斥 =====
   // 队列 → 承担该队列的舱段模块类型（造船与部件制造共用总装船坞）
-  const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture", booster: "booster" };
+  const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture", booster: "booster", equip: "equip" };
   // 队列 → 驻舱者决定耗时的技能键
-  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture", booster: "booster" };
+  // equip 复用「制造」技能：12 项技能体系不新增键（上限 10 级 / 总和 30 的约束不变）。
+  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture", booster: "booster", equip: "manufacture" };
   const UNMANNED_PENALTY = 1.4;   // 舱段无人：该队列耗时 ×1.4（约 71% 速度）
 
   function stationedAt(state, slotId) {

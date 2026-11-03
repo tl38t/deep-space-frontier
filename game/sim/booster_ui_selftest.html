@@ -78,31 +78,30 @@ let BACKUP=null, KEY=null;
   const panelShown=await until(()=>D().querySelector(".booster-grid"),15000);
   ok("舰基页已渲染增强剂面板", panelShown);
 
-  // 渲染结构断言
-  ok("反应实验室 + 16槽 两个区块", D().querySelectorAll(".booster-sec").length===2, D().querySelectorAll(".booster-sec").length+" 个 .booster-sec");
+  // 渲染结构断言（2026-11-03：内联「增幅剂制造」整段迁入舱段工作台，这里只剩 16 槽装载）
+  ok("只保留装载区块（1 个 .booster-sec）", D().querySelectorAll(".booster-sec").length===1, D().querySelectorAll(".booster-sec").length+" 个 .booster-sec");
   ok("16 个槽位元素", D().querySelectorAll(".booster-slot").length===16, D().querySelectorAll(".booster-slot").length+" 个");
   ok("8 个分组标题", D().querySelectorAll(".booster-group-head").length===8, D().querySelectorAll(".booster-group-head").length+" 个");
   ok("反应实验室标题存在", /反应实验室/.test(D().querySelector("#nsk-view").textContent));
   ok("装载选择器弹窗元素存在", !!D().querySelector("#nsk-booster-picker"));
   ok("瓶身库存区存在", /瓶身库存/.test(D().querySelector("#nsk-view").textContent));
 
-  // 制造测试：点 craft 按钮。等自动存档刷盘后，以「队列+1 / 原料已扣 / 瓶身已入库」任一成立判通过。
-  const r0=W().BOOSTER_RECIPES[0];
-  const craftBtn=D().querySelector('[data-act="booster:craft:'+r0.id+'"]');
-  ok("找到可制造的配方按钮（已解锁+买得起）", !!craftBtn && !craftBtn.disabled, craftBtn?(craftBtn.disabled?"disabled":"enabled"):"无");
-  const qBefore=(W().NSK.Core.load().base.industry.boosterQueue||[]).length;
-  const invBefore=(W().NSK.Core.load().res[r0.itemId])||0;
-  const cost0=B.craftCost(W().NSK.Core.load(), r0.id);
-  const rbk=Object.keys(cost0)[0];
-  const resBefore=(W().NSK.Core.load().res[rbk])||0;
-  if(craftBtn && !craftBtn.disabled){ craftBtn.click(); }
-  const stPost=await flushRead();
-  const qAfter=(stPost.base.industry.boosterQueue||[]).length;
-  const invAfter=(stPost.res[r0.itemId])||0;
-  const resAfter=(stPost.res[rbk])||0;
-  ok("点制造后反应实验室产出生效（队列+1 / 原料已扣 / 瓶身已入库）",
-     (qAfter>qBefore)||(invAfter>invBefore)||(resAfter<resBefore),
-     "q:"+qBefore+"→"+qAfter+" inv:"+invBefore+"→"+invAfter+" res("+rbk+"):"+resBefore+"→"+resAfter);
+  // 制造入口：内联按钮已删除，唯一入口是「反应实验室」舱段卡片 → 舱段工作台
+  ok("舰基页不再有内联制造按钮", D().querySelectorAll('[data-act^="booster:craft:"]').length===0,
+    D().querySelectorAll('[data-act^="booster:craft:"]').length+" 个残留");
+  const boosterCard=D().querySelector('[data-act="baseinfo:booster"]');
+  ok("舰基页有「反应实验室」舱段卡片", !!boosterCard);
+  if(boosterCard) boosterCard.click();
+  const wbOn=await until(()=>D().querySelector(".wb-overlay.active"),8000);
+  ok("点反应实验室打开舱段工作台", wbOn);
+  ok("工作台列出增强剂配方卡", D().querySelectorAll(".wb-overlay.active .wb-recipe").length>0,
+    D().querySelectorAll(".wb-overlay.active .wb-recipe").length+" 张");
+  const capEl=D().querySelector(".wb-overlay.active .wb-cap");
+  ok("工作台有「可产批数」提示", !!capEl && /最多|材料不足|选择配方/.test(capEl.textContent||""), capEl?capEl.textContent:"无");
+  const wbX=D().querySelector('.wb-overlay.active [data-act="workbench:close"]');
+  if(wbX) wbX.click();
+  await wait(300);
+  ok("关闭工作台回到舰基页", !D().querySelector(".wb-overlay.active"));
 
   // 选择器开/关测试
   const loadBtn=D().querySelector('[data-act^="booster:load:"]');

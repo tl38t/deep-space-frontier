@@ -1,0 +1,177 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>制造车间（装备制造舱段）真机自测</title>
+<style>body{font:12px/1.5 monospace;background:#0b1119;color:#cfe3ea;margin:0;padding:10px}
+#log{white-space:pre-wrap}#fr{position:fixed;left:-9999px;top:0;width:1260px;height:1000px}</style></head>
+<body><pre id="log">running</pre>
+<iframe id="fr"></iframe>
+<script>
+const out=[];const log=s=>{out.push(s);document.getElementById("log").textContent=out.join("\n");};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr"),D=()=>fr.contentDocument,W=()=>fr.contentWindow;
+const nav=u=>new Promise(r=>{fr.onload=()=>{fr.onload=null;r();};fr.src=u;});
+const q=s=>{try{return D().querySelector(s);}catch(e){return null;}};
+const qa=s=>{try{return [...D().querySelectorAll(s)];}catch(e){return [];}};
+const clickEl=el=>{if(el)try{el.click();return true;}catch(e){return false;}};
+const until=(fn,t=15000,step=120)=>new Promise(res=>{const t0=Date.now();(function lp(){let v;try{v=fn();}catch(e){v=null;}if(v)return res(v);if(Date.now()-t0>t)return res(null);setTimeout(lp,step);})();});
+let pass=0,fail=0,ERRS=[];
+function ok(name,cond,info){if(cond){pass++;log("[PASS] "+name+(info?" · "+info:""));}else{fail++;log("[FAIL] "+name+(info?" · "+info:""));}}
+const LIVE=()=>W().NSK.Core.Persistence&&W().NSK.Core.Persistence.state;
+
+(async()=>{
+  await nav("../index.html?t="+Date.now()+"#base");
+  await new Promise(r=>setTimeout(r,3200));
+  W().addEventListener("error",e=>{ERRS.push(e.message);log("[ERR] "+e.message);});
+  W().addEventListener("unhandledrejection",e=>{ERRS.push(String(e.reason));log("[REJ] "+e.reason);});
+  clickEl(q('[data-act="tab:base"]'));
+  await wait(800);
+
+  const S=W().NSK.Data.Ships, E=W().NSK.Data.Equipment, B=W().NSK.Engine.Base, P=W().NSK.Engine.Production;
+
+  // === 1. 数据层：舱段定义 / 坐标 / 容量 / 队列字段 ===
+  const def=S.baseModuleByType("equip");
+  ok("BASE_MODULES 有 equip 舱段", !!def, def?def.name:"无");
+  ok("舱段名为「制造车间」", !!def && def.name==="制造车间", def?def.name:"");
+  ok("舱段有图标与能耗", !!def && !!def.icon && typeof def.energy==="number", def?(def.icon+" / ⚡"+def.energy):"");
+
+  let hullBad=[], cellClash=[], missCoord=[];
+  for(const h of S.BASE_HULLS){
+    if(!h.layout.equip){missCoord.push(h.id);continue;}
+    const slots=S.baseHullSlots(h);
+    const cells={}, dup=[];
+    slots.forEach(s=>{const k=s.x+","+s.y; if(cells[k])dup.push(k); cells[k]=1;});
+    if(dup.length) cellClash.push(h.id+"@"+dup.join("/"));
+    if(slots.filter(s=>s.type==="equip").length!==1) hullBad.push(h.id);
+  }
+  ok("8 个舰体都配了制造车间坐标", missCoord.length===0, missCoord.join(",")||"全齐");
+  ok("每舰恰好 1 个 equip 舱位", hullBad.length===0, hullBad.join(",")||"全对");
+  ok("加舱段后无坐标撞车", cellClash.length===0, cellClash.join(" | ")||"无重叠");
+
+  const caps=S.BODY_LEVELS.map(b=>b.equip);
+  ok("BODY_LEVELS 容量 = 1/1/2/3", caps.join("/")==="1/1/2/3", caps.join("/"));
+
+  const st0=LIVE();
+  ok("state.industry 有 equipQueue 数组", Array.isArray(st0.base.industry.equipQueue));
+  ok("equipQueue 初始为空", st0.base.industry.equipQueue.length===0);
+
+  // === 2. 电网：equip 舱段计入负载 15 ===
+  const usedAll=B.energyUsed(st0);
+  const sumAll=S.BASE_HULLS.length? Object.values(S.BASE_MODULES).reduce((a,m)=>a+(m.energy||0),0):0;
+  ok("energyUsed 含所有已装舱段（默认全装）", usedAll===sumAll, usedAll+" vs "+sumAll);
+  const eqDef=S.baseModuleByType("equip");
+  ok("equip 能耗计入 total（15）", eqDef.energy===15 && sumAll>=15, "⚡"+eqDef.energy);
+
+  // === 3. 舰基页：制造车间舱段卡片存在且可点开工作台 ===
+  const card=q('[data-act="baseinfo:equip"]');
+  ok("舰基页出现制造车间舱段卡片", !!card, card?card.querySelector("b").textContent:"无");
+  clickEl(card);
+  const ov=await until(()=>q(".wb-overlay.active"),8000);
+  ok("点卡片弹出工作台(.wb-overlay.active)", !!ov);
+  ok("未误弹明细弹窗(.bi-overlay.active)", !q(".bi-overlay.active"));
+  ok("工作台标题为制造车间", /制造车间/.test((q(".wb-overlay.active .wb-head b")||{}).textContent||""), (q(".wb-overlay.active .wb-head b")||{}).textContent);
+
+  // === 4. 分类标签：高/中/低（改装件恒空自动隐藏）===
+  const cats=qa(".wb-overlay.active .wb-cat");
+  const expectSlots=[["high","高槽"],["mid","中槽"],["low","低槽"]];
+  const eqCats=expectSlots.filter(([id])=>E.bySlot(id).length>0);
+  ok("分类标签数 = 有装备的槽位数", cats.length===eqCats.length, cats.length+" vs "+eqCats.length);
+  ok("标签名 = 高槽/中槽/低槽", cats.map(e=>e.textContent.replace(/\d+$/,"").trim()).join(",")===eqCats.map(c=>c[1]).join(","), cats.map(e=>e.textContent.trim()).join(" / "));
+  ok("改装件（0 件）不出现标签", !cats.some(e=>/改装件/.test(e.textContent)), "rig="+E.bySlot("rig").length);
+
+  let rc=qa(".wb-overlay.active .wb-recipe");
+  ok("默认分类卡片数 = 高槽装备数", rc.length===E.bySlot("high").length, rc.length+" vs "+E.bySlot("high").length);
+
+  const lowBtn=q('.wb-overlay.active [data-act="workbench:cat:low"]');
+  clickEl(lowBtn); await wait(200);
+  rc=qa(".wb-overlay.active .wb-recipe");
+  ok("切「低槽」后卡片数 = 低槽装备数", rc.length===E.bySlot("low").length, rc.length+" vs "+E.bySlot("low").length);
+  ok("切换后仅低槽高亮", qa(".wb-overlay.active .wb-cat.sel").length===1 && q('.wb-overlay.active .wb-cat.sel').getAttribute("data-act")==="workbench:cat:low");
+
+  // === 5. 制造：进 equipQueue，且不占用总装船坞 ===
+  const st=LIVE();
+  const first=rc[0];
+  const eid=first.getAttribute("data-act").split(":")[2];
+  const eq=E.byId(eid);
+  for(const k in (eq.cost||{})) st.res[k]=(st.res[k]||0)+((eq.cost[k]||0)*3+50);
+  st.base.industry.equipQueue=[];
+  st.base.industry.manufactureQueue=[]; st.base.industry.buildQueue=[];
+  await wait(150);
+  clickEl(first); await wait(150);
+  ok("点击装备后高亮", !!q(".wb-overlay.active .wb-recipe.sel"));
+
+  const mUsed0=P.manufactureUsed(st);
+  clickEl(q('.wb-overlay.active [data-act="workbench:add"]'));
+  await wait(300);
+  const qn=(st.base.industry.equipQueue||[]).length;
+  ok("加入队列后 equipQueue +1", qn===1, "len="+qn);
+  ok("总装船坞占用未变（独立产线）", P.manufactureUsed(st)===mUsed0, "manuUsed="+mUsed0+"→"+P.manufactureUsed(st));
+  ok("队列项 outType=equipment", st.base.industry.equipQueue[0].outType==="equipment", st.base.industry.equipQueue[0].outType);
+  ok("槽位上限来自 plan.equip", S.bodyLevelPlan(st.base.bodyLevel).equip===1, "plan.equip="+S.bodyLevelPlan(st.base.bodyLevel).equip);
+
+  // 槽位已满时再入队应被拒
+  const r2=P.buildEquipment(st, eid, 1);
+  ok("槽位满时拒绝入队（1/1）", r2&&r2.ok===false, (r2&&r2.err)||"");
+
+  // === 6. 结算：把队首时间提前，跑一次 processAll，装备应入库 ===
+  // ⚠️ effDur 含电网棕化(pm<1)与无人驻舱(×1.4)，远比 it.dur 长；倒退时间必须给足余量，
+  //    否则 elapsed < effDur，队列不动（上一版就栽在这里，误判成引擎坏）。
+  const before=(st.equipment[eid]||0);
+  const it=st.base.industry.equipQueue[0];
+  it.startedAt = Date.now() - (it.dur*1000*8 + 60000);
+  P.processAll(st, Date.now());
+  await wait(150);
+  ok("到点后装备入 state.equipment", (st.equipment[eid]||0)===before+1, before+"→"+(st.equipment[eid]||0));
+  ok("完成后队列归 0", (st.base.industry.equipQueue||[]).length===0, "len="+(st.base.industry.equipQueue||[]).length);
+
+  // 取消路径
+  st.res && (st.base.industry.equipQueue=[]);
+  for(const k in (eq.cost||{})) st.res[k]=(st.res[k]||0)+((eq.cost[k]||0)*3+50);
+  P.buildEquipment(st, eid, 3);
+  await wait(120);
+  const qBefore=(st.base.industry.equipQueue||[]).length;
+  clickEl(q('.wb-overlay.active [data-act="workbench:cancel:equipQueue:0"]'));
+  await wait(200);
+  ok("点 × 取消后 equipQueue 归 0", (st.base.industry.equipQueue||[]).length===0, "before="+qBefore);
+
+  clickEl(q('.wb-overlay.active [data-act="workbench:close"]'));
+  await wait(150);
+  ok("关闭后弹窗消失", !q(".wb-overlay.active"));
+
+  // === 7. 舰基页内联块已移除，库存展示还在 ===
+  const vt=(q("#nsk-view")||{}).textContent||"";
+  ok("内联「装备制造 · 总装船坞」标题已移除", !/装备制造 · 总装船坞/.test(vt));
+  ok("仍保留「已存装备」库存块", /已存装备/.test(vt));
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,2).join(" | ")||"无");
+
+  // === 8. 旧档补装路径：模块在库未安装 → 卡片显示「空舱位」 → 点开可安装 ===
+  // （normalize 的 starter 循环会把新舱段塞进 owned，但不动 installed；老档玩家需自己装入）
+  B.uninstallModule(st, "equip");
+  clickEl(q('[data-act="tab:base"]'));   // 重渲染
+  await wait(500);
+  const emptyCard=q('[data-act="baseinfo:equip"]');
+  ok("拆下后卡片显示空舱位", !!emptyCard && /空舱位/.test(emptyCard.textContent||""), (emptyCard||{}).textContent);
+  clickEl(emptyCard);
+  await until(()=>q(".bi-overlay.active"),6000);
+  ok("空舱位点开走明细弹窗(.bi-overlay)而非工作台", !!q(".bi-overlay.active") && !q(".wb-overlay.active"));
+  const instBtn=q('.bi-overlay.active [data-act="moduleInstall:equip:module_equip_01"]');
+  ok("明细弹窗里有「安装到该舱位」按钮", !!instBtn);
+  if(instBtn) clickEl(instBtn);
+  await wait(400);
+  ok("点安装后制造车间回到已装状态", (st.base.modules.installed||[]).some(x=>x.slotId==="equip"), JSON.stringify((st.base.modules.installed||[]).find(x=>x.slotId==="equip")||null));
+  ok("安装消耗计入电网（负载 +15）", B.energyUsed(st)===usedAll, B.energyUsed(st)+" vs "+usedAll);
+
+  // === 9. 旧存档 normalize：自动补模块到库、不自动装、补空队列、不升版本 ===
+  const OLD = W().NSK.Engine.State.defaultState(Date.now(), W().NSK.Data);
+  OLD.base.modules.owned = OLD.base.modules.owned.filter(m => m.type !== "equip");
+  OLD.base.modules.installed = OLD.base.modules.installed.filter(x => x.slotId !== "equip");
+  delete OLD.base.industry.equipQueue;
+  const verBefore = OLD.version;
+  B.normalize(OLD);
+  ok("旧档 normalize 后模块库补上制造车间", OLD.base.modules.owned.some(m => m.type === "equip"), JSON.stringify((OLD.base.modules.owned.find(m=>m.type==="equip")||{})));
+  ok("旧档不会自动安装（需玩家手动装）", !OLD.base.modules.installed.some(x => x.slotId === "equip"), "installed=" + OLD.base.modules.installed.length);
+  ok("旧档 normalize 后 equipQueue 补成空数组", Array.isArray(OLD.base.industry.equipQueue) && OLD.base.industry.equipQueue.length === 0);
+  ok("normalize 不改存档版本号", OLD.version === verBefore, verBefore + "→" + OLD.version);
+  ok("旧档可成功装入制造车间", B.installModule(OLD, "equip", "module_equip_01").ok === true);
+
+  log("RESULT: PASS="+pass+" FAIL="+fail);
+})();
+</script></body></html>

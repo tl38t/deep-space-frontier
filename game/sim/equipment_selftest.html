@@ -32,19 +32,40 @@ const txt=(el)=>el?el.textContent.trim():"";
   if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
   try{ fr.contentWindow.addEventListener("error", e=>errs.push(e.message)); }catch(e){}
 
-  // 舰基页：装备制造面板
-  const panel=await until(()=>{
-    const els=[...qa(".panel h3")];
-    return els.some(h=>/装备制造/.test(h.textContent));
-  },12000);
-  ok("舰基页出现「装备制造」面板", panel);
-  if(!panel){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  // 舰基页：制造车间舱段（2026-11-03 内联「装备制造」面板整体撤销，改为独立舱段 + 工作台）
+  const equipCardThere=await until(()=>q('[data-act="baseinfo:equip"]'),12000);
+  ok("舰基页出现「制造车间」舱段卡片", equipCardThere);
+  if(!equipCardThere){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  const equipCard=q('[data-act="baseinfo:equip"]');
 
-  const btns=qa('[data-act^="batch:build_equip:"]');
-  ok("制造按钮总数 = 113", btns.length===113, "count="+btns.length);
+  // 点舱段卡片 → 打开舱段工作台（不是旧的舱段明细弹窗）
+  equipCard.click();
+  const wbOpen=await until(()=>q(".wb-overlay.active"),8000);
+  ok("点制造车间打开舱段工作台", wbOpen);
+  ok("不再走旧的舱段明细弹窗", !q(".bi-overlay.active"));
+  ok("工作台标题为「制造车间」", /制造车间/.test(txt(q(".wb-overlay.active .wb-head b"))), txt(q(".wb-overlay.active .wb-head b")));
 
-  const groups=qa(".eq-slot-group");
-  ok("槽位分组 = 3（高/中/低，改装件无装备）", groups.length===3, "groups="+groups.length);
+  // 分类标签 = 3（高/中/低；改装件 0 件，自动从标签条消失）
+  const catCount=qa(".wb-overlay.active .wb-cat").length;
+  ok("槽位分类标签 = 3（高/中/低，改装件无装备自动隐藏）", catCount===3,
+    "cats="+[...qa(".wb-overlay.active .wb-cat")].map(c=>txt(c).replace(/\d+$/,"")).join("/"));
+
+  // 逐类点开，累计配方卡数应等于全部装备数（113）
+  // ⚠️ 每次点击都会让工作台整体重渲染，旧节点当场脱离文档 → 必须每轮重新查询，不能缓存数组。
+  const seen=new Set();
+  for(let i=0;i<catCount;i++){
+    const c=qa(".wb-overlay.active .wb-cat")[i];
+    if(!c) break;
+    c.click();
+    await wait(260);
+    [...qa(".wb-overlay.active .wb-recipe")].forEach(b=>{
+      const act=b.getAttribute("data-act")||"";
+      const id=act.split(":")[2];
+      if(id) seen.add(id);
+    });
+  }
+  const totalEq=(function(){ try{ return fr.contentWindow.NSK.Data.Equipment.all().length; }catch(e){ return -1; } })();
+  ok("三类累计配方卡 = 装备总数", seen.size===totalEq, "seen="+seen.size+" total="+totalEq);
 
   const need=[
     ["t1_small_laser","小型激光炮 I（战斗武器）"],
@@ -55,8 +76,21 @@ const txt=(el)=>el?el.textContent.trim():"";
     ["sansha_mineral_assimilation","矿物同化注入器（势力装备）"],
   ];
   for(const [id,label] of need){
-    ok("在位：" + label, !!qa('[data-act="batch:build_equip:'+id+'"]').length);
+    ok("在位：" + label, seen.has(id));
   }
+
+  // 已存装备库存（原内联面板的位置，现在只做展示）
+  const stock=await until(()=>{
+    const els=[...qa(".panel h3")];
+    return els.some(h=>/已存装备/.test(h.textContent));
+  },6000);
+  ok("舰基页保留「已存装备」库存区", stock);
+
+  // 关掉工作台，后面的舰队页断言需要点得到底层页面
+  const wbX=q('.wb-overlay.active [data-act="workbench:close"]');
+  if(wbX) wbX.click();
+  await wait(250);
+  ok("工作台可关闭", !q(".wb-overlay.active"));
 
   // 势力门槛应体现在名称/成本上（按钮存在即可，实际拦截在引擎层）
   const eqErr = (function(){

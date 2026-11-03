@@ -58,7 +58,7 @@
         fuel: 100,
         fuelMax: 200,
         bodyLevel: 0,          // 0=空间站(Lv1 本体)，见 ships.BODY_LEVELS
-        industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [] },
+        industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [] },
       }),
       starMap: map,
       members: members,

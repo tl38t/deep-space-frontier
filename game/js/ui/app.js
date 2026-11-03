@@ -908,149 +908,19 @@
     if (note) note.textContent = "成功率按「" + m.name + "」的考古等级估算，换成员会变。";
   }
 
-  // ---------- 批量制造确认弹窗（1 代式 ×N，服务于精炼 / 部件制造 / 装备制造 / 造船）----------
-  // 思路复用 1 代「按材料算上限 + 总耗时 = 单次 × 次数」，但本作自写：
-  // 1 代 action-modal 绑死其 getActionConfirmationDisplayState 契约 + i18n + 资源系统，不可直接搬。
-  let _batchTarget = null, _batchMax = 0, _batchSingleDur = 0;
-
-  // 解析目标为「单次成本 / 单次耗时 / 产出 / 门禁」，三种队列共用。
-  function batchResolve(target) {
-    const durMult = Engine.Base.queueDurationMultiplier(state, target.kind === "enqueue" ? target.queueType : "manufacture");
-    if (target.kind === "enqueue") {
-      const tbl = target.queueType === "smelt" ? Data.Recipes.SMELT : Data.Recipes.COMPONENT;
-      const r = (tbl || []).find(x => x.id === target.recipeId);
-      if (!r) return null;
-      return { name: resName(r.out), cost: r.in, dur: r.dur * durMult, qty: r.qty, out: r.out,
-        gateOk: r.bodyLevelReq == null || state.base.bodyLevel >= r.bodyLevelReq };
-    }
-    if (target.kind === "build_equip") {
-      const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(target.equipId) : null;
-      if (!Eq) return null;
-      return { name: Eq.name, cost: Eq.cost, dur: Eq.time * durMult, qty: 1, out: target.equipId,
-        gateOk: state.base.bodyLevel >= Engine.Production.equipGateLevel(Eq.level) };
-    }
-    if (target.kind === "build") {
-      const s = Data.Ships.shipById(target.shipId);
-      if (!s) return null;
-      return { name: s.name, cost: s.cost, dur: s.buildTime * durMult, qty: 1, out: target.shipId,
-        gateOk: Data.Ships.canBuildAt(s.id, state.base.bodyLevel) };
-    }
-    return null;
-  }
-
-  // 按材料算「当前可产批数」：floor(min(库存 / 单次成本))。这是 1 代 maxCount 的等价实现。
-  function batchMaxCount(cost) {
-    let m = Infinity;
-    for (const k in cost) m = Math.min(m, Math.floor((state.res[k] || 0) / cost[k]));
-    return m === Infinity ? 0 : m;
-  }
-
-  // 可用生产线槽位（1 个队列项占 1 槽但吃 N 批；满则无法入队）。
-  function batchFreeSlots(target) {
-    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    if (target.kind === "enqueue") {
-      const t = target.queueType;
-      const slots = t === "smelt" ? plan.smelt : t === "manufacture" ? plan.manufacture : plan.invent;
-      return slots - (state.base.industry[t + "Queue"] || []).length;
-    }
-    return plan.manufacture - Engine.Production.manufactureUsed(state);
-  }
-
-  function batchNormCost(info) {
-    return (typeof info.cost === "object" && info.cost) ? info.cost : { [info.cost]: (info.qty || 1) };
-  }
-
-  function updateBatchSummary() {
-    const input = document.getElementById("bm-count");
-    let n = Math.max(1, parseInt(input.value) || 1);
-    if (_batchMax > 0) n = Math.min(n, _batchMax);
-    input.value = n;
-    document.querySelectorAll(".bm-q").forEach(q => q.classList.remove("on"));
-    document.getElementById("bm-summary").innerHTML = "总耗时 ≈ <b>" + fmtDur(_batchSingleDur * n) + "</b> · 共 <b>" + n + "</b> 批";
-  }
-
-  function batchRender() {
-    const info = batchResolve(_batchTarget);
-    const ov = document.getElementById("nsk-batch-modal");
-    if (!info) { ov.classList.remove("active"); return; }
-    const cost = batchNormCost(info);
-    _batchMax = batchMaxCount(cost);
-    _batchSingleDur = info.dur;
-    const verb = _batchTarget.kind === "build" ? "建造" : (_batchTarget.kind === "build_equip" ? "制造" : "排产");
-    const slotFree = batchFreeSlots(_batchTarget);
-    const blocked = !info.gateOk || slotFree <= 0;
-    if (blocked) _batchMax = 0;
-    const input = document.getElementById("bm-count");
-    input.max = _batchMax > 0 ? _batchMax : 1;
-    input.value = (_batchMax > 0) ? 1 : 0;
-    document.getElementById("bm-title").textContent = verb + " · " + info.name;
-    document.getElementById("bm-info").innerHTML =
-      '<div>单次耗时 <b>' + (Math.round(info.dur * 10) / 10) + 's</b>（基础，不含增强剂 / 驻舱 / 精通）</div>'
-      + '<div>单次产出 ' + ((_batchTarget.kind === "enqueue")
-        ? (resIcon(info.out) + resName(info.out) + " ×" + info.qty)
-        : (esc(info.name) + " ×" + info.qty)) + '</div>';
-    document.getElementById("bm-res").innerHTML = Object.keys(cost).map(k => {
-      const stock = state.res[k] || 0, enough = stock >= cost[k];
-      return '<div class="bm-row' + (enough ? "" : " short") + '"><span class="bm-name">'
-        + resIcon(k) + resName(k) + " ×" + cost[k] + '</span><span class="bm-stock">库存 ' + fmt(stock) + "</span></div>";
-    }).join("");
-    document.getElementById("bm-maxhint").innerHTML = _batchMax > 0
-      ? '材料可产 <b>' + _batchMax + '</b> 批' + (slotFree <= 0 ? '（生产线槽位已满）' : '')
-      : (blocked ? (slotFree <= 0 ? '生产线槽位已满（需升级舰基）' : '当前门禁未满足，无法' + verb) : '材料不足，无法' + verb);
-    const confirmBtn = document.getElementById("bm-confirm");
-    confirmBtn.textContent = "确认" + verb;
-    confirmBtn.disabled = _batchMax <= 0;
-    updateBatchSummary();
-    ov.classList.add("active");
-  }
-
-  function openBatchModal(target) { _batchTarget = target; batchRender(); }
-  function closeBatchModal() { _batchTarget = null; const ov = document.getElementById("nsk-batch-modal"); if (ov) ov.classList.remove("active"); }
-
-  function initBatchModal() {
-    const ov = document.getElementById("nsk-batch-modal");
-    if (!ov) return;
-    const input = document.getElementById("bm-count");
-    input.addEventListener("input", updateBatchSummary);
-    document.querySelectorAll(".bm-q").forEach(btn => btn.addEventListener("click", function () {
-      const q = btn.getAttribute("data-q");
-      let n = (q === "max") ? (_batchMax > 0 ? _batchMax : 1) : (parseInt(q) || 1);
-      if (_batchMax > 0) n = Math.min(n, _batchMax);
-      input.value = n;
-      document.querySelectorAll(".bm-q").forEach(x => x.classList.remove("on"));
-      btn.classList.add("on");
-      updateBatchSummary();
-    }));
-    document.getElementById("bm-cancel").addEventListener("click", closeBatchModal);
-    document.getElementById("bm-confirm").addEventListener("click", function () {
-      const info = batchResolve(_batchTarget);
-      if (!info) { closeBatchModal(); return; }
-      const cost = batchNormCost(info);
-      let n = Math.max(1, parseInt(document.getElementById("bm-count").value) || 1);
-      // 确认时再 clamp 一次：防静默丢批（材料可能在开弹窗后被别处消耗，导致 repeat>可产批数）。
-      const cap = batchMaxCount(cost);
-      if (n > cap) { n = cap; toast("材料仅够 " + n + " 批，已调整"); }
-      if (n <= 0) { toast("材料不足"); closeBatchModal(); return; }
-      const t = _batchTarget;
-      let r;
-      if (t.kind === "enqueue") r = Engine.Production.enqueue(state, t.queueType, t.recipeId, n);
-      else if (t.kind === "build_equip") r = Engine.Production.buildEquipment(state, t.equipId, n);
-      else if (t.kind === "build") r = Engine.Production.buildShip(state, t.shipId, n);
-      if (r && r.ok) toast((t.kind === "build" ? "开始建造 " : t.kind === "build_equip" ? "开始制造 " : "已排产 ") + info.name + " ×" + n);
-      else toast((r && r.err) || "操作失败");
-      closeBatchModal();
-      renderView();
-    });
-    ov.addEventListener("click", function (e) { if (e.target === ov) closeBatchModal(); });
-  }
-
   function baseQueueState(type, recipes) {
     const q = state.base.industry[type + "Queue"] || [];
     const it = q[0];
     const recipe = it && recipes ? recipes.find(r => r.id === it.recipeId) : null;
     if (!it) return { count: 0, label: "待命", progress: 0, detail: "暂无排产" };
     const p = Core.clamp((Date.now() - it.startedAt) / 1000 / it.dur, 0, 1);
-    return { count: q.length, label: recipe ? resName(recipe.out) : it.recipeId, progress: p, detail: "批次 " + (it.done + 1) + "/" + it.repeat };
+    // 制造车间（equip）队列项存的是装备 id，没有 Recipes 表，直接查 Equipment
+    let label;
+    if (type === "equip") {
+      const E = Data.Equipment, eq = E && E.byId ? E.byId(it.recipeId) : null;
+      label = eq ? eq.name : it.recipeId;
+    } else label = recipe ? resName(recipe.out) : it.recipeId;
+    return { count: q.length, label: label, progress: p, detail: "批次 " + (it.done + 1) + "/" + it.repeat };
   }
 
   function baseInventoryStrip() {
@@ -1112,12 +982,13 @@
     // 「停泊」= 库存里没人开的船（含在役数会让玩家以为造完就自动配人了）
     // 这里直接数，不调 Fleet.summary —— 那是渲染路径，不该顺带跑 ensure 改 state。
     const stockShips = (state.ships || []).filter(s => !s.memberId && s.status !== "lost").length;
-    const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "成员舱" };
+    const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", equip: "装备 / 改装件", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "成员舱", booster: "增强剂瓶身" };
     let label = installed ? "在线" : "待装配";
     let progress = 0;
     if (installed && slot.type === "smelt") { const q = baseQueueState("smelt", Data.Recipes.SMELT); label = q.count ? q.label : "精炼待命"; progress = q.progress; }
     if (installed && slot.type === "manufacture") { const q = baseQueueState("manufacture", Data.Recipes.COMPONENT); label = q.count ? q.label : "总装待命"; progress = q.progress; }
     if (installed && slot.type === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
+    if (installed && slot.type === "equip") { const q = baseQueueState("equip", null); label = q.count ? q.label : "制造待命"; progress = q.progress; }
     if (installed && slot.type === "cargo") label = "真实库存 · 可用";
     if (installed && slot.type === "dock") label = "待配属 " + stockShips + " 艘";
     if (installed && slot.type === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
@@ -1265,12 +1136,12 @@
     html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
     for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
     const installedCount = state.base.modules.installed.length;
-    html += '</div><div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent) + '</span></div></div>';
+    html += '</div><div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span></div></div>';
     html += '</div>';
-    html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
+    html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>装备 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
     // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
-    html += '<div class="panel dim">精炼 / 制造 / 发明 / 造船 统一在「舱段工作台」中操作：点击舰基页对应的 <b>精炼环 · 总装船坞 · 发明舱</b> 卡片即可打开弹窗（可连续冶炼、加队列、随时取消）。</div>';
-    html += equipCraftBlock();
+    html += '<div class="panel dim">精炼 / 制造 / 发明 / 造船 / 增强剂 / 装备 统一在「舱段工作台」中操作：点击舰基页对应的 <b>精炼环 · 总装船坞 · 发明舱 · 反应实验室 · 制造车间</b> 卡片即可打开弹窗（可连续生产、加队列、随时取消）。</div>';
+    html += equipStockBlock();
     html += repairDockBlock();
     // 剿匪编制上限（科技解锁 1→2→3，见「科技」页）——原先的「花钱升级小队协议」已退役
     const capNow = Engine.Combat.squadCapacity(state);
@@ -1288,7 +1159,7 @@
       '</div>' +
       '<div class="energy-bar"><div class="energy-fill ' + (pw.ok ? "ok" : "over") + '" style="width:' + Math.min(100, pwPct) + '%"></div></div>' +
       '<div class="dim">总供能 = 本体外壳电网 ' + Data.Ships.bodyLevelPlan(state.base.bodyLevel).energy + ' + 能源舱 ×' + Data.Ships.ENERGY_OUTPUT + '。' +
-      '各舱段占用：精炼环 20 · 总装船坞 30 · 发明舱 40 · 泊位 10 · 指挥塔 10 · 居住舱 10 · 仓储舱 5（能源舱自身 0）。超载时工业队列按比例降速，安装舱段受电网预算门禁。</div></div>';
+      '各舱段占用：精炼环 20 · 总装船坞 30 · 发明舱 40 · 制造车间 15 · 反应实验室 25 · 泊位 10 · 指挥塔 10 · 居住舱 10 · 仓储舱 5（能源舱自身 0）。超载时工业队列按比例降速，安装舱段受电网预算门禁。</div></div>';
     // 物流调度（§1.2）：物流补偿 + 在勤物流岗 + 公式说明
     const logiOnDuty = state.members.filter(m => !m.destroyed && m.assignment && m.assignment.type === "logistics").length;
     const logiComp = (state.logistics && state.logistics.compensation) || 0;
@@ -1344,41 +1215,15 @@
     const m = Math.floor(sec / 60), s = sec % 60;
     return m + "m" + (s ? " " + s + "s" : "");
   }
-  // 装备制造面板（总装船坞，共享 manufacture 槽位；完成入 state.equipment 库存）
-  function equipCraftBlock() {
+  // 已存装备（2026-11-03 装备制造迁入「制造车间」舱段工作台后，这里只留库存展示）
+  // 制造入口：点击舰基页「制造车间」舱段卡片 → 舱段工作台（高槽/中槽/低槽/改装件 分类）。
+  function equipStockBlock() {
     const Eq = Data.Equipment;
     if (!Eq) return "";
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    const used = Engine.Production.manufactureUsed(state);
-    const durMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
-    const slotMeta = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
-    let html = '<div class="panel"><h3>装备制造 · 总装船坞 ' + used + "/" + plan.manufacture + '</h3>';
-    html += '<div class="dim">装备与造船、部件制造共享总装船坞槽位；制造完成入「已存装备」库存，再到「舰队」页点「装配」上舰。</div>';
-    const slots = ["high", "mid", "low", "rig"];
-    for (const sl of slots) {
-      const items = Eq.bySlot(sl);
-      if (!items.length) continue;
-      html += '<div class="eq-slot-group"><b>' + slotMeta[sl] + "</b>";
-      for (const eq of items) {
-        const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
-        const gate = Engine.Production.equipGateLevel(eq.level);
-        const lvLocked = state.base.bodyLevel < gate;
-        // 蓝图门禁（1 代同口径）：仅当 requiresBlueprint 为真且未解锁时锁。
-        // BP_GRANT_ALL 期间恒为 false，UI 与现在完全一致；开关翻成 false 后自动显示「需蓝图」。
-        const bpLocked = !!eq.requiresBlueprint &&
-          !(Eq.hasBlueprint && Eq.hasBlueprint(state, eq.id));
-        const locked = lvLocked || bpLocked;
-        const canAfford = Engine.Production.canAfford(state.res, eq.cost);
-        const costStr = Object.entries(eq.cost).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join(" ");
-        const adjDur = Math.round(eq.time * durMult);
-        const dis = (locked || !canAfford) ? " disabled" : "";
-        const note = lvLocked ? "（核心 Lv." + (gate + 1) + " 解锁）"
-                   : bpLocked ? "（需蓝图）" : "";
-        html += '<div class="row"><span>' + esc(eq.name) + " T" + tier + note + " · " + costStr + " · " + adjDur + 's</span>'
-          + '<button class="sm" data-act="batch:build_equip:' + eq.id + '"' + dis + ">制造</button></div>";
-      }
-      html += "</div>";
-    }
+    const used = (state.base.industry.equipQueue || []).length;
+    let html = '<div class="panel"><h3>已存装备 · 制造车间 ' + used + "/" + plan.equip + '</h3>';
+    html += '<div class="dim">装备与改装件在「制造车间」舱段独立生产（点击舰基页该舱段卡片打开工作台）。成品入此库存，到「舰队」页点「装配」按成员装上舰。</div>';
     const inv = Object.entries(state.equipment || {}).filter(([k, v]) => (v || 0) > 0);
     html += '<div class="eq-inv"><b>已存装备</b>';
     if (!inv.length) html += '<span class="dim"> 暂无（制造后在此显示）</span>';
@@ -1444,36 +1289,14 @@
     const B = Engine.Booster;
     const now = Date.now();
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    const durMult = Engine.Base.queueDurationMultiplier(state, "booster");
     const active = (state.boosters && state.boosters.active) ? Object.keys(state.boosters.active).length : 0;
     let html = '<div class="panel"><div class="row"><b>增强剂 · 全局 ' + active + '/16 槽</b>'
       + (active ? '<span class="tag good">生效中</span>' : '<span class="tag">未装载</span>')
       + '<span class="tag">反应实验室 ' + (state.base.industry.boosterQueue || []).length + '/' + plan.booster + '</span></div>';
     html += '<div class="dim">瓶身由下方「反应实验室」制造，装入 16 个全局槽位后自动续瓶（库存耗尽自动从瓶身库存拉取）。效果整军团共享。</div>';
 
-    // —— 反应实验室（制造）——
-    html += '<div class="booster-sec"><h4>反应实验室（增幅剂制造）</h4>';
-    const recipes = B.recipes();
-    for (const r of recipes) {
-      const cc = B.canCraft(state, r.id);
-      const cost = B.craftCost(state, r.id);
-      const costStr = Object.entries(cost).map(function (e) { return resIcon(e[0]) + resName(e[0]) + " " + e[1]; }).join(" ");
-      const adjDur = Math.round(r.time * durMult);
-      const bpLocked = !cc.ok;
-      const can = cc.ok && Engine.Production.canAfford(state.res, cost);
-      const lockTag = bpLocked ? ' <span class="tag bad">需蓝图</span>' : "";
-      const dis = (bpLocked || !can) ? " disabled" : "";
-      html += '<div class="row"><span>' + esc(r.name) + lockTag + " · " + costStr + ' · <span class="dim">' + adjDur + "s</span></span>"
-        + '<button class="sm" data-act="booster:craft:' + r.id + '"' + dis + ">制造</button></div>";
-    }
-    const bq = state.base.industry.boosterQueue || [];
-    for (const it of bq) {
-      const r = B.getRecipe(it.recipeId);
-      const p = Core.clamp((now - it.startedAt) / 1000 / it.dur, 0, 1);
-      html += '<div class="row"><span>' + (r ? esc(r.name) : it.recipeId) + " · 批 " + (it.done + 1) + "/" + it.repeat + '</span><span class="dim">' + Math.round(p * 100) + "%</span></div>"
-        + '<div class="bar"><i style="width:' + (p * 100) + '%"></i></div>';
-    }
-    html += '</div>';
+    // —— 反应实验室（制造）已迁入点击舱段弹出的工作台：见舰基页「反应实验室」卡片 ——
+    html += '<div class="dim" style="margin:8px 0 2px">增强剂制造已并入舰基页 <b>反应实验室</b> 舱段：点击该舱段卡片打开工作台，可选配方连续制造、加队列、随时取消。本面板仅作 16 槽装载与瓶身库存管理。</div>';
 
     // —— 16 槽装载 ——
     html += '<div class="booster-sec"><h4>槽位装载（16 槽全局生效）</h4>';
@@ -3106,11 +2929,7 @@
     if (cmd === "booster") {
       const parts = act.split(":");
       const sub = parts[1];
-      if (sub === "craft") {
-        const r = Engine.Production.enqueue(state, "booster", parts[2], 1);
-        if (!r.ok) toast(r.err || "无法制造"); else toast("已排入反应实验室");
-        renderView();
-      } else if (sub === "load") {
+      if (sub === "load") {
         openBoosterPicker(parts[2]);
       } else if (sub === "equip") {
         const slot = parts[2], id = parts[3];
@@ -3297,13 +3116,6 @@
     else if (cmd === "baseSlotReset") {
       const r = Engine.Base.resetSlotPos(state);
       if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
-    }
-    else if (cmd === "batch") {
-      // 批量制造确认弹窗入口：enqueue / build_equip / build 三种目标，N 在弹窗内选。
-      const p = act.split(":");
-      if (p[1] === "enqueue") openBatchModal({ kind: "enqueue", queueType: p[2], recipeId: p[3] });
-      else if (p[1] === "build_equip") openBatchModal({ kind: "build_equip", equipId: p[2] });
-      else if (p[1] === "build") openBatchModal({ kind: "build", shipId: p[2] });
     }
     // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
     else if (cmd === "fleetFit") { openFleetFit(a); }
@@ -3904,7 +3716,6 @@
     if (Workbench && Workbench.init) Workbench.init({ getState: () => state, renderView: renderView, toast: toast, resIcon: resIcon, resName: resName, esc: esc, fmt: fmt });
     const BaseInfo = NSK.UI && NSK.UI.BaseInfo;
     if (BaseInfo && BaseInfo.init) BaseInfo.init({ getState: () => state, renderView: renderView, toast: toast, detailHtml: moduleDetailHtml });
-    initBatchModal(); // 批量制造确认弹窗（精炼/制造/造船 ×N）
     initBoosterPicker(); // 增强剂装载选择器弹窗
     // 4Hz：结算 + HUD；1Hz：视图
     setInterval(() => {

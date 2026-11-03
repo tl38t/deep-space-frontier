@@ -21,18 +21,11 @@ const q=(sel)=>D().querySelector(sel);
 const qa=(sel)=>D().querySelectorAll(sel);
 const txt=(el)=>el?el.textContent.trim():"";
 
-function parseMaxHint(){ const h=txt(q("#bm-maxhint")); const m=/材料可产\s*(\d+)\s*批/.exec(h); return m?parseInt(m[1]):null; }
-function lastBatchRow(denom){ // 找「批 X/Y」行（Y=denom 可指定）
-  const rows=[...qa(".row")].filter(r=>/批\s*\d+\/\d+/.test(r.textContent));
-  if(!rows.length) return null;
-  if(denom==null) return rows[rows.length-1];
-  return rows.find(r=>new RegExp("批\\s*\\d+\\/"+denom+"\\b").test(r.textContent))||null;
-}
 function clickBtn(sel){ const b=q(sel); if(!b) return false; b.click(); return true; }
 
 (async function(){
   const errs=[];
-  fr.src="../index.html#base";
+  fr.src="../index.html?t="+Date.now()+"#base";
   const booted=await until(()=>{ const d=D(); return d && d.querySelector("#nsk-tabs .tab"); },25000);
   ok("游戏启动完成", booted);
   if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
@@ -51,15 +44,17 @@ function clickBtn(sel){ const b=q(sel); if(!b) return false; b.click(); return t
     ok("引擎·精炼 队列项 repeat=5", it&&it.repeat===5, it?("repeat="+it.repeat):"no item");
     ok("引擎·精炼 入队只扣首批(1×fe_ore)", st.res.fe_ore===before-1, "fe_ore "+before+"->"+st.res.fe_ore);
   }
-  // (E2) 装备制造：repeat + 扣成本
+  // (E2) 装备制造：repeat + 扣成本（2026-11-03：装备走独立 equipQueue，不再占总装坞）
   {
     const st=fresh(); st.base.bodyLevel=0;
     const c=NSK.Data.Equipment.byId("t1_mining_laser").cost;
     const before=Object.assign({},st.res);
     const r=NSK.Engine.Production.buildEquipment(st,"t1_mining_laser",3);
     ok("引擎·装备制造 buildEquipment ok", r&&r.ok, JSON.stringify(r));
-    const it=(st.base.industry.manufactureQueue||[])[0];
-    ok("引擎·装备制造 队列项 repeat=3", it&&it.repeat===3, it?("repeat="+it.repeat):"no item");
+    const it=(st.base.industry.equipQueue||[])[0];
+    ok("引擎·装备制造 队列项 repeat=3（进 equipQueue）", it&&it.repeat===3, it?("repeat="+it.repeat):"no item");
+    ok("引擎·装备制造 不再占用 manufactureQueue", (st.base.industry.manufactureQueue||[]).length===0,
+      "manufactureQueue="+(st.base.industry.manufactureQueue||[]).length);
     const dFe=(before.fe_alloy||0)-(st.res.fe_alloy||0), dNi=(before.ni_alloy||0)-(st.res.ni_alloy||0);
     ok("引擎·装备制造 扣成本(fe_alloy "+c.fe_alloy+" / ni_alloy "+c.ni_alloy+")", dFe===c.fe_alloy && dNi===c.ni_alloy, "Δfe="+dFe+" Δni="+dNi);
   }
@@ -89,61 +84,84 @@ function clickBtn(sel){ const b=q(sel); if(!b) return false; b.click(); return t
   }
 
   // ---------- UI 级流程测试（真实 DOM 驱动）----------
-  const btnSmelt = await until(()=>q('[data-act="batch:enqueue:smelt:smelt_fe_alloy"]'),8000);
-  ok("UI·精炼按钮带 batch:enqueue 命令", !!btnSmelt);
-  ok("UI·装备按钮带 batch:build_equip 命令", qa('[data-act^="batch:build_equip:"]').length>0);
-  ok("UI·造船按钮带 batch:build 命令", qa('[data-act^="batch:build:"]').length>0);
+  // 2026-11-03：批量制造确认弹窗整块删除（app.js 140 行 + #nsk-batch-modal + CSS），
+  // 连续生产统一走「舱段工作台」，可产批数改由步进器下方的 .wb-cap 提示（只提示、不 clamp）。
+  ok("全站不再有 batch: 命令", qa('[data-act^="batch:"]').length===0,
+    qa('[data-act^="batch:"]').length+" 个残留");
+  ok("批量弹窗 DOM 已移除", !q("#nsk-batch-modal"));
 
-  // (U1) 精炼流程：开弹窗→maxhint→输入框clamp→确认→repeat=5
-  clickBtn('[data-act="batch:enqueue:smelt:smelt_fe_alloy"]');
-  let opened=await until(()=>q("#nsk-batch-modal.active"),4000);
-  ok("UI·精炼 点排产打开批量弹窗", opened);
-  if(opened){
-    const max0=parseMaxHint();
-    ok("UI·精炼 maxhint 显示材料可产批数(=fe_ore 200)", max0===200, "max0="+max0);
-    const inp=q("#bm-count"); inp.value="9999"; inp.dispatchEvent(new (fr.contentWindow.Event)("input",{bubbles:true}));
-    await wait(30);
-    ok("UI·精炼 输入框超量被 clamp 到 max", q("#bm-count").value===String(max0), "value="+q("#bm-count").value);
-    ok("UI·精炼 摘要显示「共 "+max0+" 批」", new RegExp("共\\s*"+max0+"\\s*批").test(txt(q("#bm-summary"))), txt(q("#bm-summary")));
-    inp.value="5"; inp.dispatchEvent(new (fr.contentWindow.Event)("input",{bubbles:true}));
-    await wait(30);
-    q("#bm-confirm").click();
-    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
-    ok("UI·精炼 确认后弹窗关闭", closed);
-    await wait(80);
-    const t1=txt(q("#nsk-toast"));
-    ok("UI·精炼 确认后 toast 显示「已排产 ×5」(N=5 进引擎)", /已排产/.test(t1) && /×5\b/.test(t1), t1);
+  // (U1) 精炼环工作台：选配方 → 可产批数 → 连续 9999 → 加入队列 → 取消
+  const smeltCard=q('[data-act="baseinfo:smelt"]');
+  ok("舰基页有「精炼环」舱段卡片", !!smeltCard);
+  if(smeltCard) smeltCard.click();
+  const wbOpen=await until(()=>q(".wb-overlay.active"),8000);
+  ok("点精炼环打开舱段工作台", wbOpen);
+
+  let live=null, expectCap=0;
+  if(wbOpen){
+    const r0=q('.wb-overlay.active [data-act="workbench:sel:smelt_fe_alloy"]');
+    ok("工作台列出 smelt_fe_alloy 配方", !!r0);
+    if(r0) r0.click();
+    await wait(300);
+
+    live=fr.contentWindow.NSK.Core.Persistence.state;   // 实时 state（app.js 闭包同一对象）
+    expectCap=Math.floor((live.res.fe_ore||0)/1);
+    const capTxt=txt(q(".wb-overlay.active .wb-cap"));
+    const m=/最多\s*([\d,]+)\s*批/.exec(capTxt);
+    const capN=m?parseInt(m[1].replace(/,/g,"")):null;
+    ok("可产批数 = floor(fe_ore / 单批成本)", capN===expectCap, "显示「"+capTxt+"」 期望 "+expectCap);
+
+    // 「连续」= 9999 批，**不被可产上限 clamp**：引擎逐批 canAfford+spend，料不够自动停队，
+    // 若 clamp 则「补料后再排」还得重按一次，语义退化。
+    clickBtn('.wb-overlay.active [data-act="workbench:chip:9999"]');
+    await wait(250);
+    const cntRaw=txt(q(".wb-overlay.active .wb-count")).replace(/[^0-9]/g,"");
+    ok("点「连续」后数量 = 9999（未被可产上限 clamp）", cntRaw==="9999", "count="+cntRaw);
+
+    const addBtn=q('.wb-overlay.active [data-act="workbench:add"]');
+    ok("加入队列按钮可用", !!addBtn && !addBtn.disabled, addBtn?(addBtn.disabled?"disabled":"enabled"):"无");
+    if(addBtn) addBtn.click();
+    await wait(400);
+    const it=(live.base.industry.smeltQueue||[])[0];
+    ok("连续入队后队列项 repeat = 9999", !!it && it.repeat===9999, it?("repeat="+it.repeat):"无队列项");
+
+    const xBtn=q('.wb-overlay.active [data-act="workbench:cancel:smeltQueue:0"]');
+    ok("队列行有 × 取消按钮", !!xBtn);
+    if(xBtn) xBtn.click();
+    await wait(300);
+    ok("点 × 取消后队列清空", (live.base.industry.smeltQueue||[]).length===0,
+      (live.base.industry.smeltQueue||[]).length+" 项");
+
+    // 未选配方时提示应为引导文案
+    clickBtn('.wb-overlay.active [data-act="workbench:cat:smelt"]');
+    await wait(200);
+    const wbX=q('.wb-overlay.active [data-act="workbench:close"]');
+    if(wbX) wbX.click();
+    await wait(250);
+    ok("工作台可关闭", !q(".wb-overlay.active"));
   }
 
-  // (U3) 造船冒烟：开弹窗→maxhint=2（此时 manufacture 槽仍空闲，仅冒烟不确认）
-  clickBtn('[data-act="batch:build:frigate"]');
-  opened=await until(()=>q("#nsk-batch-modal.active"),4000);
-  ok("UI·造船 点建造打开批量弹窗", opened);
-  if(opened){
-    const max0=parseMaxHint();
-    ok("UI·造船 maxhint 显示材料可产批数(=2)", max0===2, "max0="+max0);
-    q("#bm-cancel").click();
-    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
-    ok("UI·造船 取消关闭弹窗", closed);
-  }
-
-  // (U2) 装备流程：开弹窗→maxhint=3→直设9999(绕过输入框clamp)→确认→确认级re-clamp→repeat=3 + toast
-  clickBtn('[data-act="batch:build_equip:t1_mining_laser"]');
-  opened=await until(()=>q("#nsk-batch-modal.active"),4000);
-  ok("UI·装备 点制造打开批量弹窗", opened);
-  if(opened){
-    const max0=parseMaxHint();
-    ok("UI·装备 maxhint 显示材料可产批数(=3)", max0===3, "max0="+max0);
-    // 绕过输入框 clamp：直接写值不派发 input 事件
-    const inp=q("#bm-count"); inp.value="9999";
-    q("#bm-confirm").click();
-    const closed=await until(()=>!q("#nsk-batch-modal.active"),3000);
-    ok("UI·装备 确认后弹窗关闭", closed);
-    await wait(80);
-    const t2=txt(q("#nsk-toast"));
-    // 确认处理里 re-clamp 先 toast「材料仅够 3 批」、随即被「开始制造 ×3」覆盖；
-    // 最终 ×3（而非 ×9999）即证明确认级再 clamp 把 9999 截到可产上限 3。
-    ok("UI·装备 确认级 re-clamp：toast 显示「×3」而非「×9999」", /×3\b/.test(t2) && !/9999/.test(t2), t2);
+  // (U2) 六类队列都能给出可产批数（抽查 booster / equip：两者成本来源与其它队列不同）
+  {
+    const probe=(cardAct, recipeSel)=>{
+      const c=q('[data-act="'+cardAct+'"]');
+      if(!c) return "无舱段卡片";
+      c.click();
+      return until(()=>q(".wb-overlay.active"),8000).then(async(on)=>{
+        if(!on) return "工作台未打开";
+        const r=q(recipeSel);
+        if(!r) return "无配方卡";
+        r.click(); await wait(260);
+        const t=txt(q(".wb-overlay.active .wb-cap"));
+        const x=q('.wb-overlay.active [data-act="workbench:close"]'); if(x) x.click();
+        await wait(200);
+        return t;
+      });
+    };
+    const bTxt=await probe("baseinfo:booster",'.wb-overlay.active .wb-recipe');
+    ok("增强剂工作台给出可产批数", /最多|材料不足/.test(bTxt||""), bTxt);
+    const eTxt=await probe("baseinfo:equip",'.wb-overlay.active .wb-recipe');
+    ok("制造车间工作台给出可产批数", /最多|材料不足/.test(eTxt||""), eTxt);
   }
 
   await wait(300);

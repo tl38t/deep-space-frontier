@@ -1,0 +1,114 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>工作台·反应实验室(增强剂·1代式分类标签) 真机自测</title></head>
+<body><pre id="log">running</pre>
+<iframe id="fr" style="width:1260px;height:1000px"></iframe>
+<script>
+const out=[];const log=s=>{out.push(s);document.getElementById("log").textContent=out.join("\n");};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr"),D=()=>fr.contentDocument,W=()=>fr.contentWindow;
+const nav=u=>new Promise(r=>{fr.onload=()=>{fr.onload=null;r();};fr.src=u;});
+const q=s=>{try{return D().querySelector(s);}catch(e){return null;}};
+const qa=s=>{try{return [...D().querySelectorAll(s)];}catch(e){return [];}};
+const clickEl=el=>{if(el)try{el.click();return true;}catch(e){return false;}};
+const until=(fn,t=15000,step=120)=>new Promise(res=>{const t0=Date.now();(function lp(){let v;try{v=fn();}catch(e){v=null;}if(v)return res(v);if(Date.now()-t0>t)return res(null);setTimeout(lp,step);})();});
+let pass=0,fail=0;
+function ok(name,cond,info){if(cond){pass++;log("[PASS] "+name+(info?" · "+info:""));}else{fail++;log("[FAIL] "+name+(info?" · "+info:""));}}
+
+// 期望值全部从数据推导，不写死快照
+const inCat=(r,id)=>[].concat(r.category||[]).indexOf(id)>=0;
+const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
+  return M.map(m=>({id:m.id,name:m.name,n:R.filter(r=>inCat(r,m.id)).length})).filter(c=>c.n>0);};
+
+(async()=>{
+  await nav("../index.html?t="+Date.now()+"#base");
+  await new Promise(r=>setTimeout(r,3000));
+  W().addEventListener("error",e=>log("[ERR] "+e.message));
+  W().addEventListener("unhandledrejection",e=>log("[REJ] "+e.reason));
+  clickEl(q('[data-act="tab:base"]'));
+  await wait(700);
+  ok("Engine.Booster 已注册", !!(W().NSK&&W().NSK.Engine&&W().NSK.Engine.Booster));
+  ok("BOOSTER_RECIPES 可读", !!(W().BOOSTER_RECIPES&&W().BOOSTER_RECIPES.length>0), (W().BOOSTER_RECIPES||[]).length+" 配方");
+  ok("BOOSTER_CATEGORY_META 可读", !!(W().BOOSTER_CATEGORY_META&&W().BOOSTER_CATEGORY_META.length), (W().BOOSTER_CATEGORY_META||[]).length+" 分类");
+
+  // 1) 点击反应实验室舱段卡片 → 工作台弹窗
+  const card=q('[data-act="baseinfo:booster"]');
+  ok("反应实验室舱段卡片存在", !!card);
+  if(card) clickEl(card);
+  const ov=await until(()=>q(".wb-overlay.active"),8000);
+  ok("点反应实验室弹出工作台(.wb-overlay.active)", !!ov);
+  ok("未误弹明细弹窗(.bi-overlay.active)", !q(".bi-overlay.active"));
+
+  if(ov){
+    const cats=CATS();
+    // 2) 1 代式分类标签条
+    const catEls=qa(".wb-overlay.active .wb-cat");
+    ok("显示分类标签条(.wb-cat)", catEls.length>0, catEls.length+" 个");
+    ok("标签数 = 有配方的分类数", catEls.length===cats.length, catEls.length+" vs "+cats.length);
+    ok("标签名与顺序同 BOOSTER_CATEGORY_META", catEls.map(e=>e.textContent.replace(/\d+$/,"").trim()).join(",")===cats.map(c=>c.name).join(","));
+    ok("标签带该分类配方条数", catEls.every(e=>/\d+\s*$/.test(e.textContent.trim())), catEls.slice(0,3).map(e=>e.textContent.trim()).join(" / "));
+
+    let sel0=qa(".wb-overlay.active .wb-cat.sel");
+    ok("默认选中第一个分类", sel0.length===1 && sel0[0].getAttribute("data-act")==="workbench:cat:"+cats[0].id, sel0[0]?sel0[0].textContent.trim():"无");
+    let rc=qa(".wb-overlay.active .wb-recipe");
+    ok("默认分类卡片数 = 该分类配方数", rc.length===cats[0].n, rc.length+" vs "+cats[0].n);
+    ok("全量配方不再一次性铺满(少于总数)", rc.length<(W().BOOSTER_RECIPES||[]).length, rc.length+" < "+(W().BOOSTER_RECIPES||[]).length);
+    ok("「选择配方」右侧显示当前分类与条数", new RegExp(cats[0].name+" · "+cats[0].n+" 个配方").test((q(".wb-overlay.active .wb-sec")||{}).textContent||""), (q(".wb-overlay.active .wb-sec")||{}).textContent);
+
+    // 3) 切到「战斗武器」分类
+    const tgt=cats.find(c=>c.id==="combatWeapon")||cats[cats.length-1];
+    const tabEl=q('.wb-overlay.active [data-act="workbench:cat:'+tgt.id+'"]');
+    ok("可点目标分类标签("+tgt.name+")", !!tabEl);
+    if(tabEl) clickEl(tabEl);
+    await wait(200);
+    sel0=qa(".wb-overlay.active .wb-cat.sel");
+    ok("切换后仅该分类高亮", sel0.length===1 && sel0[0].getAttribute("data-act")==="workbench:cat:"+tgt.id, sel0[0]?sel0[0].textContent.trim():"无");
+    rc=qa(".wb-overlay.active .wb-recipe");
+    ok("切换后卡片数 = 新分类配方数", rc.length===tgt.n, rc.length+" vs "+tgt.n);
+    ok("切换分类后清空已选配方", !q(".wb-overlay.active .wb-recipe.sel") && !!q('.wb-overlay.active [data-act="workbench:add"][disabled]'));
+
+    // 4) 选中 + 连续 + 加入队列 + 取消
+    const first=rc[0];
+    const rid=first.getAttribute("data-act").split(":")[2];
+    // ⚠️ 必须注入「实时 state」（NSK.Core.Persistence.state 与 app.js 闭包 state 同一对象）；
+    //    Core.load() 只是存档再解析出的副本，往里写资源对真实玩法无效。
+    const LIVE=()=>W().NSK.Core.Persistence&&W().NSK.Core.Persistence.state;
+    try{
+      const B=W().NSK.Engine.Booster, st=LIVE();
+      const cost=B.craftCost(st,rid)||{};
+      for(const k in cost){ st.res[k]=(st.res[k]||0)+cost[k]*5+10; }
+      st.base.industry.boosterQueue=[];  // 清掉旧队列，保证 before=0
+    }catch(e){ log("[warn] inject cost failed: "+e.message); }
+    clickEl(first);
+    ok("点击配方后高亮(.wb-recipe.sel)", !!q(".wb-overlay.active .wb-recipe.sel"));
+
+    const cont=q('.wb-overlay.active [data-act="workbench:chip:9999"]');
+    if(cont) clickEl(cont);
+    const cnt=q(".wb-overlay.active .wb-count");
+    ok("点「连续」后数量=9999", cnt && cnt.textContent.replace(/[^\d]/g,"")==="9999", cnt?cnt.textContent:"无");
+
+    const QLEN=()=>((LIVE().base.industry.boosterQueue)||[]).length;
+    const q0=QLEN();
+    clickEl(q('.wb-overlay.active [data-act="workbench:add"]'));
+    await wait(300);
+    const q1=QLEN();
+    ok("点加入队列后 boosterQueue +1", q1===q0+1, "before="+q0+" after="+q1);
+
+    const x=q('.wb-overlay.active [data-act="workbench:cancel:boosterQueue:0"]');
+    if(x) clickEl(x);
+    await wait(200);
+    const q2=QLEN();
+    ok("点 × 取消后队列归 0", q2===0, "after="+q2);
+
+    clickEl(q('.wb-overlay.active [data-act="workbench:close"]'));
+    await wait(150);
+    ok("关闭后弹窗消失", !q(".wb-overlay.active"));
+  }
+
+  // 5) 舰基页内联：制造段已移除，16 槽装载仍在
+  const viewText=(q("#nsk-view")||{}).textContent||"";
+  ok("舰基页内联不再有「反应实验室（增幅剂制造）」标题", !/反应实验室（增幅剂制造）/.test(viewText));
+  ok("舰基页仍保留「槽位装载（16 槽全局生效）」", /槽位装载（16 槽全局生效）/.test(viewText));
+  ok("舰基页仍保留「瓶身库存」", /瓶身库存/.test(viewText));
+
+  log("RESULT: PASS="+pass+" FAIL="+fail);
+})();
+</script></body></html>

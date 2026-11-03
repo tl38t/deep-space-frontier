@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>深空星疆 · 商业与战争</title>
-<link rel="stylesheet" href="css/main.css?v=91">
+<link rel="stylesheet" href="css/main.css?v=93">
 </head>
 <body>
 <div id="nsk-app">
@@ -77,28 +77,6 @@
   </div>
 </div>
 
-<!-- 批量制造确认弹窗（1 代式 ×N，服务于精炼 / 部件制造 / 装备制造 / 造船） -->
-<div class="bm-overlay" id="nsk-batch-modal" aria-hidden="true">
-  <div class="bm-box" role="dialog" aria-modal="true" aria-label="批量制造">
-    <div class="bm-title" id="bm-title">批量制造</div>
-    <div class="bm-info" id="bm-info"></div>
-    <div class="bm-res" id="bm-res"></div>
-    <div class="bm-qty">
-      <input id="bm-count" class="bm-input" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="制造数量" />
-      <button class="sm bm-q" data-q="1" type="button">×1</button>
-      <button class="sm bm-q" data-q="10" type="button">×10</button>
-      <button class="sm bm-q" data-q="50" type="button">×50</button>
-      <button class="sm bm-q" data-q="max" id="bm-max" type="button">Max</button>
-    </div>
-    <div class="bm-max" id="bm-maxhint"></div>
-    <div class="bm-summary" id="bm-summary"></div>
-    <div class="bm-actions">
-      <button class="sm ghost" id="bm-cancel" type="button">取消</button>
-      <button class="sm primary" id="bm-confirm" type="button">确认</button>
-    </div>
-  </div>
-</div>
-
 <!-- 增强剂槽位装载选择器（舰基页「增幅剂」面板调用） -->
 <div class="bm-overlay" id="nsk-booster-picker" aria-hidden="true">
   <div class="bm-box" role="dialog" aria-modal="true" aria-label="装载增强剂">
@@ -136,7 +114,7 @@
 <script src="js/data/resources.js?v=28"></script>
 <script src="js/data/starmap.js?v=22"></script>
 <script src="js/data/archaeology.js?v=1"></script>
-<script src="js/data/ships.js?v=31"></script>
+<script src="js/data/ships.js?v=32"></script>
 <script src="js/data/equipment.js?v=3"></script>
 <script src="js/data/pirates.js?v=4"></script>
 <script src="js/data/recipes.js?v=15"></script>
@@ -160,15 +138,15 @@
 <script src="js/data/factions.js?v=16"></script>
 <script src="js/data/names.js?v=11"></script>
 <!-- Engine 层（无 DOM 依赖） -->
-<script src="js/engine/state.js?v=28"></script>
+<script src="js/engine/state.js?v=29"></script>
 <script src="js/engine/recruit.js?v=2"></script>
-<script src="js/engine/base.js?v=4"></script>
+<script src="js/engine/base.js?v=5"></script>
 <script src="js/engine/dispatch.js?v=19"></script>
 <script src="js/engine/npc.js?v=3"></script>
 <script src="js/engine/booster.js?v=3"></script>
 <script src="js/engine/mastery.js?v=1"></script>
 <script src="js/engine/tech.js?v=5"></script>
-<script src="js/engine/production.js?v=20"></script>
+<script src="js/engine/production.js?v=21"></script>
 <script src="js/engine/faction.js?v=14"></script>
   <script src="js/engine/combat.js?v=29"></script>
   <script src="js/engine/logistics.js?v=4"></script>
@@ -188,7 +166,7 @@
 <script src="js/ui/portraits.js?v=2"></script>
 <script src="js/ui/fit-orbit.js?v=2"></script>
 <script src="js/ui/baseinfo.js?v=2"></script>
-<script src="js/ui/workbench.js?v=4"></script>
-<script src="js/ui/app.js?v=102"></script>
+<script src="js/ui/workbench.js?v=9"></script>
+<script src="js/ui/app.js?v=104"></script>
 </body>
 </html>
