@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舰基页尺寸稳定探针（单栏版）</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1280px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+// 舰基页尺寸稳定（2026-11-02 改版后：右侧常驻面板已拆、布局单栏）
+// 验证：① 不存在旧右栏 .base-focus-panel；② 依次点多个舱段，.base-layout-panel 高度不变；
+//       ③ 点击会弹出明细/工作台弹窗且可关闭；④ 弹窗开关不影响页面布局高度。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(n,c,e)=>{ c?PASS++:FAIL++; log((c?"[PASS] ":"[FAIL] ")+n+(e!==undefined?("  → "+e):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr"); const D=()=>fr.contentDocument; const W=()=>fr.contentWindow;
+const nav=(u)=>new Promise(res=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=u; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step);} return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+const q=(s)=>{ try{ return D().querySelector(s); }catch(e){ return null; } };
+const qa=(s)=>{ try{ return [...D().querySelectorAll(s)]; }catch(e){ return []; } };
+function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return false; } return false; }
+function panelH(){ const p=q(".base-layout-panel"); return p?Math.round(p.getBoundingClientRect().height):-1; }
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#base");
+  const b0=await until(booted,25000); if(!b0){ log("启动失败"); return; }
+  clickEl(q('[data-act="tab:base"]')); await wait(700);
+  await until(()=>qa(".base-module").length>0, 10000);
+
+  ok("旧右栏 .base-focus-panel 已不存在", q(".base-layout-panel > aside.base-focus-panel")===null);
+
+  const h0=panelH();
+  ok("初始 .base-layout-panel 高度有效", h0>0, h0);
+
+  const acts=qa('[data-act^="baseinfo:"]').slice(0,8).map(b=>b.getAttribute("data-act"))
+    .filter(a=>a && a!=="close");
+  ok("找到舱段卡片（≥3）", acts.length>=3, acts.length);
+
+  const heights=[];
+  for(const act of acts){
+    // 每次重新查询（点击会触发 renderView 重建页面，旧引用会失效）
+    const b=q('[data-act="'+act+'"]');
+    if(!b){ ok("点击 "+act+" 弹出弹窗", false, "按钮未在页面中找到"); continue; }
+    clickEl(b);
+    const opened=await until(()=>q(".bi-overlay.active")||q(".wb-overlay.active"), 5000);
+    ok("点击 "+act+" 弹出弹窗", !!opened);
+    // 关闭弹窗：只点「当前激活弹窗」内的关闭按钮（BaseInfo 关闭后其 .bi-close 仍残留于 DOM，不能误选）
+    const x=q(".bi-overlay.active .bi-close")||q(".wb-overlay.active .wb-close");
+    if(x){ clickEl(x); await wait(150); }
+    ok("点击 "+act+" 后弹窗已关闭", q(".bi-overlay.active")===null && q(".wb-overlay.active")===null);
+    heights.push(panelH());
+  }
+  log("[i] 各舱段 .base-layout-panel 高度: "+heights.join(", "));
+  const maxH=Math.max(...heights), minH=Math.min(...heights);
+  ok("跨舱段点击页面布局高度不变（误差≤1px）", maxH-minH<=1, "Δ="+(maxH-minH)+"px ("+minH+"~"+maxH+")");
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

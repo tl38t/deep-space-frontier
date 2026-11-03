@@ -1163,13 +1163,28 @@
       const bCount = (state.boosters && state.boosters.active) ? Object.keys(state.boosters.active).length : 0;
       if (bCount > 0) html += '<div class="base-focus-effect">全局增强剂生效中 · ' + bCount + ' 槽</div>';
       html += '<button class="sm ghost base-module-action" data-act="moduleRemove:' + slot.id + '">拆卸并收入模块库</button>';
-    } else {
+      } else {
       const choices = Engine.Base.availableModules(state, slot.id);
       html += '<div class="base-module-library-title">模块库 · ' + choices.length + ' 个兼容模块</div>';
       html += choices.length ? choices.map(m => '<button class="base-module-choice" data-act="moduleInstall:' + slot.id + ':' + m.id + '"><span>' + def.icon + '</span><b>' + esc(def.name) + '</b><small>安装到该舱位</small></button>').join("")
         : '<div class="dim">模块已安装在其他位置；先拆卸后即可移装。</div>';
     }
     return html;
+  }
+
+  // 供弹窗复用：用当前 baseFocus 重建右侧明细 HTML（工业舱段的工作台 / 非工业的 BaseInfo 共用）。
+  function moduleDetailHtml() {
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    const hull = Engine.Base.hullOf(state);
+    return baseFocusPanel(plan, hull);
+  }
+
+  // 驻舱 / 拆装舱段后，刷新当前打开的舱段弹窗（工作台明细或 BaseInfo），避免明细与真实状态脱节。
+  function refreshOpenModuleModal() {
+    const Wb = window.NSK.UI && NSK.UI.Workbench;
+    if (Wb && Wb.isOpen && Wb.isOpen() && Wb.refreshDetail) Wb.refreshDetail();
+    const Bi = window.NSK.UI && NSK.UI.BaseInfo;
+    if (Bi && Bi.isOpen && Bi.isOpen()) Bi.refresh();
   }
 
   // 舱段 ↔ 驻舱技能（2026-11-01 技能体系）。command 特殊（看三战斗技能均值）、habitat 特殊（玩家选）。
@@ -1251,7 +1266,7 @@
     for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
     const installedCount = state.base.modules.installed.length;
     html += '</div><div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent) + '</span></div></div>';
-    html += '<aside class="base-focus-panel">' + baseFocusPanel(plan, hull) + '</aside></div>';
+    html += '</div>';
     html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
     // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
     html += '<div class="panel dim">精炼 / 制造 / 发明 / 造船 统一在「舱段工作台」中操作：点击舰基页对应的 <b>精炼环 · 总装船坞 · 发明舱</b> 卡片即可打开弹窗（可连续冶炼、加队列、随时取消）。</div>';
@@ -3087,7 +3102,7 @@
     hideNodeMenu();   // 任何操作先收起星图节点浮层
     const [cmd, a, b] = act.split(":");
     if (cmd === "workbench") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.handle) Wb.handle(act); return; }
-    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); tab = a; renderTabs(); renderView(); return; }
+    if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); const Bi2 = window.NSK.UI && NSK.UI.BaseInfo; if (Bi2) Bi2.close(); tab = a; renderTabs(); renderView(); return; }
     if (cmd === "booster") {
       const parts = act.split(":");
       const sub = parts[1];
@@ -3167,21 +3182,25 @@
     if (cmd === "nodeinfo") { openNodeMenu(a, e); return; }
     if (cmd === "body") { showBody(a, b); return; }
     if (cmd === "baseinfo") {
+      if (a === "close") { const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.close(); return; }
       baseFocus = a || "core";
       const Wb = window.NSK.UI && NSK.UI.Workbench;
+      const Bi = window.NSK.UI && NSK.UI.BaseInfo;
       const ind = Wb && Wb.slotIfIndustrial ? Wb.slotIfIndustrial(state, a) : null;
       renderView();
-      if (ind) Wb.open(a);
+      // 工业舱段 → 工作台（顶部含明细）；其余 → 明细弹窗。右侧常驻面板已拆除。
+      if (ind) Wb.open(a, moduleDetailHtml);
+      else if (Bi) Bi.open(a, moduleDetailHtml);
       return;
     }
     // 驻舱（2026-11-01 技能体系）：派/撤/换演训技能。一舱一人由 Dispatch.assign 兜底校验。
     if (cmd === "station") {
       const B = Engine.Base, D = Engine.Dispatch;
-      if (a === "skill") { habitatSkill = b; renderView(); return; }
+      if (a === "skill") { habitatSkill = b; renderView(); refreshOpenModuleModal(); return; }
       if (a === "clear") {
         const w = B.stationedAt(state, b);
         if (w) { D.recall(state, w.id); toast("已撤下 " + w.name); }
-        renderView(); return;
+        renderView(); refreshOpenModuleModal(); return;
       }
       if (a === "put") {
         const slotId = b, mid = act.split(":")[3];
@@ -3190,7 +3209,7 @@
         if (slot && slot.type === "habitat") opts.trainSkill = habitatSkill;
         const r = D.assign(state, mid, "station", opts);
         toast(r.ok ? "已驻舱" : r.err);
-        renderView(); return;
+        renderView(); refreshOpenModuleModal(); return;
       }
       if (a === "train") {
         const mm = state.members.find(x => x.id === b);
@@ -3273,8 +3292,8 @@
          "电网预算 +" + (r.plan.energy) + "，工业槽 精炼 " + r.plan.smelt + " / 制造 " + r.plan.manufacture + " / 发明 " + r.plan.invent + "。"]);
     } else if (cmd === "baseBlueprint") Engine.Base.buyBlueprint(state, a);
     else if (cmd === "baseHull") { Engine.Base.switchHull(state, a); baseFocus = "core"; }
-    else if (cmd === "moduleInstall") { Engine.Base.installModule(state, a, b); baseFocus = a; }
-    else if (cmd === "moduleRemove") { Engine.Base.uninstallModule(state, a); baseFocus = a; }
+    else if (cmd === "moduleInstall") { Engine.Base.installModule(state, a, b); baseFocus = a; refreshOpenModuleModal(); }
+    else if (cmd === "moduleRemove") { Engine.Base.uninstallModule(state, a); baseFocus = a; refreshOpenModuleModal(); }
     else if (cmd === "baseSlotReset") {
       const r = Engine.Base.resetSlotPos(state);
       if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
@@ -3883,6 +3902,8 @@
     if (FitOrbit && FitOrbit.init) FitOrbit.init({ getState: () => state, toast: toast, onChanged: () => renderView() });
     const Workbench = NSK.UI && NSK.UI.Workbench;
     if (Workbench && Workbench.init) Workbench.init({ getState: () => state, renderView: renderView, toast: toast, resIcon: resIcon, resName: resName, esc: esc, fmt: fmt });
+    const BaseInfo = NSK.UI && NSK.UI.BaseInfo;
+    if (BaseInfo && BaseInfo.init) BaseInfo.init({ getState: () => state, renderView: renderView, toast: toast, detailHtml: moduleDetailHtml });
     initBatchModal(); // 批量制造确认弹窗（精炼/制造/造船 ×N）
     initBoosterPicker(); // 增强剂装载选择器弹窗
     // 4Hz：结算 + HUD；1Hz：视图

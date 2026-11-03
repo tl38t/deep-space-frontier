@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段工作台 局部刷新回归</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 舱段工作台「局部刷新」回归（2026-11-02 修复后）
+// 验证：选配方后，跨多个 1Hz 刷新周期，配方网格首张卡片 DOM 节点身份不变（不再整块重建）；
+//       同时队列进度条仍在每秒推进（证明 refresh 仍更新动态部分）。
+// ⚠️ iframe 必须指向 ../index.html（本文件在 game/sim/ 下）。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error", e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection", e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+const q=(sel)=>{ try{ return D().querySelector(sel); }catch(e){ return null; } };
+const qa=(sel)=>{ try{ return [...D().querySelectorAll(sel)]; }catch(e){ return []; } };
+function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return false; } return false; }
+function widthPct(){ const i=q(".wb-job .wb-bar i"); if(!i) return -1; const m=/width:\s*([\d.]+)%/.exec(i.getAttribute("style")||""); return m?parseFloat(m[1]):-1; }
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#base");
+  const b0=await until(booted,25000); hookErrors();
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("存档键已备份", !!KEY, KEY||"未找到");
+
+  clickEl(q('[data-act="tab:base"]')); await wait(700);
+  await until(()=>qa(".base-module").length>0, 10000);
+
+  const smeltBtn=q("button.base-smelt");
+  ok("找到精炼环卡片", !!smeltBtn);
+  if(smeltBtn){ clickEl(smeltBtn); }
+  const wbOpen=await until(()=>q(".wb-overlay.active"), 8000);
+  ok("点击精炼环弹出工作台", wbOpen);
+
+  const recipes=qa(".wb-recipe");
+  ok("精炼配方卡片渲染（≥1）", recipes.length>=1, recipes.length);
+  // 选第一个配方（render 整体重建一次，使网格稳定）
+  if(recipes.length){ clickEl(recipes[0]); await wait(200); }
+
+  // === 核心断言：跨多个 1Hz 刷新周期，配方网格首卡节点身份不变 ===
+  const before = q(".wb-recipes") ? q(".wb-recipes").firstElementChild : null;
+  await wait(2600); // 至少经过 2 个 renderView 周期（1Hz）
+  const after = q(".wb-recipes") ? q(".wb-recipes").firstElementChild : null;
+  ok("周期刷新未重建配方网格（首卡节点身份保持）", before && after && before===after);
+  ok("配方卡片数量未变（未丢失）", qa(".wb-recipe").length===recipes.length, qa(".wb-recipe").length+" / "+recipes.length);
+
+  // === 验证动态部分仍在更新：加一个连续任务，进度条推进 ===
+  const contChip=qa(".wb-chip").find(c=>/连续/.test(c.textContent));
+  if(contChip){ clickEl(contChip); await wait(120); }
+  clickEl(q(".wb-add")); await wait(900);
+  const job0=qa(".wb-job").length;
+  ok("加入队列后出现任务", job0>=1, job0);
+  const w0=widthPct();
+  await wait(1600); // 跨 1 个以上刷新周期
+  const w1=widthPct();
+  ok("队列进度条在推进（refresh 仍更新动态部分）", w1>w0, "w0="+w0.toFixed(1)+"% w1="+w1.toFixed(1)+"%");
+
+  // 加完任务后再经周期刷新，配方网格首卡仍不应被重建
+  const before2 = q(".wb-recipes") ? q(".wb-recipes").firstElementChild : null;
+  await wait(2600);
+  const after2 = q(".wb-recipes") ? q(".wb-recipes").firstElementChild : null;
+  ok("运行中周期刷新仍未重建配方网格", before2 && after2 && before2===after2);
+
+  clickEl(q(".wb-close")); await wait(200);
+  ok("关闭后弹窗消失", q(".wb-overlay.active")===null);
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

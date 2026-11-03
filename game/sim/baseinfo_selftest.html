@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段明细弹窗 + 蓝图放大 真机自测</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 舱段明细弹窗 + 蓝图放大 真机自测（2026-11-02）
+// 覆盖：右侧常驻面板已移除 / 蓝图放大（单栏 + 更高）/ 点非工业舱段弹 BaseInfo 明细 /
+//       点核心弹 BaseInfo / 关闭 / 点工业舱段弹工作台且顶部含明细 / 全程无未捕获错误
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error", e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection", e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+let BACKUP=null, KEY=null;
+const q=(sel)=>{ try{ return D().querySelector(sel); }catch(e){ return null; } };
+const qa=(sel)=>{ try{ return [...D().querySelectorAll(sel)]; }catch(e){ return []; } };
+function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return false; } return false; }
+function gcs(el,prop){ try{ return W().getComputedStyle(el).getPropertyValue(prop); }catch(e){ return ""; } }
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#base");
+  const b0=await until(booted,25000); hookErrors();
+  ok("游戏启动完成", b0);
+  if(!b0){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  KEY=saveKey(); if(KEY) BACKUP=W().localStorage.getItem(KEY);
+  ok("存档键已备份", !!KEY, KEY||"未找到");
+  ok("UI.BaseInfo 已注册", !!(W().NSK&&W().NSK.UI&&W().NSK.UI.BaseInfo));
+  ok("UI.Workbench 已注册", !!(W().NSK&&W().NSK.UI&&W().NSK.UI.Workbench));
+
+  clickEl(q('[data-act="tab:base"]')); await wait(700);
+  const baseRendered=await until(()=>qa(".base-module").length>0, 10000);
+  ok("舰基页渲染出舱段卡片", baseRendered, qa(".base-module").length);
+
+  // === 1. 右侧常驻面板已移除 ===
+  const oldPanel=q(".base-layout-panel > aside.base-focus-panel");
+  ok("右侧常驻 .base-focus-panel 已移除", oldPanel===null);
+
+  // === 2. 蓝图放大：单栏 + 更高 ===
+  const lp=q(".base-layout-panel");
+  const cols=gcs(lp,"grid-template-columns");
+  const colN=(cols.match(/px|fr|%/g)||[]).length;
+  ok("舰基布局变为单栏（1 个列轨道）", colN===1, cols.trim());
+  const stage=q(".base-stage");
+  const mh=gcs(stage,"min-height");
+  ok("蓝图舞台放大（min-height ≥ 560px）", mh && parseInt(mh,10)>=560, mh.trim());
+  ok("舱段网格放大（≈56% 舞台宽）", (function(){ const sw=parseFloat(gcs(stage,"width"))||0; const lw=parseFloat(gcs(q(".base-layout"),"width"))||0; return lw>sw*0.5 && lw<sw*0.62; })(), gcs(q(".base-layout"),"width").trim()+" / stage "+gcs(stage,"width").trim());
+
+  // === 3. 点非工业舱段（能源舱）弹 BaseInfo 明细 ===
+  const energyBtn=q("button.base-energy");
+  ok("找到能源舱卡片", !!energyBtn);
+  if(energyBtn){ clickEl(energyBtn); }
+  const biOpen=await until(()=>q(".bi-overlay.active"), 8000);
+  ok("点能源舱弹出明细弹窗（BaseInfo）", biOpen);
+  ok("明细面板含内容", !!q(".bi-body") && (q(".bi-body").textContent||"").trim().length>20, q(".bi-body")?(q(".bi-body").textContent||"").trim().length:"无");
+  ok("明细含舱段标题（能源舱/电力）", !!q(".bi-body") && /能源|电力/.test(q(".bi-body").textContent||""));
+  clickEl(q(".bi-close")); await wait(300);
+  ok("关闭明细弹窗后消失", q(".bi-overlay.active")===null);
+
+  // === 3b. 点核心弹 BaseInfo ===
+  const coreBtn=q('button.base-core');
+  if(coreBtn){ clickEl(coreBtn); }
+  const biCore=await until(()=>q(".bi-overlay.active"), 8000);
+  ok("点唯一核心弹出明细弹窗", biCore);
+  clickEl(q(".bi-close")); await wait(300);
+
+  // === 4. 点工业舱段弹工作台 + 顶部明细 ===
+  const smeltBtn=q("button.base-smelt");
+  ok("找到精炼环卡片", !!smeltBtn);
+  if(smeltBtn){ clickEl(smeltBtn); }
+  const wbOpen=await until(()=>q(".wb-overlay.active"), 8000);
+  ok("点精炼环弹出工作台", wbOpen);
+  const detail=qa(".wb-detail");
+  ok("工作台顶部含舱段明细块（.wb-detail）", detail.length===1, detail.length);
+  ok("明细块含精炼/电力文本", detail.length && /精炼|电力|占用/.test(detail[0].textContent||""));
+  // 关闭
+  clickEl(q(".wb-close")); await wait(300);
+  ok("关闭工作台后弹窗消失", q(".wb-overlay.active")===null);
+
+  // === 5. 切页签不残留 BaseInfo ===
+  ok("无残留明细弹窗", q(".bi-overlay.active")===null);
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+
+  if(KEY&&BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); log("[i] 已还原存档备份"); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

@@ -43,7 +43,9 @@
     return slot;
   }
 
-  function open(slotId) {
+  // detailBuilder：可选，() => html 字符串。由 app.js 传入「舱段明细」HTML，
+  // 渲染在工作台弹窗顶部，使工业舱段被点开时原右侧明细也一并呈现（移除右侧常驻面板后的补偿）。
+  function open(slotId, detailBuilder) {
     const st = state();
     const slot = slotIfIndustrial(st, slotId);
     if (!slot) return;
@@ -51,6 +53,7 @@
       slotId: slotId, type: slot.type,
       tab: slot.type === "manufacture" ? "component" : null,
       recipeId: null, count: 1, overlay: null,
+      detailBuilder: typeof detailBuilder === "function" ? detailBuilder : null,
     };
     ensureOverlay();
     render();
@@ -197,9 +200,16 @@
     const canAdd = !!cur.recipeId && !full;
     const hint = (cur.type === "manufacture" && cur.tab === "component")
       ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船共用。</div>' : "";
+    let detail = "";
+    if (cur.detailBuilder) {
+      let dh = "";
+      try { dh = cur.detailBuilder() || ""; } catch (e) { dh = ""; }
+      if (dh) detail = '<div class="wb-detail base-focus-panel">' + dh + '</div>';
+    }
     return '<div class="wb-panel">'
       + '<div class="wb-head"><div><b>' + CTX.esc(hs.name) + '</b><span class="wb-sub">槽位 ' + hs.used + ' / ' + hs.total + ' · 耗时 −' + hs.speedPct + '%</span></div>'
       + '<span class="wb-close" data-act="workbench:close">×</span></div>'
+      + detail
       + tabs
       + '<div class="wb-sec">选择配方</div>'
       + '<div class="wb-recipes">' + recipeCards() + '</div>'
@@ -216,7 +226,7 @@
       + '</span></div>'
       + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>加入队列 · ' + CTX.esc(selName) + '</button>'
       + hint
-      + '<div class="wb-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
+      + '<div class="wb-sec wb-queue-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
       + '<div class="wb-queue">' + queueRows() + '</div>'
       + '</div>';
   }
@@ -226,14 +236,73 @@
     cur.overlay.innerHTML = buildBody();
   }
 
-  // 每秒由 renderView 调用：仅刷新队列/头部/计数（不重建配方网格，避免丢 hover/滚动）
+  // 每秒由 renderView 调用：仅就地更新「动态部分」（队列进度 / 头部槽位 / 加按钮可用态 / 配方可负担），
+  // 绝不重建配方网格、页签、步进器——否则每秒整面板 innerHTML 重建会丢 hover/焦点、肉眼闪烁。
+  // 进一步：每个动态片段只在「内容确实变了」时才写 DOM，无变化时零写入，弹窗静置期完全静止。
   function refresh() {
     if (!cur || !cur.overlay || !cur.overlay.classList.contains("active")) return;
     const panel = cur.overlay.querySelector(".wb-panel");
-    const scrollTop = panel ? panel.scrollTop : 0;
-    cur.overlay.innerHTML = buildBody();
-    const np = cur.overlay.querySelector(".wb-panel");
-    if (np) np.scrollTop = scrollTop;
+    if (!panel) return;
+    const scrollTop = panel.scrollTop;
+    const hs = headStats();
+    const full = hs.used >= hs.total;
+
+    const sub = panel.querySelector(".wb-sub");
+    const subTxt = "槽位 " + hs.used + " / " + hs.total + " · 耗时 −" + hs.speedPct + "%";
+    if (sub && sub.textContent !== subTxt) sub.textContent = subTxt;
+
+    const qsec = panel.querySelector(".wb-queue-sec");
+    const qsecHtml = "队列 · " + hs.used + " / " + hs.total + (full ? ' <span class="wb-full">已满</span>' : "");
+    if (qsec && qsec.innerHTML !== qsecHtml) qsec.innerHTML = qsecHtml;
+
+    const q = panel.querySelector(".wb-queue");
+    const qHtml = queueRows();
+    if (q && q.innerHTML !== qHtml) q.innerHTML = qHtml;
+
+    const canAdd = !!cur.recipeId && !full;
+    const add = panel.querySelector(".wb-add");
+    if (add) {
+      if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
+      if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
+      else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
+      const addTxt = "加入队列 · " + (cur.recipeId ? recipeOutName(cur.recipeId) : "未选择");
+      if (add.textContent !== addTxt) add.textContent = addTxt;
+    }
+
+    updateRecipeAffordability(panel);
+    panel.scrollTop = scrollTop;
+  }
+
+  // 仅刷新顶部「舱段明细」块（驻舱撤下/安装模块等会改变明细内容）。容器已是 .base-focus-panel 复用样式。
+  function refreshDetail() {
+    if (!cur || !cur.overlay || !cur.overlay.classList.contains("active")) return;
+    const panel = cur.overlay.querySelector(".wb-panel");
+    if (!panel) return;
+    const el = panel.querySelector(".wb-detail");
+    if (!el || !cur.detailBuilder) return;
+    let dh = "";
+    try { dh = cur.detailBuilder() || ""; } catch (e) { dh = ""; }
+    if (el.innerHTML !== dh) el.innerHTML = dh;
+  }
+
+  // 仅微调配方卡片的「可负担」态（资源每秒结算会变化），不重建节点，保留 hover/选中高亮。
+  function updateRecipeAffordability(panel) {
+    const st = state();
+    panel.querySelectorAll(".wb-recipe").forEach(function (node) {
+      const act = node.getAttribute("data-act") || "";
+      const id = act.split(":")[2];
+      if (!id) return;
+      let can;
+      if (cur.type === "manufacture" && cur.tab === "ship") {
+        const s = Data().Ships.shipById(id);
+        can = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel) && Prod().canAfford(st.res, s.cost));
+      } else {
+        const r = recipeTable().find(function (x) { return x.id === id; });
+        const gateOk = r && (r.bodyLevelReq == null || st.base.bodyLevel >= r.bodyLevelReq);
+        can = !!(gateOk && r && Prod().canAfford(st.res, r.in));
+      }
+      node.classList.toggle("dis", !can);
+    });
   }
 
   // ---------- 动作 ----------
@@ -268,5 +337,5 @@
     render();
   }
 
-  return { init: init, open: open, close: close, refresh: refresh, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };
+  return { init: init, open: open, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };
 });
