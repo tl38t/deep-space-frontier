@@ -60,6 +60,18 @@
   // 经验只在 Arch.cycle 成功时发放（与 1 代 if(success) 块一致），不再连续 ×dt。
   const ARCH_XP_BY_BAND = { 1: 50, 2: 150, 3: 400, 4: 900, 5: 2000 };
   function archXpForBand(band) { return ARCH_XP_BY_BAND[band] || ARCH_XP_BY_BAND[1]; }
+
+  // 战斗经验对回 1 代：按「齐射」发（1 代每齐射普通武器 +2 / defense +1，combat.js 真值）。
+  //   1 代 1 齐射 = ROUND_SEC 秒；2 代锚点取 advance 的 r.fightSec（本次实际战斗秒数，O(1)，离线同在线），
+  //   故每成员每武器技能经验 = VOLLEY_XP × (fightSec/ROUND_SEC) × 烈度(band)。不复用 ×dt 占位。
+  //   之所以不用「按波」：高安等敌舰血量约为 band1 的 70 倍，按波会让高安等反而拿 ~25× 更少经验，
+  //   与「烈度」目标（危险处更值钱）相反；按齐射(战斗秒)则天然让高安等经验更高。
+  const COMBAT_VOLLEY_XP = 2;
+  const COMBAT_DEF_XP = 1;
+  // 安等烈度：高安等敌舰更硬（每波耗时↑→同时间清波数↓），故按 band 给额外烈度乘区补偿，
+  // 使高安等剿匪经验回报高于低安等（提议值，待标定）。
+  const COMBAT_INTENSITY_BY_BAND = { 1: 1.0, 2: 1.4, 3: 1.9, 4: 2.6, 5: 3.5 };
+  function combatIntensity(band) { return COMBAT_INTENSITY_BY_BAND[band] || COMBAT_INTENSITY_BY_BAND[1]; }
   function miningXpRate(node, isGas) {
     const rich = node ? (node.richness != null ? node.richness : (node.tier != null ? node.tier : 1)) : 1;
     const tbl = isGas ? GAS_XP_RATE : MINING_XP_RATE;
@@ -255,6 +267,8 @@
         }
         combatNodes[nid] = 1;
       }
+      const memberById = {};
+      for (const mm of state.members) memberById[mm.id] = mm;
       for (const nid in combatNodes) {
         const focus = (state.combatFocus === nid);
         const r = Combat.advance(state, nid, dt, state.combatWaveHp[nid] || 0, focus);
@@ -268,6 +282,20 @@
         }
         // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
         if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
+        // 战斗经验对回 1 代（按「齐射=ROUND_SEC 战斗秒」发，O(1)；复用 grantBatchXp 接 passionMult×xpMultOf）：
+        //   · 武器系：参战成员每装一门武器类型，每齐射给对应技能 VOLLEY_XP×烈度（没装就不涨）
+        //   · defense：本 tick 本舰受创(r.damage>0)才给 DEF_XP×烈度（1 代每齐射受创+1）
+        //   锚点取 r.fightSec（本次实际战斗秒数，焦点/闭式同产出，离线不爆炸），非逐波循环。
+        if (r.fightSec > 0 && r.combatants) {
+          const inten = combatIntensity(r.band);
+          const volleys = r.fightSec / Combat.ROUND_SEC;   // 1 代 1 齐射 = ROUND_SEC 秒
+          for (const c of r.combatants) {
+            const m = memberById[c.id];
+            if (!m || m.destroyed) continue;
+            for (const key of c.keys) grantBatchXp(state, m, key, COMBAT_VOLLEY_XP * volleys * inten);
+            if (r.damage > 0) grantBatchXp(state, m, "defense", COMBAT_DEF_XP * volleys * inten);
+          }
+        }
         // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
         const b = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
         b.waves += r.waves;
@@ -430,15 +458,6 @@
             }
           }
         }
-      } else if (a.type === "combat") {
-        // 剿匪产出已在第 0 步按节点逐波结算（Engine.Combat.advance）；此处只增长战斗技能，
-        // 避免「节点级产出」在成员循环里被重复累加。无逐波仿真、无每击杀簿记。
-        // 战斗同时增长三武器技能（激光/炮台/导弹，各满额）+ 防御（副，0.6×）。
-        // 2026-11-01：command 已删除，导弹用自己的 missile 键（1 代 missileOperations 的对应物）。
-        m.skills.combatLaser = (m.skills.combatLaser || 0) + XP_RATE.combatLaser * dt * passionMult(m, "combatLaser") * xpMultOf(state, m, "combatLaser");
-        m.skills.combatTurret = (m.skills.combatTurret || 0) + XP_RATE.combatTurret * dt * passionMult(m, "combatTurret") * xpMultOf(state, m, "combatTurret");
-        m.skills.missile = (m.skills.missile || 0) + XP_RATE.missile * dt * passionMult(m, "missile") * xpMultOf(state, m, "missile");
-        m.skills.defense = (m.skills.defense || 0) + XP_RATE.defense * 0.6 * dt * passionMult(m, "defense") * xpMultOf(state, m, "defense");
       } else if (a.type === "train") {
         // 演训 = 主动技能训练，增长所选技能。白名单校验：旧存档里可能写着已删除的键（command 等），
         // 直接当键名用会给一个不存在的技能发经验（白算），落到 combatLaser 更安全。
@@ -561,5 +580,6 @@
     passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, recipeBatchXp, BATCH_XP_RATIO,
     MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
     ARCH_XP_BY_BAND, archXpForBand,
+    COMBAT_VOLLEY_XP, COMBAT_DEF_XP, COMBAT_INTENSITY_BY_BAND, combatIntensity,
   };
 });

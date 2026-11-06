@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深空星疆 · 随机事件原型 (Layer B)</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#ffffff; --ink:#1c2330; --muted:#6b7686;
+    --line:#e2e7ee; --accent:#2f6fdb;
+    --c-common:#9aa3b2; --c-uncommon:#2a9d57; --c-rare:#2f6fdb; --c-epic:#c08a1e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card);}
+  header h1{margin:0;font-size:18px}
+  header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .wrap{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:14px;padding:14px;align-items:start}
+  @media(max-width:920px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:6px}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;background:var(--card);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  button{font:inherit;padding:6px 11px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:7px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.primary:hover{opacity:.9;color:#fff}
+  .feed{max-height:420px;overflow:auto}
+  .item{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+  .item .t{font-weight:600;display:flex;align-items:center;gap:6px}
+  .item .l{color:var(--muted);font-size:12.5px;margin-top:3px;white-space:pre-line}
+  .item .meta{font-size:11px;color:var(--muted);margin-top:4px}
+  .tag{font-size:10px;padding:1px 6px;border-radius:10px;background:#eef2f7;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .pend{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fffdf5}
+  .pend .opts{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .pend button{text-align:left}
+  .pend .req{font-size:11px;color:#c0392b}
+  .stat{font-size:12.5px;line-height:1.7}
+  .stat b{display:inline-block;min-width:74px;color:var(--muted);font-weight:500}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;margin:0 3px 3px 0;border:1px solid var(--line)}
+  .cd{font-size:11px;color:var(--muted)}
+  .sample{font-size:12px;margin-top:6px}
+  .sample table{width:100%;border-collapse:collapse}
+  .sample td,.sample th{border-bottom:1px solid var(--line);padding:3px 4px;text-align:right}
+  .sample th:first-child,.sample td:first-child{text-align:left}
+  .ok{color:var(--c-uncommon)} .bad{color:#c0392b}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{border:none;border-radius:0}
+  .seg button.on{background:var(--accent);color:#fff}
+  label.chk{display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>深空星疆 · 随机事件原型（Layer B 全局事件）</h1>
+  <div class="sub">自包含 demo · 复用真实 rng 算法与拟真引擎 · 不污染 game/ 生产代码 · 设计文档见《深空星疆·随机事件_设计文档.md》</div>
+</header>
+
+<div class="bar">
+  <button id="btnClock" class="primary">▶ 启动世界时钟</button>
+  <button id="btnAct">推进一次活动 tick（对照）</button>
+  <button id="btnSample">采样 1000 次（验证权重）</button>
+  <button id="btnClear">清空面板</button>
+  <span class="cd" id="clockInfo">模拟时间 0 分</span>
+</div>
+
+<div class="wrap">
+  <!-- 事件流 -->
+  <div class="card">
+    <h2>📡 事件流（reports）</h2>
+    <div class="feed" id="feed"><div class="cd">— 暂无事件 —</div></div>
+  </div>
+
+  <!-- 待决 -->
+  <div class="card">
+    <h2>⚠ 待决事件（pendingEvents）</h2>
+    <div class="feed" id="pend"><div class="cd">— 无待决策事件 —</div></div>
+  </div>
+
+  <!-- 控制 + 统计 -->
+  <div class="card">
+    <h2>🎛 状态 / 门禁 / 统计</h2>
+    <div class="stat" id="stats"></div>
+
+    <div class="row">
+      <span>势力声望 rep：</span>
+      <div class="seg" id="repSeg">
+        <button data-rep="0" class="on">0</button>
+        <button data-rep="10">10</button>
+        <button data-rep="20">20</button>
+      </div>
+    </div>
+    <label class="chk"><input type="checkbox" id="flagMl"> 主线 flag：mainline_done（解锁史诗事件）</label>
+
+    <div class="row"><span>当前可抽全局池：</span><span id="poolNow"></span></div>
+
+    <div class="sample" id="sampleBox"><div class="cd">点击「采样 1000 次」验证稀有度权重分布。</div></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============ 真实 rng 算法（与 js/core/rng.js 一致） ============ */
+function makeRng(seed){let s=(seed>>>0)||1;return function(){s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
+function rngInt(rng,lo,hi){return lo+Math.floor(rng()*(hi-lo+1));}
+
+/* ============ 事件库（原型池：全局 + 少量活动事件对照） ============ */
+const RARITY_W = {common:1.0, uncommon:0.4, rare:0.15, epic:0.05};
+const RARITY_CD = {common:600, uncommon:1200, rare:1800, epic:3600};
+
+const EVENTS = [
+  // ---- 全局事件（Layer B）----
+  { id:"gw_omen", scope:"global", rarity:"common", weight:8,
+    title:"深空异象", lines:["远处星云翻涌出一抹不寻常的辉光，转瞬即逝。"] },
+  { id:"gw_distress", scope:"global", rarity:"common", weight:6,
+    title:"求救信标", lines:["一艘民用船在航道边缘发出微弱求救。"],
+    options:[
+      { label:"分兵救援（耗时·有风险）", chance:0.6,
+        success:{deltas:{rep:3,credits:200}, lines:["救起幸存者，对方千恩万谢。"]},
+        fail:{deltas:{credits:50}, lines:["赶到时只剩漂浮的残骸。"]} },
+      { label:"无视（无风险，掉声望）", dels:{deltas:{rep:-2}, lines:["你关掉了信标频率，良心稍有不安。"]} },
+    ] },
+  { id:"gw_trader", scope:"global", rarity:"uncommon", weight:6,
+    title:"流浪商人「灰隼」", lines:["一艘改装货船在锚点悬停，想用一张稀有蓝图换星币。"],
+    options:[
+      { label:"花 3000 星币换蓝图", require:{res:{k:"credits",qty:3000}},
+        dels:{deltas:{credits:-3000,bp:1}, lines:["交易达成，一张完整蓝图入册。"]} },
+      { label:"婉拒", dels:{lines:["「灰隼」点点头，跃迁离去。"]} },
+    ] },
+  { id:"gw_envoy", scope:"global", rarity:"uncommon", weight:5,
+    title:"势力特使到访", lines:["星域议会派来一名特使，带来一份委托。"],
+    unlock:{rep:10},
+    options:[
+      { label:"接下委托（声望+蓝图）", dels:{deltas:{rep:6,bp:1}, lines:["特使满意离去，留下议会徽记。"]} },
+      { label:"推辞", dels:{deltas:{rep:-1}, lines:["特使略显失望地离开。"]} },
+    ] },
+  { id:"gw_market", scope:"global", rarity:"rare", weight:4,
+    title:"行情异动", lines:["交易所传来消息：某类矿石需求暴涨，限时溢价。"],
+    options:[
+      { label:"趁机抛售库存", chance:0.7,
+        success:{deltas:{credits:1500}, lines:["高价出清，账户一厚。"]},
+        fail:{deltas:{credits:200}, lines:["行情回落，只小赚一笔。"]} },
+      { label:"观望", dels:{lines:["你按兵不动，等待下一波信号。"]} },
+    ] },
+  { id:"gw_counterraid", scope:"global", rarity:"rare", weight:3,
+    title:"海盗反扑", lines:["你剿灭的残部摸黑摸进了补给锚点。"],
+    options:[
+      { label:"抽调舰队回防", chance:0.6,
+        success:{deltas:{rep:4,credits:400}, lines:["反扑被击退，缴获少量物资。"]},
+        fail:{deltas:{fe_ore:-50,ni_ore:-30}, lines:["回防慢了一步，仓库被搬空一截。"]} },
+      { label:"暂时无视（损失资源）", dels:{deltas:{fe_ore:-80,ni_ore:-50,rep:-3}, lines:["锚点遭洗劫，声望受损。"]} },
+    ] },
+  { id:"gw_unrest", scope:"global", rarity:"rare", weight:3,
+    title:"内部动荡", lines:["有成员私下抱怨分成太少，士气浮动。"],
+    options:[
+      { label:"发奖金维稳（花星币）", require:{res:{k:"credits",qty:2000}},
+        dels:{deltas:{credits:-2000,rep:2}, lines:["一笔奖金下去，军团重归团结。"]} },
+      { label:"强硬压制", dels:{deltas:{rep:-2}, lines:["压住了声响，但暗流仍在。"]} },
+    ] },
+  { id:"gw_techbroker", scope:"global", rarity:"uncommon", weight:4,
+    title:"发明掮客", lines:["一名掮客声称握有先驱工艺线索。"],
+    unlock:{tech:"invention_unlocked"},
+    options:[
+      { label:"购入线索（花星币）", require:{res:{k:"credits",qty:1500}},
+        dels:{deltas:{credits:-1500,bp:1}, lines:["线索属实，转化为一张图纸。"]} },
+      { label:"不买", dels:{lines:["掮客耸耸肩走开。"]} },
+    ] },
+  { id:"gw_hidden", scope:"global", rarity:"epic", weight:2,
+    title:"传奇残骸「晨星号」", lines:["探测到一艘传说级先驱母舰的残骸坐标——只有打通主线的人才知道它在哪。"],
+    unlock:{flag:"mainline_done"},
+    options:[
+      { label:"远征打捞（高险高回报）", chance:0.45,
+        success:{deltas:{bp:3,credits:5000,rep:10}, lines:["母舰核心被 you 完整回收，军团声名大噪。"]},
+        fail:{deltas:{credits:-1000}, lines:["打捞船遭遇空间乱流，只带回零散残片。"]} },
+      { label:"标记存档", dels:{deltas:{bp:1}, lines:["你记下坐标，留待将来。"]} },
+    ] },
+  { id:"gw_bounty", scope:"global", rarity:"epic", weight:2,
+    title:"传奇赏金目标", lines:["通缉令刷新：一名传奇海盗头目现身邻近星域。"],
+    options:[
+      { label:"倾巢围剿", chance:0.4,
+        success:{deltas:{credits:8000,rep:15,bp:2}, lines:["头目伏法，赏金全额到账。"]},
+        fail:{deltas:{credits:-2000,rep:-3}, lines:["对方早有防备，远征队铩羽而归。"]} },
+      { label:"暂缓", dels:{lines:["你评估实力后决定暂缓出击。"]} },
+    ] },
+
+  // ---- 活动事件（Layer A，仅作对照，复用现有机制）----
+  { id:"mine_cache", activity:"mine", weight:10, rarity:"common",
+    title:"矿脉伴生发现", lines:["勘探仪在岩层夹缝里扫到富集矿囊。"], deltas:{fe_ore:30,ni_ore:20} },
+  { id:"com_win", activity:"combat", weight:10, rarity:"common",
+    title:"巡逻交火", lines:["小队清剿了一股走私武装，缴获战利品。"], deltas:{credits:600,rep:3} },
+  { id:"ref_eff", activity:"refine", weight:6, rarity:"common",
+    title:"炉况优化", lines:["熔炉温度曲线调平，精炼更顺。"], skillKey:"refine", skill:50 },
+];
+const BY_ID={}; EVENTS.forEach(e=>BY_ID[e.id]=e);
+
+/* ============ 状态 ============ */
+const state = {
+  res:{credits:5000, fe_ore:200, ni_ore:100, bp:0, rep:0},
+  reports:[], pendingEvents:[],
+  cooldownUntil:{}, flags:{}, tech:{}, factionRep:{},
+  members:[{id:"m1",trait:null,skills:{}}],
+};
+let WORLD_SEED = 0xA11E;
+let vNow = 0;            // 虚拟时间（秒）
+let nextGlobalAt = 0;    // 下一次全局事件虚拟时刻
+const SCALE = 120;       // 1 真实秒 = 120 虚拟秒
+let clockOn = false, lastTs = 0, rafId = 0;
+
+/* ============ 引擎（拟真，与设计方案一致） ============ */
+function checkUnlock(ev){
+  if(!ev.unlock) return true;
+  if(ev.unlock.flag && !state.flags[ev.unlock.flag]) return false;
+  if(ev.unlock.rep!=null && (state.factionRep[ev.unlock.faction||"_"]||0) < ev.unlock.rep) return false;
+  if(ev.unlock.tech && !state.tech[ev.unlock.tech]) return false;
+  if(ev.unlock.security!=null) return false; // 原型未接星域，恒过
+  return true;
+}
+function eligible(ev, scope, vsec){
+  if(scope==="global"){
+    if(ev.scope!=="global") return false;
+  }else{
+    if(ev.scope==="global" || ev.activity!==scope) return false;
+  }
+  if(ev.chainOnly) return false;
+  if((state.cooldownUntil[ev.id]||0) > vsec) return false;
+  return checkUnlock(ev);
+}
+function pick(scope, rng, vsec){
+  const pool = EVENTS.filter(e=>eligible(e,scope,vsec));
+  if(!pool.length) return null;
+  let total=0; for(const e of pool) total += (e.weight||1)*RARITY_W[e.rarity||"common"];
+  let r = rng()*total;
+  for(const e of pool){ r -= (e.weight||1)*RARITY_W[e.rarity||"common"]; if(r<=0) return e; }
+  return pool[pool.length-1];
+}
+function setCooldown(ev){ state.cooldownUntil[ev.id] = vNow + (ev.cooldown||RARITY_CD[ev.rarity||"common"]); }
+
+function pushReport(title, lines, rarity){
+  state.reports.unshift({ts:Math.floor(vNow/60), title, lines:lines||[], rarity});
+  if(state.reports.length>30) state.reports.length=30;
+  renderFeed();
+}
+function applyEvent(ev){
+  if(ev.deltas) for(const k in ev.deltas){ state.res[k]=(state.res[k]||0)+ev.deltas[k]; if(state.res[k]<0)state.res[k]=0; }
+  setCooldown(ev);
+  pushReport(ev.title, ev.lines, ev.rarity);
+}
+function enqueuePending(ev){
+  if(state.pendingEvents.length>=5) return false;
+  state.pendingEvents.push({eventId:ev.id});
+  pushReport("待决 · "+ev.title, [(ev.lines&&ev.lines[0])||"需要你的决策。","前往右侧面板处理。"], ev.rarity);
+  renderPend(); return true;
+}
+function checkRequire(opt){
+  if(opt.require){
+    if(opt.require.res){
+      const have=state.res[opt.require.res.k]||0, need=opt.require.res.qty||1;
+      if(have<need) return {ok:false,err:"库存不足："+opt.require.res.k+" "+Math.floor(have)+"/"+need};
+    }
+  }
+  return {ok:true};
+}
+function resolveOption(pIdx, oIdx){
+  const p = state.pendingEvents[pIdx]; if(!p) return;
+  const ev = BY_ID[p.eventId]; if(!ev||!ev.options) return;
+  const opt = ev.options[oIdx]; if(!opt) return;
+  const rq = checkRequire(opt); if(!rq.ok){ toast(rq.err); return; }
+  let payload, success=null, title=ev.title, lines=ev.lines||[];
+  if(opt.success||opt.fail){
+    let chance = opt.chance==null?0.6:opt.chance;
+    chance = Math.max(0.05, Math.min(0.97, chance));
+    success = (makeRng((WORLD_SEED^ (pIdx*131+oIdx*17))()) < chance);
+    payload = success?opt.success:opt.fail; if(!payload)payload={};
+    title = payload.title||(success?ev.title+" · 成功":ev.title+" · 失败");
+    lines = payload.lines||lines;
+  } else { payload = opt.dels||opt; title=payload.title||ev.title; lines=payload.lines||lines; }
+  if(payload.deltas) for(const k in payload.deltas){ state.res[k]=(state.res[k]||0)+payload.deltas[k]; if(state.res[k]<0)state.res[k]=0; }
+  setCooldown(ev);
+  pushReport(title, lines, ev.rarity);
+  state.pendingEvents.splice(pIdx,1);
+  renderPend(); renderStats();
+}
+
+/* ============ 世界时钟 ============ */
+function scheduleNext(){ nextGlobalAt = vNow + rngInt(makeRng(WORLD_SEED++),180,480); }
+function tick(realDt){
+  vNow += realDt*SCALE;
+  if(vNow >= nextGlobalAt){
+    const rng = makeRng(WORLD_SEED++);
+    const ev = pick("global", rng, vNow);
+    if(ev){ if(ev.options&&ev.options.length) enqueuePending(ev); else applyEvent(ev); }
+    scheduleNext();
+  }
+  document.getElementById("clockInfo").textContent = "模拟时间 "+Math.floor(vNow/60)+" 分";
+}
+function loop(ts){
+  if(!clockOn) return;
+  if(!lastTs) lastTs=ts;
+  const dt=(ts-lastTs)/1000; lastTs=ts;
+  tick(Math.min(dt,0.1));
+  renderStats();
+  rafId=requestAnimationFrame(loop);
+}
+
+/* ============ 渲染 ============ */
+function rColor(r){return getComputedStyle(document.documentElement).getPropertyValue("--c-"+r).trim()||"#999";}
+function renderFeed(){
+  const el=document.getElementById("feed");
+  if(!state.reports.length){el.innerHTML='<div class="cd">— 暂无事件 —</div>';return;}
+  el.innerHTML = state.reports.map(r=>{
+    const c=r.rarity?rColor(r.rarity):"#bbb";
+    const tag=r.rarity?('<span class="tag" style="color:'+c+'">'+r.rarity+'</span>'):'';
+    return '<div class="item"><div class="t"><span class="dot" style="background:'+c+'"></span>'+r.title+' '+tag+'</div>'+
+      '<div class="l">'+(r.lines||[]).join("\n")+'</div>'+
+      '<div class="meta">模拟第 '+(r.ts||0)+' 分</div></div>';
+  }).join("");
+}
+function renderPend(){
+  const el=document.getElementById("pend");
+  if(!state.pendingEvents.length){el.innerHTML='<div class="cd">— 无待决策事件 —</div>';return;}
+  el.innerHTML = state.pendingEvents.map((p,i)=>{
+    const ev=BY_ID[p.eventId]; if(!ev)return"";
+    const opts=ev.options.map((o,j)=>{
+      const rq=checkRequire(o);
+      const req = rq.ok?'':' <span class="req">✗ '+rq.err+'</span>';
+      return '<button data-p="'+i+'" data-o="'+j+'">'+o.label+req+'</button>';
+    }).join("");
+    return '<div class="pend"><div class="t"><b>'+ev.title+'</b></div>'+
+      '<div class="l">'+(ev.lines||[]).join("\n")+'</div>'+
+      '<div class="opts">'+opts+'</div></div>';
+  }).join("");
+  el.querySelectorAll("button[data-p]").forEach(b=>b.onclick=()=>resolveOption(+b.dataset.p,+b.dataset.o));
+}
+function renderStats(){
+  const pool=EVENTS.filter(e=>eligible(e,"global",vNow));
+  const cd=Object.keys(state.cooldownUntil).filter(k=>state.cooldownUntil[k]>vNow)
+    .map(k=>k+"("+Math.ceil((state.cooldownUntil[k]-vNow)/60)+"分)");
+  const tally={common:0,uncommon:0,rare:0,epic:0,total:state.reports.length};
+  state.reports.forEach(r=>{if(r.rarity)tally[r.rarity]++;});
+  document.getElementById("stats").innerHTML =
+    '<div><b>已触发</b>'+tally.total+' 个</div>'+
+    '<div><b>common</b>'+tally.common+' · <b style="color:var(--c-uncommon)">uncommon</b>'+tally.uncommon+
+    ' · <b style="color:var(--c-rare)">rare</b>'+tally.rare+' · <b style="color:var(--c-epic)">epic</b>'+tally.epic+'</div>'+
+    '<div><b>res</b>credits '+Math.floor(state.res.credits)+' · fe_ore '+Math.floor(state.res.fe_ore)+
+    ' · bp '+state.res.bp+' · rep '+Math.floor(state.res.rep)+'</div>'+
+    '<div><b>冷却中</b>'+(cd.length?cd.join(" "):"无")+'</div>'+
+    '<div><b>rep</b>'+(state.factionRep._||0)+' · <b>flag</b>'+(state.flags.mainline_done?"on":"off")+
+    ' · <b>tech</b>'+(state.tech.invention_unlocked?"on":"off")+'</div>';
+  document.getElementById("poolNow").innerHTML =
+    pool.map(e=>'<span class="pill" style="color:'+rColor(e.rarity)+'">'+e.id+'</span>').join("")||"空";
+}
+function toast(m){ const t=document.createElement("div"); t.className="cd"; t.style.color="#c0392b";
+  t.textContent=m; document.getElementById("pend").prepend(t); setTimeout(()=>t.remove(),2200); }
+
+/* ============ 采样（验证稀有度权重） ============ */
+function sample(){
+  const N=1000; const cnt={common:0,uncommon:0,rare:0,epic:0};
+  let seed=12345;
+  for(let i=0;i<N;i++){ const ev=pick("global",makeRng(seed++),0); if(ev)cnt[ev.rarity]++; }
+  // 期望值
+  const pool=EVENTS.filter(e=>e.scope==="global"&&checkUnlock(e));
+  let tot=0; const exp={common:0,uncommon:0,rare:0,epic:0};
+  pool.forEach(e=>{const w=(e.weight||1)*RARITY_W[e.rarity||"common"];tot+=w;exp[e.rarity]+=w;});
+  let html='<table><tr><th>rarity</th><th>实测%</th><th>理论%</th><th>✓</th></tr>';
+  for(const r of ["common","uncommon","rare","epic"]){
+    const a=(cnt[r]/N*100), b=(exp[r]/tot*100);
+    const ok=Math.abs(a-b)<3.5;
+    html+='<tr><td style="color:'+rColor(r)+'">'+r+'</td><td>'+a.toFixed(1)+'</td><td>'+b.toFixed(1)+
+      '</td><td class="'+(ok?"ok":"bad")+'">'+(ok?"✓":"✗")+'</td></tr>';
+  }
+  html+='</table><div class="cd">共 '+N+' 次 · 当前门禁下可抽池 '+pool.length+' 个</div>';
+  document.getElementById("sampleBox").innerHTML=html;
+}
+
+/* ============ 绑定 ============ */
+document.getElementById("btnClock").onclick=function(){
+  clockOn=!clockOn; lastTs=0;
+  this.textContent = clockOn?"⏸ 暂停世界时钟":"▶ 启动世界时钟";
+  this.classList.toggle("primary",!clockOn);
+  if(clockOn){ scheduleNext(); rafId=requestAnimationFrame(loop); }
+  else if(rafId) cancelAnimationFrame(rafId);
+};
+document.getElementById("btnAct").onclick=function(){
+  vNow += 25; // 模拟推进一个活动 tick（让冷却随虚拟时间流逝，避免连点返回 null）
+  const acts=["mine","combat","refine","explore"];
+  const a=acts[Math.floor(makeRng(Date.now())()*acts.length)];
+  const ev=pick(a,makeRng(Date.now()^a.length),vNow);
+  if(ev){ if(ev.options&&ev.options.length) enqueuePending(ev); else applyEvent(ev); renderStats(); }
+};
+document.getElementById("btnSample").onclick=sample;
+document.getElementById("btnClear").onclick=function(){
+  state.reports=[];state.pendingEvents=[];state.cooldownUntil={};renderFeed();renderPend();renderStats();
+};
+document.querySelectorAll("#repSeg button").forEach(b=>b.onclick=function(){
+  document.querySelectorAll("#repSeg button").forEach(x=>x.classList.remove("on"));
+  this.classList.add("on");
+  state.factionRep._ = +this.dataset.rep;
+  renderStats();
+});
+document.getElementById("flagMl").onchange=function(){
+  if(this.checked) state.flags.mainline_done=true; else delete state.flags.mainline_done;
+  renderStats(); sample();
+};
+
+renderFeed(); renderPend(); renderStats();
+</script>
+</body>
+</html>

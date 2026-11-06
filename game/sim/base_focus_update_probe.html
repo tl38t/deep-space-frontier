@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段明细随点击更新探针</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1280px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+// 核验：点击不同舱段后，右栏 .base-focus-panel 的文本内容是否真的随之变化（排除“面板不刷新”的真 bug）。
+const out=[]; let PASS=0, FAIL=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(n,c,e)=>{ c?PASS++:FAIL++; log((c?"[PASS] ":"[FAIL] ")+n+(e!==undefined?("  → "+e):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr"); const D=()=>fr.contentDocument;
+const nav=(u)=>new Promise(res=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=u; });
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step);} return false; }
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+const q=(s)=>{ try{ return D().querySelector(s); }catch(e){ return null; } };
+const qa=(s)=>{ try{ return [...D().querySelectorAll(s)]; }catch(e){ return []; } };
+function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return false; } }
+function closeWb(){ const x=q(".wb-close"); if(x) try{ x.click(); }catch(e){} }
+function focusText(){ const p=q(".base-focus-panel"); return p?p.textContent.replace(/\s+/g," ").trim().slice(0,60):""; }
+
+(async function(){
+  await nav("../index.html?t="+Date.now()+"#base");
+  const b0=await until(booted,25000); if(!b0){ log("启动失败"); return; }
+  clickEl(q('[data-act="tab:base"]')); await wait(700);
+  await until(()=>qa(".base-module").length>0, 10000);
+
+  const samples={};
+  const keys=["core","energy","cargo","smelt","command","habitat"];
+  for(const k of keys){
+    const btn=qa('[data-act="baseinfo:'+k+'"]')[0];
+    if(!btn){ samples[k]="(无此舱段)"; continue; }
+    clickEl(btn); await wait(250); closeWb(); await wait(150);
+    samples[k]=focusText();
+  }
+  for(const k of keys) log("[i] "+k+" → "+samples[k]);
+
+  // 至少应有两个不同文本（证明面板随点击刷新）
+  const vals=Object.values(samples).filter(v=>v && v!=="(无此舱段)");
+  const uniq=new Set(vals);
+  ok("右栏明细内容随舱段点击变化（出现≥2种不同文本）", uniq.size>=2, "不同文本数="+uniq.size);
+
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

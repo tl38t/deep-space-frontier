@@ -257,6 +257,7 @@
     //    但既没乘进掉落也没别的用处 —— 纯死变量，已删。精通点 combat 节点目前**未接线**。
     let cnt = 0;
     const members = [];
+    const combatants = [];   // 战斗经验归属：每成员装配了哪些武器技能键（按舰归驾驶成员）
     let dpsByType = { laser: 0, missile: 0, cannon: 0 };
     let ammoRate = { laser: 0, missile: 0, cannon: 0 };
     let weapons = [];
@@ -277,6 +278,10 @@
         ammoRate[t] += f.ammoRate[t] || 0;
       }
       for (const w of f.weapons) weapons.push(w);
+      // 战斗经验归属（按舰归驾驶成员）：记录该成员装配了哪些武器技能键（去重）
+      const keys = [];
+      for (const w of f.weapons) { const k = SKILL_OF_WEAPON[w.type]; if (k && keys.indexOf(k) < 0) keys.push(k); }
+      combatants.push({ id: m.id, keys: keys });
       repairRaw += f.repair;
       // 减伤：装配（损伤控制）+ defense 技能「统合护盾/装甲/结构」。
       // 走同一个 dmgRedRaw 累积、同一个 DMG_RED_CAP 上限 —— 不另起变量，否则两套上限互不知情。
@@ -329,6 +334,7 @@
     return {
       nodeId: nodeId,
       members: members,
+      combatants: combatants,
       cnt: cnt,
 
       weaponDps: weaponDps,
@@ -605,6 +611,7 @@
         waveSec: 0, progress: 0, fleet: null, fleetHp: 0,
         squadDps: 0, weaponDps: 0, fleetDps: 0, incomingDps: 0,
         repairPerSec: 0, dmgReduction: 0, band: 1,
+        combatants: [],
       };
     }
 
@@ -678,6 +685,7 @@
       repairPerSec: P.repairPerSec,
       dmgReduction: P.dmgReduction,
       band: P.band,
+      combatants: P.combatants,
     };
   }
 

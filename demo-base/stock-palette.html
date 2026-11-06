@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>舰基 · 舱段库拖放（demo）</title>
+<link rel="stylesheet" href="../game/css/main.css">
+<style>
+/* ===================== demo 专属样式（确认后并入 main.css） ===================== */
+.demo-shell{max-width:1100px;margin:0 auto;padding:12px}
+.demo-banner{margin:0 0 10px;padding:9px 12px;border:1px solid rgba(226,189,104,.5);border-left:3px solid var(--warn);
+  border-radius:6px;background:rgba(226,189,104,.08);color:#e9dcc0;font-size:12px;line-height:1.55}
+.demo-banner b{color:var(--warn)}
+
+/* 舱段库：常驻在舰船图右侧一列 */
+.base-stage.has-stock{min-height:600px}
+.base-stage.has-stock .base-layout{left:calc(50% - 108px);width:calc(86% - 216px)}
+.base-stock{position:absolute;right:10px;top:38px;bottom:36px;width:196px;z-index:4;display:flex;flex-direction:column;
+  gap:6px;padding:8px;overflow:hidden;border:1px solid rgba(79,196,211,.28);border-radius:8px;
+  background:linear-gradient(160deg,rgba(15,34,46,.94),rgba(7,17,25,.96));box-shadow:0 0 0 1px rgba(0,0,0,.35) inset}
+.base-stock.drop-target{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset,0 0 16px rgba(226,189,104,.22)}
+.bs-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;color:var(--cyan);font-size:11px;letter-spacing:.1em;flex:0 0 auto}
+.bs-head b{color:#fff;font-size:12px;letter-spacing:0}
+.bs-head small{color:var(--dim);font-size:10px}
+.bs-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px}
+.bs-item{display:flex;align-items:center;gap:7px;width:100%;padding:6px 7px;text-align:left;cursor:grab;touch-action:none;
+  flex:0 0 auto;border:1px solid rgba(79,196,211,.22);border-radius:6px;
+  background:linear-gradient(145deg,rgba(20,49,69,.92),rgba(9,23,36,.94));color:var(--fg);transition:.14s}
+.bs-item:hover{border-color:var(--acc);transform:translateY(-1px)}
+.bs-item.sel{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset}
+.bs-item.dragging{transition:none;transform:translate(var(--dx,0),var(--dy,0)) scale(1.04);z-index:40;pointer-events:none;
+  opacity:.95;box-shadow:0 10px 24px rgba(0,0,0,.5),0 0 0 1px var(--cyan) inset}
+.bs-ic{font-size:16px;line-height:1;flex:0 0 auto}
+.bs-tx{min-width:0;display:flex;flex-direction:column;gap:1px;overflow:hidden}
+.bs-tx b{font-size:11px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bs-tx small{font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bs-empty{padding:14px 8px;text-align:center;color:var(--dim);font-size:11px;line-height:1.6}
+.bs-foot{color:var(--dim);font-size:9.5px;line-height:1.45;padding-top:5px;flex:0 0 auto;border-top:1px dashed rgba(79,196,211,.2)}
+.bs-foot em{color:var(--cyan);font-style:normal}
+
+/* 可落点 / 拒绝态 */
+.base-layout .base-module.drop-target{transform:scale(.94);outline:2px dashed var(--cyan);outline-offset:-4px;background:rgba(79,196,211,.14)}
+.base-layout .base-module.drop-deny{outline:2px dashed var(--bad);outline-offset:-4px;background:rgba(232,121,168,.14)}
+.base-module.picked{outline:2px solid var(--warn);outline-offset:-3px}
+@keyframes bshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.base-module.shake,.base-stock.shake{animation:bshake .22s ease-in-out 2}
+
+/* 窄屏：库变底部横向条，舰船图收上 */
+@media(max-width:760px){
+  .base-stage.has-stock{min-height:600px}
+  .base-stage.has-stock .base-layout{left:50%;top:41%;width:88%;height:62%}
+  .base-stock{left:8px;right:8px;top:auto;bottom:34px;width:auto;height:96px;flex-direction:row;align-items:stretch;padding:6px}
+  .bs-head{flex-direction:column;justify-content:center;gap:2px;min-width:52px}
+  .bs-list{flex-direction:row;overflow-x:auto;overflow-y:hidden;gap:5px;align-items:stretch}
+  .bs-item{width:104px;flex:0 0 auto;flex-direction:column;align-items:flex-start;gap:2px}
+  .bs-foot{display:none}
+}
+</style>
+</head>
+<body>
+<div class="demo-shell">
+  <div class="demo-banner">
+    <b>独立 demo，不写存档、不改主代码。</b>
+    右侧栏 = 你的舱段库（未装配的那些）。拖到同类型的<b>空舱位</b>即装配；已装舱段拖到另一个已装舱段仍走原来的「交换位置」；拖回右栏是「拆下」。
+    触屏可先点库卡片再点空舱位。窄屏（≤760）库变底部横条。
+  </div>
+
+  <div id="nsk-view">
+    <div class="base-view-head"><div><h2>舰基 · 拓荒者级</h2>
+      <div class="dim">唯一舰基核心 · 空间站 Lv.1 · 拓荒者殖民团</div></div></div>
+
+    <div class="base-drag-hint"><span class="bdh-grip">⠿</span><b>拖动舱段可交换位置</b>
+      <span class="dim">相邻增效（能源直供 / 短链物流）随布局实时重算；唯一核心固定不可移动。</span></div>
+
+    <div class="base-layout-panel">
+      <div class="base-stage hull-frontier has-stock" id="stage" style="--hull-accent:#b5c46a">
+        <div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>拓荒者级</span></div>
+        <div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div>
+        <div class="base-hull hull-frontier"><img class="base-blueprint-art" src="../game/assets/base-hull-blueprint.svg?v=2" alt=""></div>
+        <div class="base-layout" id="layout"></div>
+
+        <aside class="base-stock" id="stock">
+          <div class="bs-head"><b>舱段库</b><small id="stockCount">待装配 0</small></div>
+          <div class="bs-list" id="stockList"></div>
+          <div class="bs-foot">拖到空舱位装配 · 拖回此处拆卸<br><em>同类型舱位</em>才可落位</div>
+        </aside>
+
+        <div class="base-stage-foot"><span><b>核心在线</b><em>模块 <span id="modCount">1 / 10</span></em></span>
+          <span>电网负载 <b id="psText">—</b></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================== demo 数据（照抄 game/js/data/ships.js 的 hull_frontier） =====================
+const MODULES = {
+  energy:{name:"能源舱",icon:"⚡",color:"#e7b45d",energy:0,desc:"发电并稳定工业电网。"},
+  cargo:{name:"仓储舱",icon:"▣",color:"#79a9ff",energy:5,desc:"周转矿石与组件。"},
+  smelt:{name:"精炼环",icon:"⚗",color:"#67d4a1",energy:20,desc:"矿石转化为矿材。"},
+  manufacture:{name:"总装船坞",icon:"⌬",color:"#42d6e8",energy:30,desc:"制造部件与整舰。"},
+  equip:{name:"制造车间",icon:"⚒",color:"#e08a5a",energy:15,desc:"制造装备与改装件。"},
+  invent:{name:"发明舱",icon:"◇",color:"#b28cff",energy:40,desc:"研发图纸与配方。"},
+  dock:{name:"舰队泊位",icon:"◈",color:"#b28cff",energy:10,desc:"停泊与维护舰队。"},
+  command:{name:"指挥塔",icon:"⌁",color:"#e8c46a",energy:10,desc:"统筹舰队与行动。"},
+  habitat:{name:"居住舱",icon:"⌂",color:"#ef7b87",energy:10,desc:"供成员生活训练。"},
+  booster:{name:"反应实验室",icon:"⚗",color:"#c98bff",energy:25,desc:"制造增强剂瓶身。"},
+};
+const BASE_LAYOUT = {core:[3,3],energy:[3,1],cargo:[4,3],smelt:[4,4],manufacture:[3,2],invent:[2,2],dock:[2,3],command:[3,4],habitat:[3,5],booster:[5,5],equip:[4,2]};
+const ENERGY_BASE = 80;      // BODY_LEVELS[0].energy
+const ENERGY_OUT  = 100;     // ENERGY_OUTPUT
+
+// pos = 舱位当前坐标（对应 state.base.slotPos 的换位结果）
+let pos = JSON.parse(JSON.stringify(BASE_LAYOUT));
+const owned = Object.keys(MODULES).map(t => ({ id:"module_"+t+"_01", type:t }));
+let installed = { smelt:"module_smelt_01" };   // 与玩家截图一致：只装了精炼环
+
+const $ = s => document.querySelector(s);
+const layout = $("#layout"), stockList = $("#stockList");
+
+const installedTypes = () => Object.keys(installed).filter(t => installed[t]);
+const usedIds = () => new Set(installedTypes().map(t => installed[t]));
+const stockModules = () => { const u = usedIds(); return owned.filter(m => !u.has(m.id)); };
+const energyBudget = () => ENERGY_BASE + installedTypes().filter(t => t === "energy").length * ENERGY_OUT;
+const energyUsed = () => installedTypes().reduce((s,t) => s + (MODULES[t].energy || 0), 0);
+
+// ===================== 渲染 =====================
+function render(){
+  layout.innerHTML = Object.keys(pos).map(t => {
+    const [x,y] = pos[t];
+    if(t === "core") return '<button class="base-module base-core" style="grid-column:'+x+';grid-row:'+y+'" data-slot="core">'
+      + '<span class="base-module-icon">✦</span><b>唯一核心</b><small>拓荒者殖民团</small>'
+      + '<span class="base-module-status">本体 Lv.1</span></button>';
+    const def = MODULES[t], on = !!installed[t];
+    return '<button class="base-module base-'+t+(on?'':' empty')+'" style="grid-column:'+x+';grid-row:'+y+';--module-color:'+def.color+'"'
+      + ' data-slot="'+t+'"'+(on?' data-module="'+installed[t]+'"':'')+'>'
+      + '<span class="base-module-icon">'+def.icon+'</span><b>'+(on?def.name:"空舱位")+'</b>'
+      + '<small>'+(on?"在线":"兼容："+def.name)+'</small>'
+      + '<span class="base-module-status">'+(on?"待命":"待装配")+'</span></button>';
+  }).join("");
+
+  const list = stockModules();
+  stockList.innerHTML = list.length ? list.map(m => {
+    const d = MODULES[m.type];
+    return '<button class="bs-item" data-module="'+m.id+'" data-type="'+m.type+'">'
+      + '<span class="bs-ic" style="color:'+d.color+'">'+d.icon+'</span>'
+      + '<span class="bs-tx"><b>'+d.name+'</b><small>⚡'+d.energy+' · '+d.desc+'</small></span>'
+      + '</button>';
+  }).join("") : '<div class="bs-empty">所有舱段都已装配。<br>拆下的舱段会回到这里。</div>';
+
+  $("#stockCount").textContent = "待装配 " + list.length;
+  $("#modCount").textContent = installedTypes().length + " / " + owned.length;
+  const used = energyUsed(), bud = energyBudget();
+  $("#psText").textContent = used + " / " + bud + " (" + Math.round(used / bud * 100) + "%)";
+  bindInteractions();
+}
+
+// ===================== 拖放 =====================
+// 与引擎同口径：库→空舱位同类型 = Base.installModule | 已装→已装 = Base.swapSlots（换坐标）
+//               已装→库 = Base.removeModule | 电网超载 = installModule 的门禁
+let drag = null, picked = null, lastDragAt = 0;
+
+function bindInteractions(){
+  document.querySelectorAll(".bs-item").forEach(el => {
+    el.onpointerdown = e => startDrag(e, el, "stock");
+    el.onclick = () => {
+      if(Date.now() - lastDragAt < 300) return;
+      picked = (picked === el.dataset.module) ? null : el.dataset.module;
+      document.querySelectorAll(".bs-item.sel").forEach(n => n.classList.remove("sel"));
+      document.querySelectorAll(".base-module.picked").forEach(n => n.classList.remove("picked"));
+      if(picked){ el.classList.add("sel"); flash("已选中 " + MODULES[el.dataset.type].name + " · 点一个同类型空舱位放下"); }
+    };
+  });
+  document.querySelectorAll(".base-module[data-slot]").forEach(el => {
+    if(el.dataset.slot === "core") return;
+    el.onpointerdown = e => startDrag(e, el, "slot");
+    el.onclick = () => {
+      if(Date.now() - lastDragAt < 300) return;
+      if(picked){ tryInstall(picked, el.dataset.slot, el); return; }
+      flash("正式版这里仍走原「舱位详情」弹窗（模块库 / 拆卸按钮在里面）");
+    };
+  });
+}
+
+function startDrag(e, el, kind){
+  if(e.button != null && e.button > 0) return;
+  drag = { el, kind, pid:e.pointerId, sx:e.clientX, sy:e.clientY, active:false,
+           moduleId: el.dataset.module || null, slotType: kind === "slot" ? el.dataset.slot : null };
+  el.setPointerCapture && (function(){ try{ el.setPointerCapture(e.pointerId); }catch(_e){} })();
+}
+document.addEventListener("pointermove", e => {
+  if(!drag || e.pointerId !== drag.pid) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if(!drag.active){
+    if(Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    drag.active = true; drag.el.classList.add("dragging");
+  }
+  drag.el.style.setProperty("--dx", dx + "px");
+  drag.el.style.setProperty("--dy", dy + "px");
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  clearMarks();
+  const slotEl = hit && hit.closest ? hit.closest(".base-module[data-slot]") : null;
+  if(slotEl && slotEl.dataset.slot !== "core") markTarget(slotEl);
+  else if(drag.kind === "slot" && hit && hit.closest && hit.closest(".base-stock")) $("#stock").classList.add("drop-target");
+});
+document.addEventListener("pointerup", e => {
+  if(!drag || e.pointerId !== drag.pid) return;
+  const d = drag; drag = null;
+  d.el.style.removeProperty("--dx"); d.el.style.removeProperty("--dy");
+  d.el.classList.remove("dragging");
+  if(!d.active) return;
+  lastDragAt = Date.now();
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const slotEl = hit && hit.closest ? hit.closest(".base-module[data-slot]") : null;
+  const inStock = hit && hit.closest && hit.closest(".base-stock");
+  clearMarks();
+  if(d.kind === "stock"){
+    if(slotEl) tryInstall(d.moduleId, slotEl.dataset.slot, slotEl);
+  } else if(inStock){
+    doRemove(d.slotType);
+  } else if(slotEl && slotEl.dataset.slot !== "core"){
+    doSwapSlots(d.slotType, slotEl.dataset.slot, slotEl);
+  }
+  render();
+});
+document.addEventListener("pointercancel", () => {
+  if(!drag) return;
+  drag.el.classList.remove("dragging");
+  drag.el.style.removeProperty("--dx"); drag.el.style.removeProperty("--dy");
+  drag = null; clearMarks();
+});
+
+function clearMarks(){
+  document.querySelectorAll(".base-module.drop-target,.base-module.drop-deny,.base-stock.drop-target")
+    .forEach(n => n.classList.remove("drop-target","drop-deny"));
+}
+// 悬停即时反馈：库→同类型空舱位=可落（青）；否则=拒绝（粉）。已装→任何非核心舱位=可落（交换位置）。
+function markTarget(slotEl){
+  if(drag.kind === "stock"){
+    const m = owned.find(x => x.id === drag.moduleId);
+    const ok = m && m.type === slotEl.dataset.slot && !installed[slotEl.dataset.slot];
+    slotEl.classList.add(ok ? "drop-target" : "drop-deny");
+  } else {
+    slotEl.classList.add(slotEl.dataset.slot === drag.slotType ? "drop-deny" : "drop-target");
+  }
+}
+
+// —— 动作 ——
+function tryInstall(moduleId, slotType, el){
+  const m = owned.find(x => x.id === moduleId);
+  if(!m || slotType === "core") return;
+  if(m.type !== slotType){ deny(el); return flash("舱位不兼容：这里是「" + MODULES[slotType].name + "」位"); }
+  if(installed[slotType]){ deny(el); return flash("该舱位已占用，先拆下「" + MODULES[slotType].name + "」"); }
+  const extra = MODULES[m.type].energy || 0;
+  const effBud = energyBudget() + (m.type === "energy" ? ENERGY_OUT : 0);
+  if(energyUsed() + extra > effBud){
+    deny(el);
+    return flash("电网超载：还需额外供能 " + Math.ceil(energyUsed() + extra - effBud) + "（先装能源舱或升级核心）");
+  }
+  installed[slotType] = moduleId;
+  picked = null;
+  flash("已装配「" + MODULES[m.type].name + "」");
+  render();
+}
+function doSwapSlots(fromType, toType, el){
+  if(fromType === toType) return;
+  // 换位只换坐标（模块跟着舱位走），与引擎 swapSlots 一致
+  const a = pos[fromType], b = pos[toType];
+  pos[fromType] = b; pos[toType] = a;
+  flash("已交换「" + MODULES[fromType].name + "」与「" + MODULES[toType].name + "」的位置 · 相邻增效已重算");
+  render();
+}
+function doRemove(slotType){
+  if(!installed[slotType]) return;
+  const name = MODULES[slotType].name;
+  delete installed[slotType];
+  flash("已拆下「" + name + "」· 退回舱段库");
+  render();
+}
+function deny(el){
+  if(!el) return;
+  el.classList.remove("drop-deny"); void el.offsetWidth;
+  el.classList.add("shake");
+  setTimeout(() => el.classList.remove("shake"), 600);
+}
+function flash(msg){
+  let t = $("#demo-toast");
+  if(!t){
+    t = document.createElement("div"); t.id = "demo-toast";
+    t.style.cssText = "position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:99;padding:9px 14px;border-radius:999px;"
+      + "background:rgba(12,28,40,.96);border:1px solid rgba(79,196,211,.5);color:#dcebef;font-size:12px;"
+      + "box-shadow:0 8px 24px rgba(0,0,0,.5);transition:opacity .2s";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.style.opacity = "1";
+  clearTimeout(t._h); t._h = setTimeout(() => { t.style.opacity = "0"; }, 2400);
+}
+
+const ERR = [];
+window.addEventListener("error", e => ERR.push(String(e.message)));
+window.addEventListener("unhandledrejection", e => ERR.push("promise:" + String(e.reason)));
+
+render();
+
+// ===================== 自检（?selftest=1） =====================
+if(location.search.indexOf("selftest") >= 0) runSelftest();
+function runSelftest(){
+  const out = []; let pass = 0, fail = 0;
+  const ok = (n,c,x) => { c?pass++:fail++; out.push((c?"[PASS] ":"[FAIL] ")+n+(x!==undefined?"  → "+x:"")); };
+  const pre = document.createElement("pre");
+  pre.style.cssText = "position:fixed;left:8px;top:8px;z-index:200;max-height:46vh;overflow:auto;background:rgba(0,0,0,.86);"
+    + "color:#cfe;padding:10px;font-size:12px;border-radius:6px;line-height:1.5";
+  document.body.appendChild(pre);
+  const dump = () => { pre.textContent = out.join("\n") + "\n\n==== " + pass + " PASS / " + fail + " FAIL ===="; };
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  async function dragDrop(fromEl, toEl){
+    const a = fromEl.getBoundingClientRect(), b = toEl.getBoundingClientRect();
+    const ax = a.left + a.width/2, ay = a.top + a.height/2;
+    const bx = b.left + b.width/2, by = b.top + b.height/2;
+    fromEl.dispatchEvent(new PointerEvent("pointerdown",{clientX:ax,clientY:ay,pointerId:7,bubbles:true,button:0}));
+    await wait(30);
+    document.dispatchEvent(new PointerEvent("pointermove",{clientX:ax+18,clientY:ay+18,pointerId:7,bubbles:true}));
+    await wait(30);
+    document.dispatchEvent(new PointerEvent("pointermove",{clientX:bx,clientY:by,pointerId:7,bubbles:true}));
+    await wait(30);
+    document.dispatchEvent(new PointerEvent("pointerup",{clientX:bx,clientY:by,pointerId:7,bubbles:true}));
+    await wait(80);
+  }
+  const stockItem = t => document.querySelector('.bs-item[data-type="'+t+'"]');
+  const slotEl = t => document.querySelector('.base-module[data-slot="'+t+'"]');
+
+  (async () => {
+    ok("初始：精炼环已装", installed.smelt === "module_smelt_01", installed.smelt);
+    ok("初始：库中 9 个", stockModules().length === 9, stockModules().length);
+    ok("库渲染 9 张卡片", document.querySelectorAll(".bs-item").length === 9, document.querySelectorAll(".bs-item").length);
+    ok("空舱位显示「空舱位」", slotEl("energy").textContent.indexOf("空舱位") >= 0);
+    ok("空舱位提示可用类型", slotEl("energy").textContent.indexOf("能源舱") >= 0);
+
+    // ① 库 → 同类型空舱位 = 装配（用仓储舱：负载 5，不吃能源预算，方便后面测超载）
+    await dragDrop(stockItem("cargo"), slotEl("cargo"));
+    ok("①库→同类型空舱位：装配成功", installed.cargo === "module_cargo_01", installed.cargo);
+    ok("①装配后该卡片从库中消失", !stockItem("cargo"));
+    ok("①模块计数 1/10 → 2/10", $("#modCount").textContent === "2 / 10", $("#modCount").textContent);
+
+    // ② 库 → 异类型空舱位 = 拒绝
+    await dragDrop(stockItem("energy"), slotEl("manufacture"));
+    ok("②库→异类型空舱位：被拒绝", !installed.manufacture, installed.manufacture);
+    ok("②被拒后 energy 仍在库中", !!stockItem("energy"));
+
+    // ③ 库 → 已占用舱位 = 拒绝
+    await dragDrop(stockItem("booster"), slotEl("smelt"));
+    ok("③库→已占舱位：被拒绝", installed.smelt === "module_smelt_01" && !!stockItem("booster"), installed.smelt);
+
+    // ④ 已装 → 已装 = 交换坐标（原有能力不能退化）
+    const before = { cargo: pos.cargo.slice(), smelt: pos.smelt.slice() };
+    await dragDrop(slotEl("cargo"), slotEl("smelt"));
+    ok("④已装→已装：坐标互换", pos.cargo[0] === before.smelt[0] && pos.cargo[1] === before.smelt[1]
+      && pos.smelt[0] === before.cargo[0] && pos.smelt[1] === before.cargo[1], JSON.stringify({cargo:pos.cargo, smelt:pos.smelt}));
+    ok("④模块仍各就各位（换位置没换模块）", installed.cargo === "module_cargo_01" && installed.smelt === "module_smelt_01");
+
+    // ⑤ 电网超载拒绝：预算 80，已占 20（精炼）+5（仓储）=25；再装总装 30 → 55；再装发明 40 → 95 > 80 应拒
+    await dragDrop(stockItem("manufacture"), slotEl("manufacture"));
+    ok("⑤装总装船坞（负载 25→55）成功", !!installed.manufacture, installed.manufacture);
+    await dragDrop(stockItem("invent"), slotEl("invent"));
+    ok("⑤电网超载被拒绝（55+40 > 80）", !installed.invent, installed.invent);
+    ok("⑤被拒后 invent 仍在库中", !!stockItem("invent"));
+
+    // ⑥ 已装 → 库 = 拆下
+    await dragDrop(slotEl("cargo"), $("#stock"));
+    ok("⑥已装→库：拆下成功", !installed.cargo, installed.cargo);
+    ok("⑥拆下后回到库中", !!stockItem("cargo"));
+
+    ok("全程无未捕获错误", ERR.length === 0, ERR.join(" ; ") || "无");
+    dump();
+  })();
+}
+</script>
+</body>
+</html>
