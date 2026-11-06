@@ -66,17 +66,25 @@
   // 不搬 EVE-IDLE 殖民 Canvas / 维护费 mini-game；产物 tier 沿用 EVE-IDLE 各行星 level 语义。
   // 试玩（stage1）只生成 lava/gas/ice → 仅 planet_lava/planet_gas/planet_ice 实际可出；
   // plasma/temperate/storm 产物随 stage2 区域开放（与星图锁定一致）。
+  // ⚠️ 显示名必须逐字等于 1 代 js/data/planets.js 的 PLANET_TYPES[i].output
+  // （重金属/稀有气体/同位素/等离子体/生物质/磁场聚合物，2026-11-06 修正：
+  //  先前自创的「熔岩矿粹/凝析轻气/极地同位素/等离子流体/生态基质/磁聚合物」与 1 代全不匹配）。
+  // 内部键仍 ASCII（planet_lava 等）；这几个是通用中文物质名，非 EVE 商标，不触发 IP 铁律。
   // img 暂留空（无图标资产），resIcon 自动回退 emoji，避免试玩期出现裂图。
   const PLANET = {
-    planet_lava: { id: "planet_lava", name: "熔岩矿粹",   icon: "🌋", cat: "planet", planetType: "lava",       tier: 1, desc: "熔岩行星产物，富含重金属，采集装置产出。" },
-    planet_gas:  { id: "planet_gas",  name: "凝析轻气",   icon: "💨", cat: "planet", planetType: "gas",        tier: 1, desc: "气态行星产物，稀有气体凝析，采集装置产出。" },
-    planet_ice:  { id: "planet_ice",  name: "极地同位素", icon: "🧊", cat: "planet", planetType: "ice",        tier: 2, desc: "冰行星产物，极地同位素，采集装置产出。" },
-    planet_plasma:{ id: "planet_plasma", name: "等离子流体", icon: "⚡", cat: "planet", planetType: "plasma",   tier: 3, desc: "等离子行星产物，stage2 解锁。" },
-    planet_bio:  { id: "planet_bio",  name: "生态基质",   icon: "🌿", cat: "planet", planetType: "temperate",  tier: 4, desc: "温带行星产物，生物质基质，stage2 解锁。" },
-    planet_mag:  { id: "planet_mag",  name: "磁聚合物",   icon: "🧲", cat: "planet", planetType: "storm",      tier: 4, desc: "风暴行星产物，磁场聚合物，stage2 解锁。" },
+    planet_lava: { id: "planet_lava", name: "重金属",     icon: "🌋", cat: "planet", planetType: "lava",       tier: 1, desc: "熔岩行星产物，重金属富集，采集装置产出。" },
+    planet_gas:  { id: "planet_gas",  name: "稀有气体",   icon: "💨", cat: "planet", planetType: "gas",        tier: 1, desc: "气态行星产物，稀有气体凝析，采集装置产出。" },
+    planet_ice:  { id: "planet_ice",  name: "同位素",     icon: "🧊", cat: "planet", planetType: "ice",        tier: 2, desc: "冰行星产物，极地同位素富集，采集装置产出。" },
+    planet_plasma:{ id: "planet_plasma", name: "等离子体", icon: "⚡", cat: "planet", planetType: "plasma",    tier: 3, desc: "等离子行星产物，stage2 解锁。" },
+    planet_bio:  { id: "planet_bio",  name: "生物质",     icon: "🌿", cat: "planet", planetType: "temperate",  tier: 4, desc: "温带行星产物，生物质基质，stage2 解锁。" },
+    planet_mag:  { id: "planet_mag",  name: "磁场聚合物", icon: "🧲", cat: "planet", planetType: "storm",      tier: 4, desc: "风暴行星产物，磁场聚合物，stage2 解锁。" },
   };
 
-  // 月矿（卫星开采专属稀有金属，系统暂未落地：先注册显示名与图标，不进 ALL / HUD_ORDER / 初始库存）
+  // 月矿（卫星开采专属稀有金属）
+  // ⚠️ 2026-11-06 并入 ALL：此前只注册显示名、不进 ALL，后果是 store.js 读档清洗按
+  // 「不在 R.ALL 的键」处理 → 把 state.res 里的月矿键**直接 delete**，即使发到手也会被清空。
+  // 月矿系统（卫星钻机）落地前置：必须先让它成为正式资源键。
+  // 现仍未接入任何产出链路 → 初始 0，且不进 HUD 常驻（HUD_ORDER 里给位置保证仓库排序稳定）。
   const MOON_ORE = {
     ga_moon: { id: "ga_moon", name: "镓", icon: "⚪", img: "assets/icons/moon-ores/gallium.webp", cat: "moon_ore", tier: 4, desc: "月矿稀有金属，卫星开采产出。" },
     pt_moon: { id: "pt_moon", name: "铂", icon: "⚪", img: "assets/icons/moon-ores/platinum.webp", cat: "moon_ore", tier: 4, desc: "月矿稀有金属，卫星开采产出。" },
@@ -118,7 +126,7 @@
     "tactic:t5": { id: "tactic:t5", name: "深层适应性样本", icon: "🧬", cat: "tactic", desc: "高频战斗掉落材料（T5），高阶增强剂配方消耗。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC);
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC);
 
   // 增强剂瓶身（booster:<id>）与战术材料（tactic:*）的显示名回退：
   // 增强剂数据由 js/lib/eveidle/data/boosters.js 运行时全局加载（window.BOOSTER_ITEMS），
@@ -146,6 +154,7 @@
       bp: 0,
       ammo_laser: 300, ammo_missile: 300, ammo_cannon: 300,
       planet_lava: 0, planet_gas: 0, planet_ice: 0, planet_plasma: 0, planet_bio: 0, planet_mag: 0,
+      ga_moon: 0, pt_moon: 0, hf_moon: 0, os_moon: 0, pm_moon: 0, rb_moon: 0,
     };
   }
 
@@ -156,7 +165,8 @@
     "fe_alloy", "ni_alloy", "bo_alloy", "mx_alloy", "no_alloy", "zr_alloy", "px_alloy", "morph_alloy",
     "struct", "prop", "weapon", "bp",
     "ammo_laser", "ammo_missile", "ammo_cannon",
-    "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag"];
+    "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag",
+    "ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
 
   return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, ALL, HUD_ORDER, startingResources, meta };
 });

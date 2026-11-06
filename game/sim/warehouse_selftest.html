@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>warehouse-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// 仓库分类覆盖性自测（2026-11-06 建立）
+// 起因：planet / ammo / tactic / booster 四类资源的 cat 没进 app.js 的 WH_ORDER 白名单，
+//       行星材料有库存却在仓库里整段消失。本探针的核心是把「漏分类」变成硬断言：
+//       Resources.ALL 里出现的每一个键、每一个 cat，都必须在仓库 DOM 里落地。
+// ⚠️ 探针会临时改写 state.res 全部键为 1（保证空仓分类也渲染），结束时在 finally 里还原，
+//    避免 5s 自动存档把测试数据写进玩家存档。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [];
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  function W() { return document.getElementById("f").contentWindow; }
+  function q(s) { return W().document.querySelector(s); }
+  function qa(s) { return [].slice.call(W().document.querySelectorAll(s)); }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function txt(el) { return el ? (el.textContent || "").replace(/\s+/g, " ").trim() : ""; }
+  function clickEl(el) {
+    if (!el) return Promise.resolve(false);
+    var r = el.getBoundingClientRect();
+    var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+    el.dispatchEvent(new (W().MouseEvent)("click", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    return wait(60).then(function () { return true; });
+  }
+  // 重新渲染：切走再切回仓库页（renderView 未挂到 window，只能走真实交互）
+  async function refreshWh() {
+    await clickEl(q('[data-act="tab:starmap"]'));
+    await clickEl(q('[data-act="tab:warehouse"]'));
+    await wait(80);
+  }
+  async function toWh() {
+    await clickEl(q('[data-act="tab:warehouse"]'));
+    await wait(120);
+  }
+  async function bootWait() {
+    for (var i = 0; i < 200; i++) {
+      var w = W();
+      if (w && w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state
+          && w.NSK.Data && w.NSK.Data.Resources) return true;
+      await wait(50);
+    }
+    return false;
+  }
+  // Persistence.state 就绪 ≠ UI 已挂载：页签按钮要等 App.boot 渲染完才存在，
+  // 早一步点 tab 会拿到 null（曾因此整段 C 全红）
+  async function uiWait() {
+    for (var i = 0; i < 200; i++) {
+      if (q('[data-act="tab:warehouse"]')) return true;
+      await wait(50);
+    }
+    return false;
+  }
+
+  // 1 代 js/data/planets.js:PLANET_TYPES[i].output —— 行星产物显示名权威值
+  var LEGACY_PLANET = {
+    planet_lava: "重金属",
+    planet_gas: "稀有气体",
+    planet_ice: "同位素",
+    planet_plasma: "等离子体",
+    planet_bio: "生物质",
+    planet_mag: "磁场聚合物",
+  };
+
+  (async function main() {
+    W().addEventListener("error", function (e) { ERR.push("uncaught: " + (e.message || e.error)); });
+
+    var okBoot = await bootWait();
+    ok("A0 boot 完成（Persistence.state 就绪）", okBoot);
+    if (!okBoot) { dump(); return; }
+    var okUI = await uiWait();
+    ok("A0b UI 挂载完成（页签可点）", okUI);
+    if (!okUI) { dump(); return; }
+
+    var R = W().NSK.Data.Resources;
+    var ALL = R.ALL;
+    var st = LIVE();
+    var allKeys = Object.keys(ALL);
+    var resKeys = Object.keys(st.res || {});
+
+    // ---- A. 注册表层面：每个 cat / 每个键都得有归属 ----
+    var cats = {};
+    allKeys.forEach(function (k) { var m = ALL[k]; if (m && m.cat) cats[m.cat] = 1; });
+    var expectCats = Object.keys(cats).filter(function (c) { return c !== "top"; });
+    ok("A1 ALL 键集合非空", allKeys.length > 0, allKeys.length + " 键");
+    // tactic:*（战术材料）按设计不进初始库存 / HUD_ORDER / state.res —— 只在战斗掉落时创建键，
+    // 所以这三条覆盖性断言只针对「开局就该在」的键；tactic 的可见性由 D/F 段单独验证。
+    var initKeys = allKeys.filter(function (k) { return !/^tactic:/.test(k); });
+    var tacticKeys = allKeys.filter(function (k) { return /^tactic:/.test(k); });
+    var hasOwn = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+    ok("A2 startingResources 覆盖全部开局键",
+      initKeys.every(function (k) { return hasOwn(R.startingResources(), k); }),
+      "缺=" + initKeys.filter(function (k) { return !hasOwn(R.startingResources(), k); }).join(","));
+    ok("A3 HUD_ORDER 覆盖全部开局键",
+      initKeys.every(function (k) { return R.HUD_ORDER.indexOf(k) >= 0; }),
+      "缺=" + initKeys.filter(function (k) { return R.HUD_ORDER.indexOf(k) < 0; }).join(","));
+    ok("A4 state.res 覆盖全部开局键",
+      initKeys.every(function (k) { return resKeys.indexOf(k) >= 0; }),
+      "缺=" + initKeys.filter(function (k) { return resKeys.indexOf(k) < 0; }).join(","));
+    ok("A5 战术材料确按设计不进初始库存", tacticKeys.length > 0
+      && tacticKeys.every(function (k) { return !hasOwn(R.startingResources(), k) && R.HUD_ORDER.indexOf(k) < 0; }),
+      tacticKeys.length + " 键");
+
+    // ---- B. 名字对齐 1 代（行星产物） ----
+    Object.keys(LEGACY_PLANET).forEach(function (k) {
+      var m = R.meta(k);
+      ok("B 行星产物名对齐 1 代：" + k, !!m && m.name === LEGACY_PLANET[k],
+        m ? ("现值=" + m.name + " 期望=" + LEGACY_PLANET[k]) : "meta 缺失");
+    });
+    // planetType 与 1 代 id 一一对应，不能串位（名字改对了但挂错行星同样是 bug）
+    var EXPECT_TYPE = { planet_lava: "lava", planet_gas: "gas", planet_ice: "ice", planet_plasma: "plasma", planet_bio: "temperate", planet_mag: "storm" };
+    Object.keys(EXPECT_TYPE).forEach(function (k) {
+      var m = R.meta(k);
+      ok("B 行星类型映射：" + k, !!m && m.planetType === EXPECT_TYPE[k], m ? m.planetType : "缺失");
+    });
+    // 资源 id 映射链路：planetType → resourceForPlanetType → planet_*
+    Object.keys(EXPECT_TYPE).forEach(function (k) {
+      var back = W().NSK.Engine.Logistics.resourceForPlanetType(EXPECT_TYPE[k]);
+      ok("B 反向映射 planetType→资源：" + EXPECT_TYPE[k], back === k, "得到=" + back);
+    });
+
+    // ---- C. 打开仓库页 ----
+    await toWh();
+    ok("C0 仓库页已渲染", !!q(".wh-head"), q(".wh-head") ? txt(q(".wh-head h2")) : "无 .wh-head");
+    var segText = qa(".seg-tab").map(function (e) { return txt(e); }).join(" | ");
+    ok("C1 分段标签含「行星产物」", segText.indexOf("行星产物") >= 0, segText);
+    ok("C2 分段标签含「弹药」", segText.indexOf("弹药") >= 0);
+    ok("C3 分段标签含「矿石/气体/矿材/部件/图纸」",
+      ["矿石", "气体", "矿材", "部件", "图纸"].every(function (n) { return segText.indexOf(n) >= 0; }));
+
+    // ---- D. 全键可见性：把每个键都给点量，再逐个查 DOM ----
+    var backup = {};
+    var boosterKey = null;
+    try {
+      allKeys.forEach(function (k) { backup[k] = st.res[k]; st.res[k] = (typeof st.res[k] === "number" && st.res[k] > 0) ? st.res[k] : 1; });
+      // 增强剂瓶身（cat 由 meta() 动态解析，不在 ALL 里）
+      var BI = W().BOOSTER_ITEMS;
+      if (BI && Object.keys(BI).length) {
+        boosterKey = "booster:" + Object.keys(BI)[0];
+        backup[boosterKey] = st.res[boosterKey];
+        st.res[boosterKey] = 1;
+      }
+      await refreshWh();
+
+      var domKeys = qa('.wh-item[data-act^="whinfo:"]').map(function (e) { return e.getAttribute("data-act").slice(7); });
+      // 顶层三卡（credits/fuel/rep）走页首，不进网格，从可见性断言里剔除（另由 G1/G2 反向锁定）
+      var gridKeys = initKeys.filter(function (k) { return ["credits", "fuel", "rep"].indexOf(k) < 0; });
+      var missing = gridKeys.filter(function (k) { return domKeys.indexOf(k) < 0; });
+      ok("D1 全部网格资源键都在仓库出现", missing.length === 0, "缺 " + missing.length + " 个：" + missing.join(","));
+      if (boosterKey) {
+        ok("D2 增强剂瓶身出现在仓库（booster:*）", domKeys.indexOf(boosterKey) >= 0, boosterKey);
+      } else {
+        out.push("SKIP D2 无 BOOSTER_ITEMS");
+      }
+      // 每个 cat 都要有对应分段（未登记 cat 会被并入 other，从而在这里暴露）
+      var missingCat = expectCats.filter(function (c) { return !q('.wh-sec[data-cat="' + c + '"]'); });
+      ok("D3 每个 cat 都有独立分段", missingCat.length === 0, "缺段=" + missingCat.join(","));
+      var otherSec = q('.wh-sec[data-cat="other"]');
+      ok("D4 「其他」段为空（说明没有未登记 cat 落兜底）", !otherSec,
+        otherSec ? txt(otherSec) : "无");
+
+      // ---- E. 行星产物段内容 ----
+      var pSec = q('.wh-sec[data-cat="planet"]');
+      ok("E1 行星产物分段存在", !!pSec, pSec ? txt(pSec) : "无");
+      ok("E2 行星产物段计数 6 / 6", !!pSec && txt(pSec).indexOf("6 / 6") >= 0, txt(pSec));
+      var pCards = qa('.wh-item[data-cat="planet"]');
+      ok("E3 行星产物卡片数 = 6", pCards.length === 6, pCards.length + " 张");
+      var pNames = pCards.map(function (e) { var n = e.querySelector(".wh-nm"); return n ? txt(n) : ""; });
+      ok("E4 行星产物卡片名 = 1 代名",
+        Object.keys(LEGACY_PLANET).every(function (k) { return pNames.indexOf(LEGACY_PLANET[k]) >= 0; }),
+        pNames.join("/"));
+      ok("E5 行星产物卡片带 T 级角标", pCards.every(function (e) { return !!e.querySelector(".wh-tier"); }));
+      var pIcons = pCards.map(function (e) { var i = e.querySelector(".wh-ic"); return i ? txt(i) : ""; });
+      ok("E6 行星产物有可见图标（emoji 回退，非裂图）", pIcons.every(function (s) { return s.length > 0; }), pIcons.join(""));
+
+      // ---- F. 弹药 / 战术材料段 ----
+      var aSec = q('.wh-sec[data-cat="ammo"]');
+      ok("F1 弹药段存在且 3 / 3", !!aSec && txt(aSec).indexOf("3 / 3") >= 0, txt(aSec));
+      var tSec = q('.wh-sec[data-cat="tactic"]');
+      ok("F2 战术材料段存在且 5 / 5", !!tSec && txt(tSec).indexOf("5 / 5") >= 0, txt(tSec));
+
+      // ---- F3~F7. 月矿（2026-11-06 并入 ALL；此前不在 ALL 会被读档清洗 delete） ----
+      var mSec = q('.wh-sec[data-cat="moon_ore"]');
+      ok("F3 月矿段存在且 6 / 6", !!mSec && txt(mSec).indexOf("6 / 6") >= 0, txt(mSec));
+      var mCards = qa('.wh-item[data-cat="moon_ore"]');
+      ok("F4 月矿卡片数 = 6", mCards.length === 6, mCards.length + " 张");
+      var mNames = mCards.map(function (e) { var n = e.querySelector(".wh-nm"); return n ? txt(n) : ""; });
+      ok("F5 月矿名 = 镓/铂/铪/锇/钷/铷",
+        ["镓", "铂", "铪", "锇", "钷", "铷"].every(function (n) { return mNames.indexOf(n) >= 0; }), mNames.join("/"));
+      // 读档清洗（Store.normalize）必须保留月矿键 —— 这是 MOON_ORE 并入 ALL 的真正理由
+      // ⚠️ store.js 用 Object.assign(NSK.Core, mod) 平铺导出（没有 NSK.Core.Store 这一层），
+      //    读档清洗入口是 NSK.Core.normalize（= normalizeMembers）。
+      var Store = W().NSK.Core;
+      var probeState = JSON.parse(JSON.stringify(LIVE()));
+      probeState.res.ga_moon = 42;
+      probeState.res["0"] = 7;   // 历史脏键（配方 in 是字符串时写进来的字符下标）
+      var norm = Store.normalize(probeState);
+      ok("F6 读档清洗保留月矿键", norm.res.ga_moon === 42, "得到=" + norm.res.ga_moon);
+      ok("F7 读档清洗仍清掉历史脏键", norm.res["0"] === undefined, "得到=" + norm.res["0"]);
+
+      // ---- G. 顶层资源不得重复进网格 ----
+      ok("G1 credits 不在网格内", !q('.wh-item[data-act="whinfo:credits"]'));
+      ok("G2 fuel 不在网格内", !q('.wh-item[data-act="whinfo:fuel"]'));
+      ok("G3 顶层三卡仍在页首", qa(".wh-stat").length >= 3, qa(".wh-stat").length + " 张");
+
+      // ---- H. 详情弹层能打开行星产物 ----
+      await clickEl(q('.wh-item[data-act="whinfo:planet_lava"]'));
+      await wait(80);
+      var detail = q(".wh-detail");
+      ok("H1 点行星产物卡打开详情层", !!detail, detail ? txt(detail.querySelector(".whd-name")) : "无");
+      ok("H2 详情标题 = 重金属", !!detail && !!detail.querySelector(".whd-name") && txt(detail.querySelector(".whd-name")) === "重金属",
+        detail && detail.querySelector(".whd-name") ? txt(detail.querySelector(".whd-name")) : "无");
+      ok("H3 详情分类显示「行星产物」", !!detail && txt(detail).indexOf("行星产物") >= 0, detail ? txt(detail.querySelector(".whd-cat")) : "无");
+      await clickEl(q(".whd-x"));
+      await wait(60);
+      ok("H4 详情可关闭", !q(".wh-detail"));
+
+      // ---- I. 分类筛选：主动点分类时忽略「显示空仓」 ----
+      var planetTab = qa(".seg-tab").filter(function (e) { return e.getAttribute("data-act") === "wh:planet"; })[0];
+      ok("I0 存在 wh:planet 标签", !!planetTab, planetTab ? txt(planetTab) : "无");
+      await clickEl(planetTab);
+      await wait(80);
+      var secsAfter = qa(".wh-sec").map(function (e) { return e.getAttribute("data-cat"); });
+      ok("I1 筛选后只剩 planet 段", secsAfter.length === 1 && secsAfter[0] === "planet", secsAfter.join(","));
+      ok("I2 筛选后行星卡片仍 6 张", qa('.wh-item[data-cat="planet"]').length === 6, qa('.wh-item[data-cat="planet"]').length + " 张");
+      // ⚠️ renderView 会重建 DOM，筛选前抓的 planetTab 引用已失效 —— 必须重新查询
+      var activeTab = q(".seg-tab.on");
+      ok("I3 筛选后对应标签高亮", !!activeTab && activeTab.getAttribute("data-act") === "wh:planet",
+        activeTab ? txt(activeTab) + " / " + activeTab.getAttribute("data-act") : "无 on 标签");
+
+      // 清空行星产物后，主动点分类仍应看到 6 张（空仓不被开关吞掉）
+      var keep = st.res.planet_lava; st.res.planet_lava = 0;
+      await refreshWh();
+      await clickEl(qa(".seg-tab").filter(function (e) { return e.getAttribute("data-act") === "wh:planet"; })[0]);
+      await wait(80);
+      ok("I4 零库存时点分类仍列出全部 6 条", qa('.wh-item[data-cat="planet"]').length === 6, qa('.wh-item[data-cat="planet"]').length + " 张");
+      var emptyCard = q('.wh-item[data-act="whinfo:planet_lava"]');
+      ok("I5 零库存卡片带 empty 样式", !!emptyCard && emptyCard.className.indexOf("empty") >= 0, emptyCard ? emptyCard.className : "无");
+      st.res.planet_lava = keep;
+
+      // 回到「全部」
+      await clickEl(qa(".seg-tab").filter(function (e) { return e.getAttribute("data-act") === "wh:all"; })[0]);
+      await wait(80);
+      ok("I6 回「全部」后多段并存", qa(".wh-sec").length >= 4, qa(".wh-sec").length + " 段");
+      var tally = q(".wh-tally");
+      // 分母 = 全部 ALL 键 − 顶层三卡（走页首不进网格）+ 注入的 booster 键
+      var expectDenom = allKeys.length - 3 + (boosterKey ? 1 : 0);
+      ok("I7 在库计数不含顶层三卡", !!tally && txt(tally).indexOf("/ " + expectDenom) >= 0,
+        txt(tally) + " 期望分母=" + expectDenom);
+    } finally {
+      // 还原：任何断言抛错也要把 res 写回原值
+      Object.keys(backup).forEach(function (k) { st.res[k] = backup[k]; });
+      await refreshWh();
+    }
+
+    ok("Z1 无未捕获运行时错误", ERR.length === 0, ERR.join(" | "));
+    dump();
+  })().catch(function (e) {
+    ERR.push("probe crash: " + (e && e.stack || e));
+    out.push("FAIL 探针异常终止 :: " + (e && e.message || e));
+    fail++;
+    dump();
+  });
+})();
+</script>
+</body>
+</html>

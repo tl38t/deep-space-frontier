@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>moon-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// 月岩区自测（2026-11-06 建立）
+// 设计（用户定）：1 代原式「高级星带」—— 每星系 1 块，挂在行星外侧；**不做任何额外机制**
+//   （无钻机 / 无采掘周期 / 无碎裂 / 无临时矿带）；富集度只由安等 band 定，高安相当低。
+//   产出复用既有连续采矿结算（settle 的 mine 分支），引擎侧零新增分支。
+//
+// 四条主线：
+//   A 数据层：207 个星系各 1 块；**非月天体签名逐位不变**（固定星图不能重排，这是本项目最贵的坑）
+//   B 结算：clone state 跑 settle（不碰真档），用**比值断言**验证「月矿只差 abundance，没有任何特殊乘区」
+//   C 迁移：删掉月岩区后 ensureBodies 幂等补回，且邻居天体不动
+//   D UI：星系图真有月牙、点开真有「开采月矿」，且 0 未捕获错误
+//
+// ⚠️ 三个探针纪律（血泪，见项目记忆）：
+//   1. 活动事件会往 res 塞整包资源、淹掉对照差值 → 跑 settle 前必须把 Narrative.pick 换成 ()=>null，
+//      并加自检断言锁住静音生效；
+//   2. 结算在 **state 的深拷贝** 上跑，真档一次不动（5s 自动存档会把测试数据写进玩家存档）；
+//   3. 星图签名不能用 JSON.stringify 直接比（键序敏感），用固定字段拼串 + FNV。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [];
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  function W() { return document.getElementById("f").contentWindow; }
+  function q(s) { return W().document.querySelector(s); }
+  function qa(s) { return [].slice.call(W().document.querySelectorAll(s)); }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function txt(el) { return el ? (el.textContent || "").replace(/\s+/g, " ").trim() : ""; }
+  function clickEl(el) {
+    if (!el) return Promise.resolve(false);
+    el.dispatchEvent(new (W().MouseEvent)("click", { bubbles: true, cancelable: true }));
+    return wait(80).then(function () { return true; });
+  }
+
+  function fnv(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(16);
+  }
+  function rowOf(b) { return [b.kind, b.id, b.orbit, b.ang, b.size, b.planetType || ""].join("|"); }
+  // 只看非月天体：月岩区是本轮唯一新增项，其余逐位必须与改前一致
+  function sigOf(node) {
+    return (node.bodies || []).filter(function (b) { return b.kind !== "moon"; }).map(rowOf).join(";");
+  }
+
+  async function bootWait() {
+    for (var i = 0; i < 200; i++) {
+      var w = W();
+      if (w && w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state
+          && w.NSK.Data && w.NSK.Data.StarMap) return true;
+      await wait(50);
+    }
+    return false;
+  }
+  async function uiWait() {
+    for (var i = 0; i < 200; i++) { if (q('[data-act="tab:system"]')) return true; await wait(50); }
+    return false;
+  }
+
+  async function run() {
+    var okBoot = await bootWait();
+    ok("A0 boot 完成", okBoot);
+    if (!okBoot) { dump(); return; }
+    W().addEventListener("error", function (e) { ERR.push(String(e.message || e.error)); });
+    W().addEventListener("unhandledrejection", function (e) { ERR.push("reject:" + String(e.reason)); });
+
+    var SM = W().NSK.Data.StarMap;
+    var map = LIVE().starMap;
+
+    // ===== A 数据层 =====
+    ok("A1 星系总数 207", map.nodes.length === 207, String(map.nodes.length));
+    var moonCnt = 0, multi = [], withHost = 0, noHost = 0, gapBad = [], orbitBad = [];
+    for (var i = 0; i < map.nodes.length; i++) {
+      var n = map.nodes[i];
+      var ms = (n.bodies || []).filter(function (b) { return b.kind === "moon"; });
+      moonCnt += ms.length;
+      if (ms.length !== 1) multi.push(n.id + "×" + ms.length);
+      if (!ms.length) continue;
+      var moon = ms[0];
+      var host = (n.bodies || []).filter(function (b) { return b.kind === "planet"; })[0];
+      if (host) {
+        withHost++;
+        if (moon.orbit !== Math.min(196, host.orbit + 9)) orbitBad.push(n.id + " " + moon.orbit + "≠" + (host.orbit + 9));
+      } else {
+        noHost++;
+        if (moon.orbit !== 88) orbitBad.push(n.id + " 兜底 " + moon.orbit);
+      }
+      // 与邻居（非环状）的边距：标签与点击热区会互相吞（UI 铁律「hit-rect 会吞邻居」）
+      var R2 = Math.PI / 180;
+      for (var j = 0; j < n.bodies.length; j++) {
+        var b = n.bodies[j];
+        if (b === moon || !b.orbit || b.kind === "belt") continue;
+        var d = Math.hypot(moon.orbit * Math.cos(moon.ang * R2) - b.orbit * Math.cos(b.ang * R2),
+                           moon.orbit * Math.sin(moon.ang * R2) - b.orbit * Math.sin(b.ang * R2));
+        var gap = d - ((b.size || 8) + moon.size);
+        if (gap < 4) gapBad.push(n.id + " 与" + b.kind + " " + gap.toFixed(1));
+      }
+    }
+    ok("A2 每星系恰好 1 块月岩区", moonCnt === 207 && multi.length === 0, "共 " + moonCnt + " 块，异常 " + multi.join(","));
+    ok("A3 月岩区贴在行星外侧 +9", withHost > 0 && orbitBad.length === 0, "有行星 " + withHost + "，越界 " + orbitBad.slice(0, 3).join(","));
+    ok("A4 无行星星系用兜底轨道 88", orbitBad.length === 0, noHost + " 个无行星星系，轨道异常 " + orbitBad.length);
+    ok("A5 与邻居边距 ≥4px", gapBad.length === 0, gapBad.slice(0, 3).join(","));
+
+    // 固定星图不能重排 —— 这一条**不能拿运行态存档来测**：
+    // 存档里的 bodies 是它被创建那一刻的生成器产出的（本机 localStorage 里就躺着一份 536KB 旧档，
+    // 里面的行星布局跟现版生成器不一样），拿它比会永远假红。
+    // 正确测法是「纯函数对照」：给 makeBodies 注入同一颗种子 + 计数包装的 PRNG，
+    // 断言 ①rand 消耗次数与改前一致 ②非月天体逐位一致 ③只多出 1 块月岩区。
+    // 基线数值由 HEAD 版 js/data/starmap.js 用同一 node/种子实跑得到（HEAD: 20 次 / b79412a2 / 0 块）。
+    function mulberry(seed) {
+      var s = seed >>> 0;
+      return function () {
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var probeNode = { id: "node_probe", name: "探针星", richness: 2, abundance: { fe_ore: 2.1, ni_ore: 1.8, bo_ore: 0.9 } };
+    // ⚠️ 跨环境陷阱（实测踩到）：makeDerelict 在浏览器里会调 Data.Archaeology.siteName(band, rand)
+    //    挑残骸场风味名，**那个函数自己消耗一次 rand**；node 里没有 window → 不消耗。
+    //    同一颗种子在两边会跑出完全不同的序列（node 20 次 / 浏览器 14 次，天体全错位）。
+    //    所以比对前必须把 siteName 钉成不消耗随机数的桩，否则基线永远对不上。
+    var ArchD = W().NSK.Data.Archaeology, origSiteName = ArchD && ArchD.siteName;
+    if (ArchD) ArchD.siteName = function () { return "探针残骸场"; };
+    var calls = 0, basePr = mulberry(20261106);
+    var counted = function () { calls++; return basePr(); };
+    var probeBodies = SM.makeBodies(probeNode, counted, 1, 2);
+    if (ArchD) ArchD.siteName = origSiteName;
+    var probeRows = probeBodies.filter(function (b) { return b.kind !== "moon"; }).map(rowOf).join(";");
+    ok("A6 makeBodies 的 rand 消耗与改前一致（20 次）", calls === 20, "实际 " + calls + " 次");
+    ok("A7 非月天体逐位不变", fnv(probeRows) === "b79412a2", "fnv=" + fnv(probeRows) + "（基线 b79412a2） rows=" + probeRows);
+    ok("A8 只多出 1 块月岩区", probeBodies.filter(function (b) { return b.kind === "moon"; }).length === 1);
+
+    // 富集度：band 越高越丰；矿种稀有度 rb 最低
+    var bands = W().NSK.Data.StarMap.MOON_SEC_ABUND;
+    ok("A9 band 富集度单调递增", bands[1] < bands[2] && bands[2] < bands[3] && bands[3] < bands[4] && bands[4] < bands[5],
+      JSON.stringify(bands));
+    ok("A10 高安基数 = 0.02（相当低）", bands[1] === 0.02, "band1=" + bands[1]);
+
+    // 找一块 band1 星系和它的月岩区 / 小行星带
+    var b1node = null, b1reg = null;
+    for (var k = 0; k < map.nodes.length; k++) {
+      var reg = map.regions.filter(function (r) { return r.id === map.nodes[k].region; })[0] || {};
+      var bd = SM.SECLEVEL_TABLE[reg.secLevel] ? SM.SECLEVEL_TABLE[reg.secLevel].band : 1;
+      var mm = (map.nodes[k].bodies || []).filter(function (b) { return b.kind === "moon"; })[0];
+      if (bd === 1 && mm && (map.nodes[k].bodies || []).some(function (b) { return b.kind === "belt"; })) {
+        b1node = map.nodes[k]; b1reg = reg; break;
+      }
+    }
+    ok("A11 找到 band1 样本星系", !!b1node, b1node ? b1node.id : "none");
+    if (!b1node) { dump(); return; }
+    var moonB = b1node.bodies.filter(function (b) { return b.kind === "moon"; })[0];
+    var beltB = b1node.bodies.filter(function (b) { return b.kind === "belt"; })[0];
+    var abGa = moonB.abundance.ga_moon, abRb = moonB.abundance.rb_moon;
+    ok("A12 矿种稀有度 rb < pm < os < hf < ga", abRb < moonB.abundance.pm_moon && moonB.abundance.pm_moon < moonB.abundance.os_moon
+      && moonB.abundance.os_moon < moonB.abundance.hf_moon && moonB.abundance.hf_moon < abGa,
+      "ga=" + abGa + " hf=" + moonB.abundance.hf_moon + " os=" + moonB.abundance.os_moon + " pm=" + moonB.abundance.pm_moon + " rb=" + abRb);
+
+    // 月矿键必须全部注册进 Resources.ALL —— 否则仓库看不见（曾因 cat 未登记整段消失）
+    var R = W().NSK.Data.Resources;
+    var unreg = ["ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"].filter(function (id) { return !R.meta(id); });
+    ok("A13 6 种月矿都已注册", unreg.length === 0, "未注册 " + unreg.join(","));
+    var allHas = Object.keys(R.meta("ga_moon") ? R.ALL : {}).filter(function (k) { return /_moon$/.test(k); }).length;
+    ok("A14 Resources.ALL 含 6 个月矿键", allHas === 6, String(allHas));
+
+    // ===== B 结算（clone state，不动真档）=====
+    var N = W().NSK.Narrative;
+    var oldPick = N.pick;
+    N.pick = function () { return null; };
+    ok("B0 活动事件已静音（探针自检）", N.pick({}, null, LIVE(), null) === null);
+
+    function runMine(bodyId, oreId, secs) {
+      var clone = JSON.parse(JSON.stringify(LIVE()));
+      var mem = clone.members.filter(function (m) { return !m.destroyed; })[0];
+      mem.assignment = null; mem.status = "idle";
+      var as = W().NSK.Engine.Dispatch.assign(clone, mem.id, "mine", { nodeId: b1node.id, bodyId: bodyId, oreId: oreId || null });
+      if (!as.ok) return { ok: false, err: as.err };
+      // 快照**全部**资源键：矿带那一趟产出的是普通矿，只看月矿键会得到 0（曾是假红来源）
+      var before = {};
+      Object.keys(clone.res || {}).forEach(function (k) { before[k] = clone.res[k] || 0; });
+      clone.lastSeen = Date.now() - secs * 1000;
+      W().NSK.Engine.Settle.settle(clone, Date.now());
+      var d = {};
+      Object.keys(clone.res || {}).forEach(function (k) { d[k] = (clone.res[k] || 0) - before[k]; });
+      return { ok: true, d: d };
+    }
+    // 自动模式采的是「该天体 abundance 最高的矿种」
+    var autoKey = Object.keys(moonB.abundance).sort(function (x, y) { return moonB.abundance[y] - moonB.abundance[x]; })[0];
+
+    // 1) 自动选矿（默认行为）：只涨最丰富那一种
+    var auto = runMine(moonB.id, null, 3600);
+    ok("B1 月矿派遣成功", auto.ok, auto.err || "");
+    if (auto.ok) {
+      var moonKeys = ["ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
+      var grown = moonKeys.filter(function (k) { return auto.d[k] > 1e-9; });
+      var gained = auto.d[autoKey] || 0;
+      ok("B2 自动模式只采 1 种（最丰富）", grown.length === 1 && grown[0] === autoKey, "涨了 " + grown.join(",") + "（应 " + autoKey + "）");
+      ok("B3 高安 1 小时产量落在「极低」区间（0.5~60）", gained > 0.5 && gained < 60, gained.toFixed(2) + " 个/时");
+    }
+    // 2) 指定铷：只有铷涨；且「增量/富集度」与自动模式相等 → 说明没有额外乘区
+    var pick = runMine(moonB.id, "rb_moon", 3600);
+    if (auto.ok && pick.ok) {
+      var moonKeys2 = ["ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
+      var grown2 = moonKeys2.filter(function (k) { return pick.d[k] > 1e-9; });
+      ok("B4 指定矿种生效（只涨铷）", grown2.length === 1 && pick.d.rb_moon > 0, grown2.join(","));
+      var ra = auto.d[autoKey] / moonB.abundance[autoKey];
+      var rr = pick.d.rb_moon / abRb;
+      ok("B5 月矿无特殊乘区（增量∝富集度）", Math.abs(ra - rr) / Math.max(1e-9, rr) < 0.02, "ra=" + ra.toFixed(4) + " rr=" + rr.toFixed(4));
+    }
+    // 3) 同一成员同 dt 跑小行星带：单位富集度产量应完全一致 → 月矿走的是同一条结算管线
+    var beltTarget = Object.keys(beltB.abundance).sort(function (x, y) { return beltB.abundance[y] - beltB.abundance[x]; })[0];
+    var belt = runMine(beltB.id, beltTarget, 3600);
+    if (belt.ok && auto.ok) {
+      var perMoon = auto.d[autoKey] / moonB.abundance[autoKey];
+      var perBelt = belt.d[beltTarget] / beltB.abundance[beltTarget];
+      ok("B6 与矿带同管线（每单位富集度产量相同）", perBelt > 0 && Math.abs(perMoon - perBelt) / Math.max(1e-9, perBelt) < 0.02,
+        "月矿 " + perMoon.toFixed(4) + " vs 矿带 " + perBelt.toFixed(4) + "（" + beltTarget + " 实得 " + (belt.d[beltTarget] || 0).toFixed(2) + "）");
+    }
+    N.pick = oldPick;
+    ok("B7 事件静音已还原", N.pick === oldPick);
+
+    // ===== C 旧档迁移 =====
+    var map2 = JSON.parse(JSON.stringify(map));
+    var t = map2.nodes[0];
+    t.bodies = t.bodies.filter(function (b) { return b.kind !== "moon"; });
+    var sigBefore = sigOf(t);
+    SM.ensureBodies(map2);
+    var back = t.bodies.filter(function (b) { return b.kind === "moon"; }).length;
+    ok("C1 旧档缺月岩区会被补回", back === 1, String(back));
+    ok("C2 补回时邻居天体不动", sigOf(t) === sigBefore, "签名一致=" + (sigOf(t) === sigBefore));
+    var sig2 = sigOf(t);
+    SM.ensureBodies(map2);
+    SM.ensureBodies(map2);
+    ok("C3 迁移幂等（连跑两次不重复加）",
+      t.bodies.filter(function (b) { return b.kind === "moon"; }).length === 1 && sigOf(t) === sig2);
+
+    // ===== D UI =====
+    var okUi = await uiWait();
+    ok("D0 UI 就绪", okUi);
+    if (okUi) {
+      await clickEl(q('[data-act="tab:system"]'));
+      await wait(200);
+      var moons = qa(".sys-body.moon");
+      ok("D1 星系图渲染出月岩区", moons.length >= 1, moons.length + " 个");
+      if (moons.length) {
+        // 天体卡片（手机端/精确操作入口）也要有 6 个矿种产量标签
+        var actStr = moons[0].getAttribute("data-act");
+        var card = W().document.querySelector('.node-card[data-act="' + actStr + '"]');
+        var chips = card ? [].slice.call(card.querySelectorAll(".tag")) : [];
+        var rateChips = chips.filter(function (c) { return (c.textContent || "").indexOf("/时") >= 0; });
+        ok("D1b 天体卡片含 6 个月矿产量标签", rateChips.length === 6, rateChips.length + " 个");
+        var g = moons[0];
+        g.dispatchEvent(new (W().MouseEvent)("click", { bubbles: true, cancelable: true }));
+        await wait(200);
+        var pop = W().document.getElementById("nsk-pop");
+        var ptxt = txt(pop);
+        ok("D2 点开浮层", !!pop && (pop.className || "").indexOf("show") >= 0, pop ? pop.className : "no pop");
+        ok("D3 浮层有「开采月矿」按钮", ptxt.indexOf("开采月矿") >= 0, ptxt.slice(0, 90));
+        ok("D4 浮层显示每小时产量", ptxt.indexOf("/时") >= 0, ptxt.slice(0, 120));
+        ok("D5 浮层有矿种下拉", !!W().document.getElementById("body-ore"));
+        ok("D6 浮层文案点明高安极低", ptxt.indexOf("高安") >= 0 && ptxt.indexOf("极低") >= 0, ptxt.slice(0, 140));
+      }
+      // 仓库：月矿分类段必须存在且 6 条。
+      // ⚠️ 必须先点「月矿」分段筛选 —— 默认「全部」视图下空仓分类整段隐藏，
+      //    新档月矿全是 0，直接数会得到 0 条（假红）。点具体分类会无视「显示空仓」开关。
+      await clickEl(q('[data-act="tab:warehouse"]'));
+      await wait(200);
+      await clickEl(q('[data-act="wh:moon_ore"]'));
+      await wait(200);
+      var sec = q('.wh-sec[data-cat="moon_ore"]');
+      ok("D7 仓库有月矿分类段", !!sec, txt(sec));
+      var cells = qa('.wh-item[data-cat="moon_ore"]');
+      ok("D8 月矿 6 条在仓库落地", cells.length === 6, cells.length + " 条");
+    }
+
+    ok("E1 无未捕获运行时错误", ERR.length === 0, ERR.slice(0, 3).join(" | "));
+    dump();
+  }
+
+  run().catch(function (e) {
+    ERR.push(String(e && e.stack || e));
+    out.push("EXCEPTION " + String(e && e.stack || e));
+    dump();
+  });
+})();
+</script>
+</body>
+</html>

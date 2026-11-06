@@ -578,6 +578,14 @@ button:disabled { transform: none; }
 .sys-body.derelict .derelict-orbit { stroke: rgba(232,121,168,.32); stroke-width: 1; stroke-dasharray: 5 4; }
 .sys-body.derelict:hover .derelict-scan { stroke: rgba(255,178,208,.65); }
 .sys-body.derelict.click:hover .derelict-hit { stroke: rgba(255,178,208,.58); stroke-width: 1.4; }
+/* 月岩区（2026-11-06）：行星边上的采集区 —— 月牙 + 虚线圈 = 区域而非星球 */
+.sys-body.moon { cursor: pointer; }
+.sys-body.moon .moon-hit { pointer-events: all; }
+.sys-body.moon .moon-zone { opacity: .5; transition: opacity .16s ease, stroke .16s ease; }
+.sys-body.moon .moon-disc { filter: drop-shadow(0 0 2px rgba(207,217,232,.35)); }
+.sys-body.moon:hover { filter: drop-shadow(0 0 7px rgba(207,217,232,.62)); }
+.sys-body.moon:hover .moon-zone { opacity: .95; stroke: #dbe6f5; }
+.sys-body.moon.click:hover .moon-hit { stroke: rgba(207,217,232,.34); }
 .star-glow { opacity: .35; animation: starpulse 3s ease-in-out infinite; }
 @keyframes starpulse { 0%,100% { opacity: .25; } 50% { opacity: .5; } }
 .body-grid .node-card .tag { background: transparent; border: 1px solid currentColor; }

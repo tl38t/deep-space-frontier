@@ -92,6 +92,74 @@
   const ALL_GASES = [], GAS_TIER = {};
   for (const t in GAS_BY_TIER) for (const g of GAS_BY_TIER[t]) { ALL_GASES.push(g); GAS_TIER[g] = +t; }
 
+  // ============================================================
+  // 月岩区（2026-11-06 用户定，1 代原式）：每星系 1 块，挂在行星外侧。
+  //   · **不做额外机制**：无钻机、无采掘周期、无碎裂、无临时矿带。
+  //     它就是一个采矿作业点，产出直接走既有连续采矿结算
+  //     （settle.js: BASE_MINE × 成员技能 × abundance × 各乘区），不新增任何结算分支。
+  //   · **富集度只由安等 band 定，高安相当低**：1 代是「月矿专属高级星带，按采矿等级 20/40/55/70 解锁」，
+  //     本作技能无硬上限但试玩期到不了 70，故改用安等当唯一门槛 —— 高安能挖，但挖得极慢。
+  //   · 矿种丰寡沿用 1 代的稀有度直觉（镓/铂常见、铷最稀有）。数字可直接标定，不动机制。
+  // ============================================================
+  const MOON_ORES = ["ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
+  // band → 富集度基数（abundance=1 时 = 0.5 个/秒）。高安 0.02 ≈ 36/小时，0.0 是 25 倍。
+  const MOON_SEC_ABUND = { 1: 0.02, 2: 0.06, 3: 0.15, 4: 0.30, 5: 0.50 };
+  // 矿种稀有度（1 代：镓/铂 Lv20 常见 → 钷 Lv55 / 铷 Lv70 稀有）
+  const MOON_ORE_MULT = { ga_moon: 1.0, pt_moon: 1.0, hf_moon: 0.6, os_moon: 0.5, pm_moon: 0.35, rb_moon: 0.25 };
+  // 月岩区轨道：贴宿主行星外侧 9px（行星间距 ≥40，不会与下一颗行星撞）
+  const MOON_ORBIT_GAP = 9;
+  // 无行星星系（207 个里有 6 个）的兜底轨道：落在小行星带(72)与最内行星(112+)之间的空档
+  const MOON_ORBIT_FALLBACK = 88;
+
+  function moonAbundance(band, prng) {
+    const base = MOON_SEC_ABUND[band] || MOON_SEC_ABUND[1];
+    const out = {};
+    for (const o of MOON_ORES) out[o] = +(base * MOON_ORE_MULT[o] * (0.85 + prng() * 0.3)).toFixed(4);  // ±15% 个体抖动
+    return out;
+  }
+  // 幂等纯函数：同一 node.id + band 永远得到同一块月岩区（不依赖调用顺序）。
+  // ⚠️ 内部只用 hashPrng，**绝不消耗 makeBodies 的主 PRNG** —— 那里少/多一次 rand()
+  //    会让其后的行星与空间站整体错位、整张固定星图重排（同 makeDerelict 的 void rand() 注释）。
+  function makeMoonBody(node, band) {
+    const pr = hashPrng(node.id + "_moon");
+    return {
+      id: node.id + "_moon", kind: "moon", name: node.name + " 月岩区",
+      orbit: MOON_ORBIT_FALLBACK, ang: Math.floor(pr() * 360), size: 6,
+      tier: nodeRich(node), band: band, abundance: moonAbundance(band, pr),
+    };
+  }
+  // 定位：贴到第一颗行星外侧；无行星则用兜底轨道。
+  // ⚠️ 只挪月岩区自己，**不让残骸场为它让位** —— placeDerelict 的候选角度一旦把月岩区算进邻居，
+  //    207 个星系里就有星系的最优角翻转，残骸场位置跟着变（实测 1 个）。为了「固定星图逐位不变」
+  //    这条硬线，改成：残骸场忽略月岩区，月岩区自己按「宿主行星旁 → 逐步往两侧让开」找空档。
+  function placeMoon(node, bodies) {
+    const m = bodies && bodies.find(b => b.kind === "moon");
+    if (!m) return bodies;
+    const R2D = Math.PI / 180;
+    const host = bodies.find(b => b.kind === "planet");
+    const orbit = host ? Math.min(196, (host.orbit || 112) + MOON_ORBIT_GAP) : MOON_ORBIT_FALLBACK;
+    const baseAng = host ? host.ang : m.ang;
+    const offsets = [14, -14, 30, -30, 48, -48, 68, -68, 90, -90, 120, -120, 150, -150, 180];
+    let best = baseAng, bestGap = -Infinity;
+    for (const off of offsets) {
+      const ang = ((baseAng + off) % 360 + 360) % 360;
+      const x = 200 + orbit * Math.cos(ang * R2D);
+      const y = 200 + orbit * Math.sin(ang * R2D);
+      let gap = Infinity;
+      for (const b of bodies) {
+        if (b === m || !b.orbit || b.kind === "belt") continue;   // 环状天体铺满整圈，点对点比距离没有意义
+        const bx = 200 + b.orbit * Math.cos(b.ang * R2D);
+        const by = 200 + b.orbit * Math.sin(b.ang * R2D);
+        gap = Math.min(gap, Math.hypot(x - bx, y - by) - ((b.size || 8) + m.size + 6));
+      }
+      if (gap > bestGap) { bestGap = gap; best = ang; }
+      if (gap >= 10) break;
+    }
+    m.orbit = orbit;
+    m.ang = Math.round(best) % 360;
+    return bodies;
+  }
+
   // 丰寡倍率：矿种 tier 相对节点 tier。同级=丰富(1.6~2.5)，低级=中等(0.5~1.0)，越级=稀缺可采(0.12~0.45)
   function oreAbundance(oreTier, nodeTier, rand) {
     if (oreTier === nodeTier) return 1.6 + rand() * 0.9;
@@ -165,6 +233,7 @@
       let gap = Infinity;
       for (const b of bodies) {
         if (b === dr) continue;
+        if (b.kind === "moon") continue;                // 月岩区不参与：残骸场角度必须与改前逐位一致（它自己避让）
         if (!b.orbit || b.kind === "belt") continue;   // 环状天体铺满整圈，点对点比距离没有意义
         const bx = 200 + b.orbit * Math.cos(b.ang * R2D);
         const by = 200 + b.orbit * Math.sin(b.ang * R2D);
@@ -220,7 +289,11 @@
       if (k === "planet") b.planetType = planetTypeForStage(regionStage, rand);
       bodies.push(b);
     }
-    placeDerelict(node, bodies);   // 残骸场角度避让：必须等全部天体就位后再算
+    // 残骸场先定角度（此时月岩区还没入列表 → 候选角与改前逐位一致）。
+    placeDerelict(node, bodies);
+    // 月岩区（1 个/星系，2026-11-06）：行星就位后再挂，由 placeMoon 自己避让残骸场。
+    bodies.push(makeMoonBody(node, band));
+    placeMoon(node, bodies);
     return bodies;
   }
   // 旧档/外部构造补天体（幂等）：缺 bodies 才生成；已存在则补全全矿种/全气体（O(1) 不破坏新档确定性）
@@ -268,6 +341,14 @@
         // 旧档迁移（幂等，不升 STATE_VERSION）：早期残骸场轨道是 200+rand()*18，
         // 压在画布边缘外，圆心出界看不见也点不到。orbit>180 是「旧值」的唯一特征。
         placeDerelict(n, n.bodies);
+      }
+      // 月岩区（2026-11-06）：每星系恰好 1 块，旧档缺则补（幂等，不升 STATE_VERSION）。
+      // 新档在 makeBodies 里就带，这里只服务已有存档。
+      if (!n.bodies.some(b => b.kind === "moon")) {
+        const reg3 = (map.regions || []).find(r => r.id === n.region) || {};
+        const band3 = SECLEVEL_TABLE[reg3.secLevel] ? SECLEVEL_TABLE[reg3.secLevel].band : 1;
+        n.bodies.push(makeMoonBody(n, band3));
+        placeMoon(n, n.bodies);   // 残骸场角度不动，月岩区自己避让
       }
     }
     return map;
@@ -653,5 +734,6 @@
     };
   }
 
-  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, makeDerelict, placeDerelict, DR_ORBIT, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE };
+  return { generateStarMap, adjacency, nodeById, shortestHops, ensureBodies, makeBodies, makeDerelict, placeDerelict, DR_ORBIT, pirateRaid, ORE_BY_TIER, REGION_DEFS, SECLEVEL_TABLE,
+    makeMoonBody, placeMoon, MOON_ORES, MOON_SEC_ABUND, MOON_ORE_MULT, moonAbundance };
 });

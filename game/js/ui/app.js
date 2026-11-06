@@ -167,7 +167,7 @@
   function toggleActivityDrawer() { if ($actDrawer.classList.contains("show")) hideActivityDrawer(); else openActivityDrawer(); }
 
   // ---------- 各视图 ----------
-  function catColor(c) { return { top: "#d4a843", ore: "#4fb0ff", gas: "#4fd0c0", mineral: "#e8b45a", component: "#9b8cff", blueprint: "#5ad1a0", other: "#8b96b8" }[c] || "#8b96b8"; }
+  function catColor(c) { return { top: "#d4a843", ore: "#4fb0ff", gas: "#4fd0c0", mineral: "#e8b45a", planet: "#6cc07a", moon_ore: "#a8bccc", component: "#9b8cff", ammo: "#e0854e", tactic: "#d65f9a", booster: "#8fb8f0", blueprint: "#5ad1a0", other: "#8b96b8" }[c] || "#8b96b8"; }
 
   function viewStarMap() {
     const map = state.starMap;
@@ -334,8 +334,20 @@
   }
 
   // ---------- 星系视图（独立 Tab）：SVG 显示当前星系的天体，点天体派遣 ----------
-  function kindCN(k) { return { star: "主星", belt: "小行星带", gas: "气云", planet: "行星", derelict: "残骸场", station: "空间站" }[k] || k; }
-  function kindColor(k) { return { star: "#ffd27a", belt: "#caa46a", gas: "#9be8ff", planet: "#5fb8ff", derelict: "#e879a8", station: "#5ad1a0" }[k] || "#889"; }
+  function kindCN(k) { return { star: "主星", belt: "小行星带", gas: "气云", moon: "月岩区", planet: "行星", derelict: "残骸场", station: "空间站" }[k] || k; }
+  function kindColor(k) { return { star: "#ffd27a", belt: "#caa46a", gas: "#9be8ff", moon: "#cfd9e8", planet: "#5fb8ff", derelict: "#e879a8", station: "#5ad1a0" }[k] || "#889"; }
+  // 月岩区富集度 → 每小时产量。hourly = BASE_MINE × abundance × 3600（单人、技能 Lv1、未计装配/增强剂乘区）。
+  // ⚠️ BASE_MINE 从 Engine.Settle 取，不在这里写第二份 0.5 —— 否则改标定会两处不同步。
+  function moonHourly(abv) {
+    const base = (Engine && Engine.Settle && Engine.Settle.BASE_MINE) ? Engine.Settle.BASE_MINE : 0.5;
+    return base * (Number(abv) || 0) * 3600;
+  }
+  function moonAbTxt(abv) {
+    const h = moonHourly(abv);
+    return (h >= 100 ? Math.round(h) : h >= 10 ? h.toFixed(0) : h.toFixed(1)) + "/时";
+  }
+  // 安等档 → 富集度文案（band 1 高安 … 5 是 0.0）
+  function moonBandTxt(band) { return ["富集极低", "富集很低", "富集偏低", "富集中等", "富集很高"][Math.min(5, Math.max(1, band || 1)) - 1]; }
   // 行星类型 → 中文（与 resources.js PLANET.planetType 对应）
   function planetTypeName(t) { return { lava: "熔岩", gas: "气态", ice: "冰", plasma: "等离子", temperate: "温带", storm: "风暴" }[t] || t; }
   function planetProductName(t) { const m = (t && Data.Resources) ? Data.Resources.meta("planet_" + t) : null; return m ? m.name : null; }
@@ -345,6 +357,7 @@
     // 扫图发现节点的玩法暂定为不好玩，先下线。残骸场「考古」保留。
     return k === "belt" ? [{ type: "mine", label: "采矿" }]
       : k === "gas" ? [{ type: "mine", label: "采集气云" }]
+      : k === "moon" ? [{ type: "mine", label: "开采月矿" }]
       : k === "planet" ? []
       : k === "derelict" ? [{ type: "explore", label: "考古" }]
       : [];   // station 为工业/势力锚点，后续接入冶炼制造
@@ -500,6 +513,21 @@
           + '<text class="sys-label" y="29">' + esc(b.name) + "</text></g>";
         continue;
       }
+      if (b.kind === "moon") {
+        // 月岩区 = 行星边上的一块采集区（不是实心天体）：小月牙 + 虚线圈表示「区域」而非「星球」。
+        // 月牙用一枚背景色圆偏移压出缺角，比贴图便宜且不依赖资产。
+        const act0 = ' data-act="body:' + node.id + ":" + b.id + '"';
+        const sz = b.size || 6;
+        html += '<g class="sys-body moon click"' + act0 + ' transform="translate(' + x + "," + y + ')">'
+          + '<circle class="moon-hit" r="13" fill="transparent"/>'
+          + '<circle class="moon-zone" r="' + (sz + 5) + '" fill="none" stroke="#9fb4d0" stroke-width=".7" stroke-dasharray="2 3" opacity=".5"/>'
+          + '<circle class="moon-disc" r="' + sz + '" fill="#cfd9e8"/>'
+          + '<circle class="moon-shade" r="' + sz + '" fill="#080d1a" opacity=".66" transform="translate(' + (sz * 0.5).toFixed(1) + ',' + (-sz * 0.28).toFixed(1) + ')"/>'
+          + labelHitRect(b.name, 0, sz + 14)
+          + workerBadge(0, -sz - 4, bodyWorkers(node.id, b.id))
+          + '<text class="sys-label" y="' + (sz + 14) + '">' + esc(b.name) + "</text></g>";
+        continue;
+      }
       const clickable = (b.kind === "planet" || b.kind === "derelict");
       const act = clickable ? ' data-act="body:' + node.id + ":" + b.id + '"' : "";
       html += '<g class="sys-body ' + b.kind + (clickable ? " click" : "") + '"' + act + ' transform="translate(' + x + "," + y + ')">';
@@ -548,6 +576,9 @@
       let sub = "";
       if (b.kind === "belt" || b.kind === "gas") sub = Object.entries(b.abundance || {}).map(([o, v]) =>
         '<span class="tag ' + (v > 1 ? "good" : "") + '">' + resIcon(o) + resName(o) + " ×" + v.toFixed(1) + "</span>").join("");
+      // 月岩区：富集度是个位数百分比级，×0.005 这种写法对玩家没意义 → 直接换算成「每小时产量」
+      else if (b.kind === "moon") sub = '<span class="tag warn">' + moonBandTxt(b.band) + "</span>" + Object.entries(b.abundance || {}).map(([o, v]) =>
+        '<span class="tag">' + resIcon(o) + resName(o) + " " + moonAbTxt(v) + "</span>").join("");
       else if (b.kind === "station") sub = "冶炼 / 制造锚点";
       else if (b.kind === "derelict") sub = '<span class="tag">' + ((Data.Archaeology && Data.Archaeology.tierLabel(b.band)) || "遗址") + '</span> ' + esc(b.name) + " · 自选考古焦点";
       else if (b.kind === "planet") sub = "行星 · " + planetTypeName(b.planetType) + "型" + (planetProductName(b.planetType) ? " → " + planetProductName(b.planetType) : "");
@@ -822,6 +853,13 @@
     html += '<div class="dim">所属星系：' + esc(node.name) + "</div>";
     if (body.kind === "belt") html += '<div>可采矿种：' + Object.entries(body.abundance || {}).map(([o, v]) =>
       '<span class="tag ' + (v > 1 ? "good" : "") + '">' + resIcon(o) + resName(o) + " ×" + v.toFixed(1) + "</span>").join("") + "</div>";
+    else if (body.kind === "moon") {
+      const ores = Object.entries(body.abundance || {}).sort((x, y) => y[1] - x[1]);
+      html += '<div><b>' + moonBandTxt(body.band) + "</b> · 采集区内 6 种月矿同采（按稀有度递减）</div>";
+      html += '<div>可采月矿：' + ores.map(([o, v]) =>
+        '<span class="tag">' + resIcon(o) + resName(o) + " " + moonAbTxt(v) + "</span>").join("") + "</div>";
+      html += '<div class="dim">派采矿成员在此持续产出，无需设施、无采掘周期。产量随星系安等提高 —— 高安极低，深空/0.0 最丰。月矿是 Lv55 以上装备的材料。</div>';
+    }
     else if (body.kind === "station") html += '<div class="dim">势力 / 工业锚点：冶炼、制造将在此接入。</div>';
     else if (body.kind === "derelict") {
       const tl = (Data.Archaeology && Data.Archaeology.tierLabel(body.band)) || "遗址";
@@ -866,11 +904,13 @@
       else {
         // 采矿：目标矿选择（belt 含全矿种，可指定稀缺矿；默认自动选最丰富）
         let oreSel = "";
-        if (body.kind === "belt" && body.abundance) {
+        if ((body.kind === "belt" || body.kind === "moon") && body.abundance) {
+          const isMoon = body.kind === "moon";
+          const valTxt = v => isMoon ? moonAbTxt(v) : "×" + v.toFixed(1);
           const ores = Object.entries(body.abundance).sort((x, y) => y[1] - x[1]);
           oreSel = '<div class="row"><select id="body-ore" class="mbr-sel"><option value="">自动（最丰富 ' +
             resIconTxt(ores[0][0]) + resName(ores[0][0]) + "）</option>" +
-            ores.map(([o, v]) => '<option value="' + o + '">' + resIconTxt(o) + resName(o) + " ×" + v.toFixed(1) + "</option>").join("") +
+            ores.map(([o, v]) => '<option value="' + o + '">' + resIconTxt(o) + resName(o) + " " + valTxt(v) + "</option>").join("") +
             "</select></div>";
         }
         html += '<div class="row"><select id="body-mem" class="mbr-sel">' + idle.map(m =>
@@ -2467,30 +2507,49 @@
 
   // 仓库：物资库存总览。视觉语言对齐一代 cargo（分类色卡片 / 分段标签 / 顶层资源三卡）。
   // 装备/脑插子区块随③接入后扩展。
+  // ⚠️ 这张表是仓库分段的**唯一登记处**：任何 Resources 里出现的 cat 都必须在此有条目，
+  // 否则整段在仓库里消失（2026-11-06 踩过：planet/ammo/tactic/booster 四类漏登记，
+  // 行星材料有库存却在仓库里找不到）。WH_ORDER 由它派生，不再另维护一份白名单。
+  // 顺序 = 页面分段顺序，按产出链：采 → 炼 → 行星 → 造 → 消耗 → 图纸。
   const WH_CATS = [
     { id: "all", name: "全部" },
     { id: "ore", name: "矿石" },
     { id: "gas", name: "气体" },
     { id: "mineral", name: "矿材" },
+    { id: "planet", name: "行星产物" },
+    { id: "moon_ore", name: "月矿" },
     { id: "component", name: "部件" },
+    { id: "ammo", name: "弹药" },
+    { id: "tactic", name: "战术材料" },
+    { id: "booster", name: "增强剂" },
     { id: "blueprint", name: "图纸" },
+    { id: "other", name: "其他" },
     { id: "equip", name: "装备" },
   ];
   // 顶层资源在页首三卡展示，不重复进网格
   const WH_TOP = ["credits", "fuel", "rep"];
-  const WH_ORDER = ["ore", "gas", "mineral", "component", "blueprint", "other"];
+  // 分段顺序从 WH_CATS 派生（剔除页首三卡与独立的装备段）
+  const WH_ORDER = WH_CATS.map(c => c.id)
+    .filter(id => id !== "all" && id !== "equip" && WH_TOP.indexOf(id) < 0);
+  // 分类标签查表（含 other 兜底）
+  const WH_CAT_NAME = WH_CATS.reduce((a, c) => { a[c.id] = c.name; return a; }, {});
 
   function viewWarehouse() {
     const res = state.res || {};
     const hudIdx = {};
     Data.Resources.HUD_ORDER.forEach((k, i) => { hudIdx[k] = i; });
 
+    const KNOWN_CAT = WH_CAT_NAME;
     const groups = {};
     let totalKinds = 0, ownedKinds = 0;
     for (const k of Object.keys(res)) {
       const m = Data.Resources.meta(k);
       if (!m) continue;                       // 未注册键不进仓库，避免露出裸 id
-      const cat = m.cat || "other";
+      const raw = m.cat || "other";
+      if (raw === "top" || raw === "equip") continue;  // 顶层走页首三卡；装备走 state.equipment
+      // 未登记分类并入「其他」而非丢弃：日后新增 cat 忘了上 WH_CATS 只会掉进兜底段，
+      // 绝不会像 planet 那样整段从仓库消失。
+      const cat = KNOWN_CAT[raw] ? raw : "other";
       (groups[cat] = groups[cat] || []).push(k);
       totalKinds++;
       if ((res[k] || 0) > 0) ownedKinds++;
@@ -2522,23 +2581,29 @@
     }
     html += "</div>";
 
-    // 分段标签（带各类条目数）
+    // 分段标签（带各类条目数）；tactic/booster/other 无存量时不占位，避免一排 0
     const catCount = (id) => id === "all" ? totalKinds + eqInv.length : (id === "equip" ? eqInv.length : (groups[id] || []).length);
+    const WH_COND = { tactic: 1, booster: 1, other: 1 };
     html += '<div class="seg-tabs">';
     for (const c of WH_CATS) {
+      const n = catCount(c.id);
+      if (WH_COND[c.id] && n === 0 && !whShowEmpty) continue;
       html += '<span class="seg-tab' + (warehouseFilter === c.id ? " on" : "") + '" data-act="wh:' + c.id + '">'
-        + c.name + "<i>" + catCount(c.id) + "</i></span>";
+        + c.name + "<i>" + n + "</i></span>";
     }
     html += "</div>";
 
     let shown = 0;
+    // 主动点了某个具体分类 = 明确想看这一类，此时忽略「显示空仓」开关
+    // （否则点开「行星产物」只会看到「暂无物资」，明明有 6 个条目）
+    const forceShow = warehouseFilter !== "all";
     for (const cat of WH_ORDER) {
       if (warehouseFilter !== "all" && warehouseFilter !== cat) continue;
       const keys = groups[cat]; if (!keys || !keys.length) continue;
       const owned = keys.filter(k => (res[k] || 0) > 0).length;
-      if (!whShowEmpty && !owned) continue;      // 空仓分类整段隐藏，避免整页幽灵卡
+      if (!whShowEmpty && !forceShow && !owned) continue;
       shown++;
-      const label = (WH_CATS.find(c => c.id === cat) || { name: cat === "other" ? "其他" : cat }).name;
+      const label = WH_CAT_NAME[cat] || cat;
       html += '<div class="wh-sec" data-cat="' + cat + '"><span class="nm">' + label + "</span>"
         + '<span class="cnt">' + owned + " / " + keys.length + ' 种在库</span><span class="ln"></span></div>';
       html += '<div class="wh-grid">';
@@ -2546,7 +2611,7 @@
         const m = Data.Resources.meta(k);
         const val = res[k] || 0;
         const empty = val <= 0;
-        if (empty && !whShowEmpty) continue;
+        if (empty && !whShowEmpty && !forceShow) continue;
         const tier = m.tier ? '<span class="wh-tier t' + m.tier + '">T' + m.tier + "</span>" : "";
         const tip = m.name + (m.tier ? " · T" + m.tier : "") + " · 持有 " + fmt(val);
         html += '<div class="wh-item click' + (empty ? " empty" : "") + '" data-act="whinfo:' + k + '" data-cat="' + cat + '" title="' + esc(tip) + '">'
@@ -2586,7 +2651,7 @@
     closeWhDetail();
     const m = Data.Resources.meta(key); if (!m) return;
     const qty = (state.res && state.res[key]) || 0;
-    const catName = (WH_CATS.find(c => c.id === m.cat) || { name: m.cat === "other" ? "其他" : m.cat }).name;
+    const catName = WH_CAT_NAME[m.cat] || "其他";
     const accent = catColor(m.cat);
     const fromName = m.from ? (Data.Resources.meta(m.from) ? Data.Resources.meta(m.from).name : m.from) : null;
     const el = document.createElement("div");

@@ -142,7 +142,11 @@
     alliance_gas_assimilation: { id: "alliance_gas_assimilation", name: "联邦拓殖公社气体同化注入器", slot: "low", level: 65, time: 130, xp: 95, cost: {fe_alloy: 1320, poly_gas: 60, rb_moon: 6, planet_plasma: 30}, bonuses: {gasLaserEfficiency: 0.8}, faction: "federation", requiresBlueprint: true, cat: "gas" },
     t1_salvage_arm: { id: "t1_salvage_arm", name: "T1同位素标记打捞臂", slot: "low", level: 10, time: 20, xp: 12, cost: {fe_alloy: 50, zr_alloy: 20, poly_gas: 12}, bonuses: {salvageEfficiency: 0.1}, cat: "salvage" },
     t2_salvage_arm: { id: "t2_salvage_arm", name: "中型同位素标记打捞臂", slot: "low", level: 15, time: 35, xp: 20, cost: {fe_alloy: 160, he_gas: 60, mx_alloy: 15}, bonuses: {salvageEfficiency: 0.3}, cat: "salvage" },
-    t3_salvage_arm: { id: "t3_salvage_arm", name: "重型同位素标记打捞臂", slot: "low", level: 35, time: 60, xp: 40, cost: {fe_alloy: 400, planet_plasma: 150, he_gas: 30, zr_alloy: 15}, bonuses: {salvageEfficiency: 0.5}, cat: "salvage" },
+    // ⚠️ 2026-11-06：planet_plasma 是 stage2（低安 0.4-0.3）行星产物，试玩期不可得，
+    // 而本件 level 35（船坞 Lv1 即可造）是全表唯一「门槛已达却永远缺料」的装备；
+    // 且原值 150 比 t5 装备的同类用量（8~30）大 5~20 倍，属标定笔误。
+    // 改为 stage1 可产的 planet_ice（冰行星产物，T2），数量按 t3 档位重定。
+    t3_salvage_arm: { id: "t3_salvage_arm", name: "重型同位素标记打捞臂", slot: "low", level: 35, time: 60, xp: 40, cost: {fe_alloy: 400, planet_ice: 45, he_gas: 30, zr_alloy: 15}, bonuses: {salvageEfficiency: 0.5}, cat: "salvage" },
     t4_salvage_arm: { id: "t4_salvage_arm", name: "大型同位素标记打捞臂", slot: "low", level: 55, time: 110, xp: 80, cost: {fe_alloy: 900, planet_bio: 45, planet_plasma: 25, pm_moon: 5}, bonuses: {salvageEfficiency: 0.7}, cat: "salvage" },
     t5_salvage_arm: { id: "t5_salvage_arm", name: "旗舰同位素标记打捞核心", slot: "low", level: 80, time: 200, xp: 150, cost: {fe_alloy: 2000, planet_mag: 35, rb_moon: 15, planet_bio: 50}, bonuses: {salvageEfficiency: 0.9}, cat: "salvage" },
     sansha_salvage_injector: { id: "sansha_salvage_injector", name: "静默残骸打捞注入器", slot: "low", level: 65, time: 130, xp: 95, cost: {fe_alloy: 1100, planet_plasma: 50, pm_moon: 5, planet_bio: 25}, bonuses: {salvageEfficiency: 0.8}, faction: "sansha", requiresRel: {sansha: 90}, requiresBlueprint: true, cat: "salvage" },
