@@ -55,7 +55,7 @@
   }
 
   // 扫描强度（成功率分子）：技能 + 舰船扫描×强化倍率 + 装配扫描
-  function scanStrength(m) {
+  function scanStrength(m, preFit) {
     const score = skillScore(m);
     let shipScan = 0, shipMul = 1;
     if (m && m.shipId) {
@@ -66,7 +66,7 @@
         shipMul = (enh && enh.archaeologyScanMultiplier) || 1;
       }
     }
-    const fit = fittedBonuses(m);
+    const fit = preFit || fittedBonuses(m);
     return score + shipScan * shipMul + (fit.archaeologyScan || 0);
   }
 
@@ -77,11 +77,11 @@
   }
 
   // 单次遗址周期成功率（0–1）。difficulty = 遗址难度(band) + 焦点修正
-  function successChance(m, body, focusId) {
+  function successChance(m, body, focusId, preFit) {
     const profile = Data.Archaeology.profileById(focusId);
     const band = body.band || 1;
     const difficulty = Data.Archaeology.difficultyFor(band) + (profile.difficultyMod || 0);
-    const ss = scanStrength(m);
+    const ss = scanStrength(m, preFit);
     return Math.max(0.05, Math.min(0.95, 0.50 + (ss - difficulty) * 0.01));
   }
 
@@ -108,13 +108,14 @@
   }
 
   // 单次遗址周期结算。确定性 RNG 种子 = rngSeed ^ (0xA21C * archCounter)。
-  // 返回 { success, profileId, drops:{credits,bp,rep}, hullDamage:{frac, avoided}, destroyed, lines:[...] }
-  function cycle(state, m, body, focusId) {
+  // preFit：调用方在「成员装配不变」的循环外预计算的 fittedBonuses，避免每周期重复扫装备（离线大批量结算性能）。
+  //   成功率仍每周期按当前技能重算（scanStrength 内 skillScore 读 m.skills.archaeology），保证 1 代保真。
+  function cycle(state, m, body, focusId, preFit) {
     const profile = Data.Archaeology.profileById(focusId);
     const band = body.band || 1;
     state.archCounter = (state.archCounter || 0) + 1;
     const rng = Core.makeRng((state.rngSeed ^ Math.imul(0xA21C, state.archCounter)) >>> 0);
-    const p = successChance(m, body, focusId);
+    const p = successChance(m, body, focusId, preFit);
     const success = m.destroyed ? false : rng() < p;
     const drops = { credits: 0, bp: 0, rep: 0 };
     const hullDamage = { frac: 0, avoided: false };
@@ -125,7 +126,7 @@
       // 装配加成（Phase 2）：打捞焦点吃 salvageEfficiency（1 代 11 条打捞装备）。
       // 只在 salvage 焦点生效——research/cache 是遗址解析与货柜窃取，不吃打捞效率。
       if (focusId === "salvage") {
-        const fitS = fittedBonuses(m);
+        const fitS = preFit || fittedBonuses(m);
         drops.credits = Math.round(drops.credits * (1 + (fitS.salvageEfficiency || 0)));
       }
       if (profile.bpChance > 0 && rng() < profile.bpChance) drops.bp += profile.bp(band);
@@ -135,7 +136,7 @@
       if (drops.rep) lines.push("因英勇探勘获 " + drops.rep + " 功勋。");
     } else if (!m.destroyed) {
       // 反噬：先判非致命免伤，再判稳定器减免后的船体损伤
-      const fit = fittedBonuses(m);
+      const fit = preFit || fittedBonuses(m);
       const avoidChance = Math.min(0.90, fit.archaeologyNonFatalAvoid || 0);
       if (avoidChance > 0 && rng() < avoidChance) {
         hullDamage.avoided = true;

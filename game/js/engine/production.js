@@ -149,44 +149,59 @@
     const q = state.base.industry[queueType + "Queue"] || (state.base.industry[queueType + "Queue"] = []);
     const log = [];
     let guard = 0;
-    while (q.length && guard < MAX_BATCHES) {
-      const it = q[0];
-      const elapsed = (now - it.startedAt) / 1000; // 真实流逝（秒）
-      if (typeof console !== "undefined" && state.__dbg) console.log("  PQ", queueType, "elapsed=", elapsed.toFixed(2), "effDur=", effDur(it).toFixed(2), "pm=", pm, "done=", it.done);
-      if (elapsed < effDur(it)) break; // 队首未到一批
-      // 完成一批：装备入库，部件/矿材/图纸入 state.res
-      // 双倍产出（冶炼/增幅剂）：以「本批起始时刻 + 队列类型盐」派生确定性 rng 掷骰，命中则产量翻倍。
-      // 该种子与在线/离线无关（恒由 it.startedAt 决定），保证在线离线一致。
-      let outQty = it.qty;
-      if (dblChance > 0) {
-        const seed = ((state.rngSeed || 0) ^ Math.imul(it.startedAt >>> 0, 0x9E3779B1) ^ (queueType === "smelt" ? 0x5001 : 0x5002)) >>> 0;
-        const rng = Core.makeRng(seed);
-        if (rng() < dblChance) outQty = it.qty * 2;
+    // ⚠️ **并行槽位**（2026-11-03 修）：队列长度上限 === 槽位上限（enqueue 就是把槽位当占位用），
+    // 所以队列里每一项都占一条独立产线，各自按自己的 startedAt 推进。
+    // 旧实现只推 q[0]（队首），第 2 项起要等前一项整条跑完才开始 —— 玩家反馈「只有第一个队列能跑」、
+    // 界面上第 2/3 条永远 0% 就是这个原因，多槽位形同虚设。
+    const alive = [];
+    for (let qi = 0; qi < q.length; qi++) {
+      const it = q[qi];
+      let keep = true;   // false = 该项本帧结束（跑满 或 续不上料）
+      while (guard < MAX_BATCHES) {
+        const d = effDur(it);                        // 等效单批耗时（同一项在同一帧内恒定）
+        const elapsed = (now - it.startedAt) / 1000; // 真实流逝（秒）
+        if (typeof console !== "undefined" && state.__dbg) console.log("  PQ", queueType, "slot=", qi, "elapsed=", elapsed.toFixed(2), "effDur=", d.toFixed(2), "pm=", pm, "done=", it.done);
+        if (elapsed < d) break; // 本项未到一批
+        // 完成一批：装备入库，部件/矿材/图纸入 state.res
+        // 双倍产出（冶炼/增幅剂）：以「本批起始时刻 + 队列类型盐」派生确定性 rng 掷骰，命中则产量翻倍。
+        // 该种子与在线/离线无关（恒由 it.startedAt 决定），保证在线离线一致。
+        let outQty = it.qty;
+        if (dblChance > 0) {
+          const seed = ((state.rngSeed || 0) ^ Math.imul(it.startedAt >>> 0, 0x9E3779B1) ^ (queueType === "smelt" ? 0x5001 : 0x5002)) >>> 0;
+          const rng = Core.makeRng(seed);
+          if (rng() < dblChance) outQty = it.qty * 2;
+        }
+        if (queueType === "smelt") outQty = outQty * smeltYieldMult;   // 科技树·精炼工艺（在双倍之后叠加，连乘）
+        if (it.outType === "equipment") {
+          state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
+          log.push({ out: it.out, qty: outQty, outType: "equipment" });
+        } else {
+          gain(state.res, it.out, outQty);
+          log.push({ out: it.out, qty: outQty });
+        }
+        it.done += 1;
+        // 驻舱工头经验（2026-11-01）：**真产出一批才涨**，与 1 代「真正使用才涨」同口径。
+        // 无人驻舱 = 没人涨（这是驻舱的第二个动机，第一个是耗时倍率）。
+        // 用 it.dur 而非 effDur 发经验：effDur 含技能因子，会造成「技能越高练得越慢」。
+        const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
+        if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
+          const w = Base.stationWorker(state, queueType);
+          if (w) {
+            const xpAmt = (Sx.recipeBatchXp ? Sx.recipeBatchXp(state, queueType, it) : (it.dur || 0) * 0.35);
+            Sx.grantBatchXp(state, w.member, w.skill, xpAmt);
+          }
+        }
+        if (it.done >= it.repeat) { keep = false; break; }
+        // 续下一批：推进 startedAt（按等效耗时），重新校验原料（用队列项快照 it.in，避免依赖配方表）
+        it.startedAt += d * 1000;
+        if (!it.in || !canAfford(state.res, it.in)) { keep = false; break; }
+        spend(state.res, it.in);
+        guard += 1;
       }
-      if (queueType === "smelt") outQty = outQty * smeltYieldMult;   // 科技树·精炼工艺（在双倍之后叠加，连乘）
-      if (it.outType === "equipment") {
-        state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
-        log.push({ out: it.out, qty: outQty, outType: "equipment" });
-      } else {
-        gain(state.res, it.out, outQty);
-        log.push({ out: it.out, qty: outQty });
-      }
-      it.done += 1;
-      // 驻舱工头经验（2026-11-01）：**真产出一批才涨**，与 1 代「真正使用才涨」同口径。
-      // 无人驻舱 = 没人涨（这是驻舱的第二个动机，第一个是耗时倍率）。
-      // 用 it.dur 而非 effDur 发经验：effDur 含技能因子，会造成「技能越高练得越慢」。
-      const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
-      if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
-        const w = Base.stationWorker(state, queueType);
-        if (w) Sx.grantBatchXp(state, w.member, w.skill, it.dur);
-      }
-      if (it.done >= it.repeat) { q.shift(); continue; }
-      // 续下一批：推进 startedAt（按等效耗时），重新校验原料（用队列项快照 it.in，避免依赖配方表）
-      it.startedAt += effDur(it) * 1000;
-      if (!it.in || !canAfford(state.res, it.in)) { q.shift(); continue; }
-      spend(state.res, it.in);
-      guard += 1;
+      if (keep) alive.push(it);
     }
+    // 原地重写队列（保持 state.base.industry 上那个数组引用不变，外部捕获的引用不失效）
+    if (alive.length !== q.length) { q.length = 0; for (let k = 0; k < alive.length; k++) q.push(alive[k]); }
     return log;
   }
 
@@ -281,6 +296,16 @@
         // 精通点：完成一艘总装 +3（离散发点，非 tick）
         const M = _Mastery();
         if (M && M.award) M.award(state, 3, "ship");
+        // 整船制造经验：发给总装船坞驻舱者，走 manufacture 技能，用 ship.xp（1 代移植真值）。
+        // ⚠️ 此前 processBuildQueue 完全没调 grantBatchXp → 造整船一直给 0 制造经验，本次一并补上。
+        const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
+        if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
+          const w = Base.stationWorker(state, "build");
+          if (w) {
+            const xpAmt = (Sx.recipeBatchXp ? Sx.recipeBatchXp(state, "build", it) : (ship.buildTime || it.dur || 0) * 0.35);
+            Sx.grantBatchXp(state, w.member, w.skill, xpAmt);
+          }
+        }
       }
       q.shift();
       guard += 1;

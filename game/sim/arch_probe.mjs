@@ -556,7 +556,11 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   Engine.Settle.settle(sx, now + 3600 * 1000);
   const lv3600 = Engine.Settle.levelOf(sx.members[0].skills.mining);
   ok("XP:1h后可见成长(>60s等级)", lv3600 > lv60, "lv60=" + lv60 + " lv3600=" + lv3600);
-  ok("XP:1h未冲到离谱高度(<=25)", lv3600 <= 25, "lv=" + lv3600 + " xp=" + sx.members[0].skills.mining.toFixed(1));
+  // 2026-11-03：采集经验改回 1 代 baseXP/baseTime 且 baseTime 砍到 1/3（×3）。
+  // 母星节点 richness 随机（1~2）、成员 seedSkills 激情随机 → 1h 等级非确定，深节点+好激情可到 ~33 级。
+  // skillBonus=1+level×0.02 是对数曲线（levelOf 随 xp 对数增长），永不爆；33 级仅 1.66× 收益，安全。
+  // 阈值由 25 放宽到 40：容纳 ×3 加速 + 随机性，仍能在真失控（>100）时报警。
+  ok("XP:1h未冲到离谱高度(<=40)", lv3600 <= 40, "lv=" + lv3600 + " xp=" + sx.members[0].skills.mining.toFixed(1));
 
   // ============ block24：周六（招募钳制 / 里程碑 / 事件 options·chain / 精通点 / 熔炼增产）============
   // 24a) 招募技能钳制：真实生成 200 名候选，全量校验 单项≤10、总和≤30
@@ -1605,6 +1609,81 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   Engine.Settle.settle(sI, now + 1000);
   ok("弹药:断弹后 settle 令小队撤退返港", mI.assignment === null,
     "assign=" + JSON.stringify(mI.assignment) + " status=" + mI.status);
+})();
+
+// 21) 考古经验对回 1 代（2026-11-04，用户纠正：1 代 systems/archaeology.js:696 是「每次成功解析周期发固定 site.xp」）
+// band 1–5 = 遗址档位 I–V，xp 取 1 代真值 50/150/400/900/2000；失败（反噬）不发经验；不再连续 ×dt。
+(function probeArchXp() {
+  // 静音活动事件：叙事事件（exp_relic 等，activity:"explore"）会直接发 archaeology 技能，
+  // 且其 eventBudget 按「每次 settle 调用」封顶 4 → 离线只发 ≤4 次，在线随 3600 次调用多发，
+  // 会污染考古经验对照（属另一处 parity bug，不在此考古任务范围）。纪律：对照实验前必须静音。
+  const _pick0 = NSK.Narrative.pick;
+  NSK.Narrative.pick = function () { return null; };
+
+  // A) 纯函数映射校验
+  ok("考古xp映射 band1=50", Engine.Settle.archXpForBand(1) === 50);
+  ok("考古xp映射 band5=2000", Engine.Settle.archXpForBand(5) === 2000);
+  ok("考古xp映射 缺省band回退50", Engine.Settle.archXpForBand(0) === 50);
+
+  // B) 端到端：高技能成员在 band1 残骸场离线 3h，经验只来自成功周期、且为 50 的整倍数（非连续 ×dt）
+  const sb = Engine.State.defaultState(now, Data);
+  const node = sb.starMap.nodes.find(n => (n.bodies || []).some(b => b.kind === "derelict" && b.band === 1));
+  if (!node) { NSK.Narrative.pick = _pick0; return ok("考古:band1残骸场存在", false, "无band1 derelict"); }
+  const ebody = node.bodies.find(b => b.kind === "derelict" && b.band === 1);
+  const m = sb.members[0];
+  m.skills.archaeology = 1e9;          // 扫描强度远超难度 → 成功率封顶 0.95
+  Engine.Dispatch.assign(sb, m.id, "explore", { nodeId: node.id, bodyId: ebody.id, focus: "salvage" });
+  // 中性化放 assign 之后：assign→noteVisit 完成「访问目的」会重算 goalXp，须在之后清零；
+  // 并清掉默认出身 trait（deep_diver 考古 ×1.3、fast_learner 全局学习 ×1.25 等），隔离「档位 xp 真值」测量。
+  m.trait = null;
+  m.passion.archaeology = "minor";     // 倍率 1.0（minor）
+  m.mods.xpMult = {}; m.mods.learnMult = 1; m.mods.goalXp = 1;
+  const gmB = Engine.Settle.passionMult(m, "archaeology") * Engine.Settle.xpMultOf(sb, m, "archaeology");
+  const xpBefore = m.skills.archaeology;
+  // 离线 3h 一次性结算：period=120s → 90 个周期；while 补齐，经验按成功数发放
+  let __cb = 0; const __ob = Engine.Archaeology.cycle; Engine.Archaeology.cycle = function (s, mm, b, f) { __cb++; return __ob(s, mm, b, f); };
+  NSK.__grants = [];
+  Engine.Settle.settle(sb, now + 3 * 3600 * 1000);
+  Engine.Archaeology.cycle = __ob;
+  const xpGain = m.skills.archaeology - xpBefore;
+  ok("考古:3h后经验增长(成功周期发)", xpGain > 0, "gain=" + xpGain.toFixed(2));
+  // 按成员真实乘区 gm 归一：验证「每成功周期 = 50×gm」机制本身（gm 无关，不再假设乘区=1）
+  ok("考古:经验为50×gm整倍数(非连续×dt)", Math.abs((xpGain / gmB) % 50) < 1e-6, "gain=" + xpGain.toFixed(2) + " gm=" + gmB.toFixed(4) + " perCycle=" + (xpGain / gmB).toFixed(3));
+  ok("考古:离线3h周期数=90(while补齐)", __cb === 90, "cycles=" + __cb);
+  ok("考古:经验不超 周期数×50×gm", xpGain <= 90 * 50 * gmB + 1e-6, "gain=" + xpGain.toFixed(2));
+
+  // C) 在线/离线 parity：考古经验只由成功周期数决定，与结算切分无关（验证 while 补齐 + 确定性 RNG）
+  const sOnA = Engine.State.defaultState(now, Data);
+  const sOffA = JSON.parse(JSON.stringify(sOnA));
+  function prepArch(st) {
+    const mm = st.members[0];
+    mm.skills.archaeology = 1e9;
+    Engine.Dispatch.assign(st, mm.id, "explore", { nodeId: node.id, bodyId: ebody.id, focus: "salvage" });
+    mm.trait = null; mm.passion.archaeology = "minor";
+    mm.mods.xpMult = {}; mm.mods.learnMult = 1; mm.mods.goalXp = 1; // 中性化放 assign 后（noteVisit 重算 goalXp 已发生），隔离档位 xp 真值测量
+  }
+  prepArch(sOnA); prepArch(sOffA);
+  let __cOn = 0, __cOff = 0;
+  const __oc = Engine.Archaeology.cycle;
+  Engine.Archaeology.cycle = function (s, mm, b, f) { __cOn++; return __oc(s, mm, b, f); };
+  NSK.__grants = [];
+  for (let i = 1; i <= 3600; i++) Engine.Settle.settle(sOnA, now + i * 1000); // 在线 3600×1s
+  Engine.Archaeology.cycle = function (s, mm, b, f) { __cOff++; return __oc(s, mm, b, f); };
+  Engine.Settle.settle(sOffA, now + 3600 * 1000);                            // 离线 1×3600s
+  Engine.Archaeology.cycle = __oc;
+  NSK.Narrative.pick = _pick0;
+  const onXp = sOnA.members[0].skills.archaeology - 1e9;
+  const offXp = sOffA.members[0].skills.archaeology - 1e9;
+  // 按成员真实乘区 gm 归一，验证「成功周期数」这一真实不变量（在线/离线应一致，与乘区无关）
+  const gmOn = Engine.Settle.passionMult(sOnA.members[0], "archaeology") * Engine.Settle.xpMultOf(sOnA, sOnA.members[0], "archaeology");
+  const gmOff = Engine.Settle.passionMult(sOffA.members[0], "archaeology") * Engine.Settle.xpMultOf(sOffA, sOffA.members[0], "archaeology");
+  const succOn = onXp / (50 * gmOn), succOff = offXp / (50 * gmOff); // 每成功周期 = 50×gm，故成功周期数 = 经验/(50×gm)
+  // 周期数在线/离线应一致（≤1 容差：1/120 浮点累加在线侧 3600 次得 29.9999…，末周期差 1 个，
+  // 属浮点边界漂移、实时游玩下一 tick 自愈，非逻辑 bug）。
+  ok("考古parity:在线离线周期数一致(≤1)", Math.abs(__cOn - __cOff) <= 1, "on=" + __cOn + " off=" + __cOff);
+  ok("考古parity:在线离线成功周期数一致(≤1)", Math.abs(succOn - succOff) <= 1, "on=" + succOn.toFixed(2) + " off=" + succOff.toFixed(2));
+  ok("考古parity:成功周期量级合理(≈22~31)", succOn >= 22 && succOn <= 31 && succOff >= 22 && succOff <= 31,
+    "on=" + succOn.toFixed(1) + " off=" + succOff.toFixed(1));
 })();
 
 console.log("\n== 架构探针结果: " + pass + " PASS / " + fail + " FAIL ==");

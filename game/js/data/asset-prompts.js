@@ -577,7 +577,8 @@
   const NPC_OUT_DIR = "assets/portraits/npc";
   const NPC_VARIANT_COUNT = 4;
   // 同一 combo（原型+变体+清凉/义体）最多允许存的变体张数；游戏运行时在其中随机抽一张
-  const NPC_DRAW_MAX = 9;
+  // 2026-11-05：由 9 提至 30。原 9 偏小，且 npcNextDraw 的越界 bug 会让第 10 张反复覆盖（见 asset-admin.html）
+  const NPC_DRAW_MAX = 30;
 
   // —— 拼装完整 prompt ——
   function buildContactPrompt(factionId) {

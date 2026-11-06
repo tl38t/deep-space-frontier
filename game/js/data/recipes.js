@@ -26,15 +26,19 @@
   //    bodyLevel（舰基等级 0~3），故把 1 代「精炼技能档」语义落到 bodyLevel 轴：
   //    fe/ni/bo 恒可；mx/no→Lv2 星堡；zr→Lv3 星城；px/morph→Lv4 深空要塞。
   // in 必须是对象 { 矿: 每批耗量=1 }（与 1 代 consumeOre→qty:1 一致），qty=1（1 代 baseOutput=1，非曾误用的 5）。
+  // 精炼经验对回 1 代（2026-11-06）：1 代 SMELTING_RECIPES 每周期(=每批)发 recipe.baseXP，
+  // XP = cycles × baseXP。本作每批 = 1 代 1 周期，故 xp 取 1 代 baseXP 真值（凡晶石10/灼烧30/水硼70/
+  // 斜长140/干焦230/灰岩370/艾克诺580）；morph 与 px 同属 Lv4 深空要塞档 → 同 580。
+  // ⚠️ 1 代另发 shipEngineering（工业舰工程）经验，本作 12 技能体系无对应键，依规不移植（只发 refine）。
   const SMELT = [
-    { id: "smelt_fe_alloy",    in: { fe_ore: 1 }, out: "fe_alloy",    qty: 1, dur: 10,  bodyLevelReq: 0 },
-    { id: "smelt_ni_alloy",    in: { ni_ore: 1 }, out: "ni_alloy",    qty: 1, dur: 20,  bodyLevelReq: 0 },
-    { id: "smelt_bo_alloy",    in: { bo_ore: 1 }, out: "bo_alloy",    qty: 1, dur: 35,  bodyLevelReq: 0 },
-    { id: "smelt_mx_alloy",    in: { mx_ore: 1 }, out: "mx_alloy",    qty: 1, dur: 60,  bodyLevelReq: 1 },
-    { id: "smelt_no_alloy",    in: { no_ore: 1 }, out: "no_alloy",    qty: 1, dur: 90,  bodyLevelReq: 1 },
-    { id: "smelt_zr_alloy",    in: { zr_ore: 1 }, out: "zr_alloy",    qty: 1, dur: 130, bodyLevelReq: 2 },
-    { id: "smelt_px_alloy",    in: { px_ore: 1 }, out: "px_alloy",    qty: 1, dur: 190, bodyLevelReq: 3 },
-    { id: "smelt_morph_alloy", in: { px_ore: 1 }, out: "morph_alloy", qty: 1, dur: 190, bodyLevelReq: 3 },
+    { id: "smelt_fe_alloy",    in: { fe_ore: 1 }, out: "fe_alloy",    qty: 1, dur: 10,  bodyLevelReq: 0, xp: 10 },
+    { id: "smelt_ni_alloy",    in: { ni_ore: 1 }, out: "ni_alloy",    qty: 1, dur: 20,  bodyLevelReq: 0, xp: 30 },
+    { id: "smelt_bo_alloy",    in: { bo_ore: 1 }, out: "bo_alloy",    qty: 1, dur: 35,  bodyLevelReq: 0, xp: 70 },
+    { id: "smelt_mx_alloy",    in: { mx_ore: 1 }, out: "mx_alloy",    qty: 1, dur: 60,  bodyLevelReq: 1, xp: 140 },
+    { id: "smelt_no_alloy",    in: { no_ore: 1 }, out: "no_alloy",    qty: 1, dur: 90,  bodyLevelReq: 1, xp: 230 },
+    { id: "smelt_zr_alloy",    in: { zr_ore: 1 }, out: "zr_alloy",    qty: 1, dur: 130, bodyLevelReq: 2, xp: 370 },
+    { id: "smelt_px_alloy",    in: { px_ore: 1 }, out: "px_alloy",    qty: 1, dur: 190, bodyLevelReq: 3, xp: 580 },
+    { id: "smelt_morph_alloy", in: { px_ore: 1 }, out: "morph_alloy", qty: 1, dur: 190, bodyLevelReq: 3, xp: 580 },
   ];
 
   // 制造部件：矿材 → 部件（dur 秒/批）
@@ -43,14 +47,16 @@
   //   1 代消耗为「三钛/类银/重金属/稀有气体」的复合组合，本作按资源映射填入
   //   fe_alloy/ni_alloy/planet_lava/planet_gas（planet_lava=重金属、planet_gas=稀有气体，
   //   由行星采集装置产出 —— 复用 1 代「部件须依赖行星产物」机制）。
+  // ⚠️ xp = 每批完整制造经验（1 代移植真值口径）：dur × (0.50 + 0.06×(tier-1))，tier 由 dur 档位定
+  //    （weapon/ammo=T1、prop=T2、struct=T3），与 equipment.js 已有的 1 代移植 xp 比例一致。
   const COMPONENT = [
-    { id: "mk_struct", in: { fe_alloy: 40, ni_alloy: 6, planet_lava: 7, planet_gas: 4 }, out: "struct", qty: 1, dur: 63 },
-    { id: "mk_prop",   in: { fe_alloy: 28, ni_alloy: 6, planet_gas: 5 },                 out: "prop",   qty: 1, dur: 42 },
-    { id: "mk_weapon", in: { fe_alloy: 14, ni_alloy: 1, planet_lava: 2 },                 out: "weapon", qty: 1, dur: 18 },
+    { id: "mk_struct", in: { fe_alloy: 40, ni_alloy: 6, planet_lava: 7, planet_gas: 4 }, out: "struct", qty: 1, dur: 63, xp: 39 },
+    { id: "mk_prop",   in: { fe_alloy: 28, ni_alloy: 6, planet_gas: 5 },                 out: "prop",   qty: 1, dur: 42, xp: 24 },
+    { id: "mk_weapon", in: { fe_alloy: 14, ni_alloy: 1, planet_lava: 2 },                 out: "weapon", qty: 1, dur: 18, xp: 9 },
     // 弹药（2026-10-31）：与部件共用总装船坞槽位；每批 200 发，够 3 门武器打约 1 分钟；1 代无对应项，保留。
-    { id: "mk_ammo_laser",   in: { mx_alloy: 2 }, out: "ammo_laser",   qty: 200, dur: 15, cat: "ammo" },
-    { id: "mk_ammo_missile", in: { ni_alloy: 2 }, out: "ammo_missile", qty: 200, dur: 15, cat: "ammo" },
-    { id: "mk_ammo_cannon",  in: { fe_alloy: 2 }, out: "ammo_cannon",  qty: 200, dur: 15, cat: "ammo" },
+    { id: "mk_ammo_laser",   in: { mx_alloy: 2 }, out: "ammo_laser",   qty: 200, dur: 15, xp: 8, cat: "ammo" },
+    { id: "mk_ammo_missile", in: { ni_alloy: 2 }, out: "ammo_missile", qty: 200, dur: 15, xp: 8, cat: "ammo" },
+    { id: "mk_ammo_cannon",  in: { fe_alloy: 2 }, out: "ammo_cannon",  qty: 200, dur: 15, xp: 8, cat: "ammo" },
   ];
 
   // 发明：部件 + 矿材 → 改装图纸（bodyLevel>=2 开放）

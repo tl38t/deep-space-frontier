@@ -43,7 +43,28 @@
   // 2026-10-30 调慢：原值约 ×10 会导致 1 分钟内冲到 Lv5、半小时破 Lv10；
   //   现约 ÷10，使「试玩周期可见成长但不瞬满」——Lv5 约需 6~9 分钟专注（含专精 passion），Lv10 约需 17~25 分钟。
   //   曲线仍复用 EVE-IDLE 玩家升级曲线（xpForLevel 指数），无 NPC 等级、技能等级无硬上限。
-  const XP_RATE = { mining: 0.9, gas: 0.6, archaeology: 0.6, refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, logistics: 0.7, train: 1.4 };
+  // 采集（采矿/采气）经验已改为按节点富裕度查表（见 MINING_XP_RATE / GAS_XP_RATE），
+  // 考古经验改为按遗址档位查表（见 ARCH_XP_BY_BAND），均不再连续 ×dt；
+  // 故此处移除 mining/gas/archaeology 三项，避免双源；其余 10 项仍用于批量经验白名单与训练。
+  const XP_RATE = { refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, logistics: 0.7, train: 1.4 };
+
+  // 采集经验对回 1 代（2026-11-03）：1 代每秒 = area.baseXP / area.baseTime（eff=1）。
+  // 用户定调：baseTime 砍到 1/3 → 每秒 ×3，即下方数值已含 ×3。
+  // 按节点富裕度（StarMap.nodeRich，安等→1~4）分档；v1 节点内 XP 不随成员技能缩放。
+  const MINING_XP_RATE = { 1: 2.0,   2: 4.0,   3: 5.111, 4: 6.105 }; // 凡晶石/水硼砂/干焦岩/艾克诺岩 (baseXP/baseTime ×3)
+  const GAS_XP_RATE    = { 1: 1.333, 2: 3.2,   3: 4.0,   4: 4.622 }; // 富勒烯/稳定富勒烯/高纯/超纯 (baseXP/baseTime ×3)
+
+  // 考古经验对回 1 代（2026-11-04，用户纠正：1 代 systems/archaeology.js:696 是「每次成功解析周期发固定 site.xp」）。
+  // 1 代 ARCHAEOLOGY_SITES 每档 3 遗址共用同一 site.xp：I=50 / II=150 / III=400 / IV=900 / V=2000。
+  // 2 代残骸场 band(安等分档 1–5) 与 1 代遗址档位 I–V 1:1 对齐，故 xp 直接取 1 代真值；
+  // 经验只在 Arch.cycle 成功时发放（与 1 代 if(success) 块一致），不再连续 ×dt。
+  const ARCH_XP_BY_BAND = { 1: 50, 2: 150, 3: 400, 4: 900, 5: 2000 };
+  function archXpForBand(band) { return ARCH_XP_BY_BAND[band] || ARCH_XP_BY_BAND[1]; }
+  function miningXpRate(node, isGas) {
+    const rich = node ? (node.richness != null ? node.richness : (node.tier != null ? node.tier : 1)) : 1;
+    const tbl = isGas ? GAS_XP_RATE : MINING_XP_RATE;
+    return tbl[rich] || tbl[1];
+  }
   // 复用 EVE-IDLE 玩家曲线：xpForLevel(lv)=floor(100*1.1^(lv-1))，技能等级无上限（无 NPC 等级）。
   const LV_THRESHOLD = 100;      // （保留兼容常量；等级改用 levelOf 闭式）
   const EVENT_INTERVAL = 25;      // 每成员活动事件 roll 间隔（秒）
@@ -349,7 +370,7 @@
         const bDouble = bEff ? (isGas ? bEff.doubleGasChance : bEff.doubleMineralChance) : 0;
         const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff * bSpeed * (1 + bDouble);
         state.res[ore] = (state.res[ore] || 0) + y;
-        m.skills[mineKey] = (m.skills[mineKey] || 0) + XP_RATE[mineKey] * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
+        m.skills[mineKey] = (m.skills[mineKey] || 0) + miningXpRate(node, isGas) * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
       } else if (a.type === "explore" && node) {
         // 残骸场考古：装配 analyzer 的 archaeologyCycleReduction 缩短遗址周期（封顶 0.50）
         const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
@@ -363,16 +384,33 @@
         const ebody = Dispatch.bodyById ? Dispatch.bodyById(state.starMap, a.nodeId, a.bodyId) : null;
         if (ebody && ebody.kind === "derelict") {
           // —— 残骸场考古（焦点自选）：每个遗址周期按焦点算成功率/掉落/反噬（含船体损伤）——
-          m.skills.archaeology = (m.skills.archaeology || 0) + XP_RATE.archaeology * dt * passionMult(m, "archaeology") * xpMultOf(state, m, "archaeology");
+          // 1 代 fidelity：经验按「每次成功解析周期」发固定 xp（ARCH_XP_BY_BAND[band]，1 代 site.xp 真值），
+          // 不再连续 ×dt。band 1–5 = 遗址档位 I–V。失败（反噬）不发经验，与 1 代 if(success) 块一致。
+          // while 补齐长 dt（在线逐 tick / 离线一次）下漏算的周期，保证在线/离线 parity；
+          // 此前 if 单发会在离线大 dt 丢失其余周期，导致离线考古经验/掉落严重亏欠。
+          // 安全上限 2000 次防止极端时长下的意外长循环（远小于 MAX_OFFLINE/period≈720）。
+          // 阵亡（m.destroyed）立即停后续周期；report 由 pushReport 封顶 30 条，无刷屏风险。
           if (a.exploreProgress >= 1) {
-            a.exploreProgress = 0;
             const focus = a.focus || "salvage";
-            if (Arch) {
-              const res = Arch.cycle(state, m, ebody, focus);
+            // 成员装配在一次结算内不变：fittedBonuses 提到循环外算一次，循环内复用（离线大批量结算性能）。
+            // 成功率仍每周期按当前技能重算（cycle 内 successChance 读 m.skills.archaeology），保 1 代保真。
+            const fit = Arch ? Arch.fittedBonuses(m) : null;
+            let guard = 0;
+            while (a.exploreProgress >= 1 && guard < 2000) {
+              guard++;
+              a.exploreProgress -= 1;
+              if (!Arch) break;
+              const res = Arch.cycle(state, m, ebody, focus, fit);
               if (res.drops.credits) state.res.credits = (state.res.credits || 0) + res.drops.credits;
               if (res.drops.bp) state.res.bp = (state.res.bp || 0) + res.drops.bp;
               if (res.drops.rep) state.res.rep = (state.res.rep || 0) + res.drops.rep;
+              if (res.success) {
+                const band = ebody.band || 1;
+                m.skills.archaeology = (m.skills.archaeology || 0)
+                  + archXpForBand(band) * passionMult(m, "archaeology") * xpMultOf(state, m, "archaeology");
+              }
               pushReport(state, "考古 · " + Data.Archaeology.profileById(focus).name, res.lines);
+              if (m.destroyed) { a.exploreProgress = 0; break; }
             }
           }
         } else {
@@ -404,7 +442,9 @@
       } else if (a.type === "train") {
         // 演训 = 主动技能训练，增长所选技能。白名单校验：旧存档里可能写着已删除的键（command 等），
         // 直接当键名用会给一个不存在的技能发经验（白算），落到 combatLaser 更安全。
-        const sk = (a.trainSkill && XP_RATE[a.trainSkill]) ? a.trainSkill : "combatLaser";
+        // 门禁用「键真实存在于 m.skills（12 项）」而非 XP_RATE —— 采矿/采气经验已改查表，
+        // 从 XP_RATE 移除后若仍用 XP_RATE 当门禁，演训舱选采矿/采气训练会静默落空（2026-11-03 回归）。
+        const sk = (a.trainSkill && m.skills && m.skills[a.trainSkill] !== undefined) ? a.trainSkill : "combatLaser";
         m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
       } else if (a.type === "logistics") {
         // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景；
@@ -416,7 +456,7 @@
         // 全游戏唯一「不产出也涨」的通道，玩家付的是一个人力。
         // 其余舱段（精炼环/总装船坞/发明舱/指挥塔/泊位/仓储/能源）驻着**不涨**：
         // 工业经验只在「真的产出一批」时结算（见 production.js → Settle.grantBatchXp）。
-        if (a.slotType === "habitat" && a.trainSkill && a.trainSkill !== "train" && XP_RATE[a.trainSkill]) {
+        if (a.slotType === "habitat" && a.trainSkill && a.trainSkill !== "train" && m.skills && m.skills[a.trainSkill] !== undefined) {
           const sk = a.trainSkill;
           m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
         }
@@ -473,19 +513,53 @@
   }
 
   // 批次经验（production.js 在「一批真的产出」时调用）——这才是 1 代「真正使用才涨」的工业侧口径。
-  // 基数用 it.dur（布局乘区后的基础时长）而非运行时 effDur：否则技能越高 → 耗时越短 → 经验越少，
-  // 形成「练得越好越难练」的负反馈。离线一次跑 N 批就调 N 次，天然 O(1)。
+  // 入参 xpAmount 已是「每批完整经验」（配方/舰船/装备自带的 xp，或旧逻辑 速率×时长×BATCH_XP_RATIO 的回退值），
+  // 这里只叠加激情(passion)/词条(xpMult)乘区，不再内部乘 XP_RATE —— 配方 xp 本身就是 1 代移植真值（终值）。
   const BATCH_XP_RATIO = 0.5;
-  function grantBatchXp(state, m, key, batchSec) {
+  function grantBatchXp(state, m, key, xpAmount) {
     if (!m || !key || key === "train" || !XP_RATE[key]) return 0;
-    const gain = XP_RATE[key] * (batchSec || 0) * BATCH_XP_RATIO;
+    const gain = (xpAmount || 0);
     if (!m.skills) m.skills = {};
     m.skills[key] = (m.skills[key] || 0) + gain * passionMult(m, key) * xpMultOf(state, m, key);
     return gain;
   }
 
+  // 解析某队列项每批应得经验：优先用配方/舰船/装备自带的 xp（1 代移植真值，已是「每批完整经验」），
+  // 缺省（精炼/发明/增强剂目前无 xp 字段）回退旧逻辑 速率×时长×BATCH_XP_RATIO，保留既有手感。
+  function recipeBatchXp(state, queueType, it) {
+    const Data = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data : null;
+    const Base = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+    const skill = (Base && Base.QUEUE_SKILL && queueType) ? Base.QUEUE_SKILL[queueType] : null;
+    let rxp = null;
+    if (Data) {
+      if (queueType === "smelt") {
+        // 精炼对回 1 代：配方自带 xp（= 1 代 SMELTING_RECIPES.baseXP 真值），逐批定值，不再用 XP_RATE.refine×dur×0.5 占位。
+        const r = (Data.Recipes && Data.Recipes.SMELT) ? Data.Recipes.SMELT.find(x => x.id === it.recipeId) : null;
+        rxp = r ? r.xp : null;
+      } else if (queueType === "manufacture") {
+        const r = Data.Recipes.COMPONENT.find(x => x.id === it.recipeId); rxp = r ? r.xp : null;
+      } else if (queueType === "equip") {
+        const r = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(it.recipeId) : null; rxp = r ? r.xp : null;
+      } else if (queueType === "build" || queueType === "ship") {
+        const r = (Data.Ships && Data.Ships.shipById) ? Data.Ships.shipById(it.shipId) : null; rxp = r ? r.xp : null;
+      } else if (queueType === "booster") {
+        // 增强剂制造 → 科研：配方 xp 已是 1 代正本真值（BOOSTER_RECIPES，booster.js:5「1 代正本，不动」），
+        // 与制造/装备同口径「逐配方定值」，不再用 XP_RATE.research×dur×0.5 占位公式。
+        const BR = (typeof window !== "undefined" && window.BOOSTER_RECIPES) ? window.BOOSTER_RECIPES : null;
+        const r = BR ? BR.find(x => x.id === it.recipeId) : null; rxp = r ? r.xp : null;
+      }
+    }
+    if (rxp == null) {
+      const rate = (skill && XP_RATE[skill]) ? XP_RATE[skill] : 0.7;
+      return rate * (it.dur || 0) * BATCH_XP_RATIO;
+    }
+    return rxp;
+  }
+
   return {
     settle, moveBase, levelOf, skillBonus, xpForLevel, XP_RATE, FUEL_REGEN, BASE_MINE, LV_THRESHOLD, MAX_OFFLINE_SECONDS,
-    passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, BATCH_XP_RATIO,
+    passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, recipeBatchXp, BATCH_XP_RATIO,
+    MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
+    ARCH_XP_BY_BAND, archXpForBand,
   };
 });

@@ -16,7 +16,7 @@ const files = [
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
   "js/data/pirates.js", "js/data/raids.js", "js/data/tech.js",
-  "js/data/factions.js", "js/data/names.js",
+  "js/data/factions.js", "js/data/names.js", "js/lib/eveidle/data/boosters.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js", "js/engine/sites.js", "js/narrative/events.js",
@@ -36,6 +36,7 @@ const { Data, Engine } = sandbox.NSK;
 const St = Engine.State, Settle = Engine.Settle, Disp = Engine.Dispatch;
 const Base = Engine.Base, Prod = Engine.Production, Tech = Engine.Tech;
 const Combat = Engine.Combat, Logi = Engine.Logistics, Repair = Engine.Repair;
+const Booster = Engine.Booster;
 
 // 静音活动事件系统（整场探针，不是某一条）。
 // 原因：settle 每 25 秒为每个在岗成员 roll 一次活动事件，很多事件直接往 state.res 里塞整包资源
@@ -176,6 +177,15 @@ function assertSkillScales(label, gas) {
   assertSkillScales("采气", true);
 }
 {
+  // 采集经验 = 1代 baseXP/baseTime(÷3 即 ×3) 按节点富裕度查表（2026-11-03）
+  const r = mineRun(false, 0, MINE_SEC);
+  const rich = r.node.richness != null ? r.node.richness : (r.node.tier != null ? r.node.tier : 1);
+  const expected = (Settle.MINING_XP_RATE[rich] || Settle.MINING_XP_RATE[1]) * Settle.passionMult(r.m, "mining") * Settle.xpMultOf(r.st, r.m, "mining");
+  const measured = (r.xp1 - r.xp0) / MINE_SEC;
+  ok("采矿:每秒经验 = 1代 baseXP/baseTime×3 按节点富裕度查表", Math.abs(measured / expected - 1) < 0.02,
+    "rich=" + rich + " 实测=" + measured.toFixed(3) + "/s 期望=" + expected.toFixed(3) + "/s");
+}
+{
   // 采矿派遣挖矿石时不该涨 gas（分流必须真的分开）
   const st = fresh();
   const t = findBodyIn(st, false);
@@ -203,8 +213,11 @@ function assertSkillScales(label, gas) {
     const w = solo(st);
     w.assignment = { type: "explore", nodeId: node.id, bodyId: body.id, focus: "salvage", startedAt: now, exploreProgress: 0, eventRoll: 0 };
     w.status = "dispatched";
+    // 新模型（对回 1 代）：经验只在「跑完一个完整周期且成功」时发放（周期 120s），
+    // 故必须把技能顶满（成功率封顶）并 tick 足够长（≥600s 稳出多周期），旧模型 40s 凑不满周期。
+    w.skills.archaeology = 1e9;
     const x0 = w.skills.archaeology;
-    tick(st, now, 40);
+    tick(st, now, 600);
     ok("考古:残骸场派遣后 xp 增长", w.skills.archaeology > x0, "xp " + x0.toFixed(1) + " → " + w.skills.archaeology.toFixed(1));
   }
 }
@@ -335,6 +348,53 @@ function smeltRun({ occupy, lv, sec }) {
     Tech.advance(st, now + 1000 * 3600 * 72);
     ok("科研:研究完成后 xp 增长", m.skills.research > x0, "xp " + x0.toFixed(1) + " → " + m.skills.research.toFixed(1));
   }
+}
+
+// ── 4b. 增强剂（反应实验室）：科研既管研究科技，也管制造增强剂 ──────────
+// 用户 2026-11-03 定：两条路都涨同一项 research，不新增第 13 个技能键。
+// 历史 bug：QUEUE_SKILL.booster 曾写成 "booster" —— 一个既不在 SKILL_KEYS、也不在 XP_RATE 的死键。
+//   grantBatchXp 的白名单（!XP_RATE[key]）直接 return 0，于是驻舱者永远 Lv1：
+//   耗时乘数恒定 1/1.02=0.9804（只抵掉无人惩罚，永远压不到 Lv10 的 0.8333），
+//   且 app.js 的 STATION_SKILL 也没有 booster 条目 → 面板连「研究 Lv.x」都不显示。
+// 本段同时锁「键表无死键」，防止同类问题在 equip/build 等新队列上复发。
+{
+  // ① 全部工业队列的驻舱技能键必须是真实存在的 12 项之一（死键会导致静默零经验）
+  const dead = Object.keys(Base.QUEUE_SKILL).filter(q => !Settle.XP_RATE[Base.QUEUE_SKILL[q]]);
+  ok("队列技能:所用键全在 XP_RATE 白名单（无死键）", dead.length === 0,
+    "队列=" + Object.keys(Base.QUEUE_SKILL).map(q => q + "→" + Base.QUEUE_SKILL[q]).join(" "));
+  ok("增强剂:驻反应实验室 = 科研（research）", Base.QUEUE_SKILL.booster === "research", "=" + Base.QUEUE_SKILL.booster);
+  // ② 增强剂「经验茶」的乘区表也不能写死键：白名单里必须没有 booster，且必须有 research
+  const eff0 = Booster.getEffectState(fresh());
+  ok("增强剂:经验乘区表无 booster 死键、含 research",
+    eff0.skillXpMultBySkill.booster === undefined && typeof eff0.skillXpMultBySkill.research === "number",
+    "keys=" + Object.keys(eff0.skillXpMultBySkill).join(","));
+
+  // ③ 真跑一批：驻舱者涨的是 research
+  const st = fresh();
+  const m = solo(st);
+  const rec = Booster.recipes().find(x => !x.requiresBlueprint);
+  ok("增强剂:存在免蓝图配方可测", !!rec, rec && rec.id);
+  if (rec) {
+    const cost = Booster.craftCost(st, rec.id) || {};
+    for (const k of Object.keys(cost)) st.res[k] = 999999;
+    const r0 = station(st, "booster", m);
+    ok("增强剂:驻反应实验室派遣成功", r0.ok === true, r0.err || "");
+    const rq = Prod.enqueue(st, "booster", rec.id, 2);
+    ok("增强剂:入队成功", rq.ok === true, rq.err || "");
+    const xRes = m.skills.research || 0, xMan = m.skills.manufacture || 0;
+    Prod.processQueue(st, "booster", now + 3600 * 1000, 1);
+    ok("增强剂:产出一批后 research 增长", (m.skills.research || 0) > xRes,
+      "research " + xRes.toFixed(1) + " → " + (m.skills.research || 0).toFixed(1) + " 产出=" + JSON.stringify(Prod.queueStatus(st, "booster", now)));
+    ok("增强剂:同一批**不**给 manufacture（不串技能）", (m.skills.manufacture || 0) === xMan,
+      "manufacture=" + (m.skills.manufacture || 0).toFixed(1));
+  }
+
+  // ④ 科研等级真的加速反应实验室（与科研加速研究是同一乘区，玩家直觉一致）
+  const s1 = fresh(); const m1 = solo(s1); station(s1, "booster", m1); setLv(m1, "research", 1);
+  const s10 = fresh(); const m10 = solo(s10); station(s10, "booster", m10); setLv(m10, "research", 10);
+  ok("增强剂:科研 Lv10 驻舱比 Lv1 更快",
+    Base.stationSpeedMult(s10, "booster") < Base.stationSpeedMult(s1, "booster"),
+    "Lv1=" + Base.stationSpeedMult(s1, "booster").toFixed(4) + " Lv10=" + Base.stationSpeedMult(s10, "booster").toFixed(4));
 }
 
 // ── 5. 后勤两项：物流补偿 + 电容管理 ──────────────────────────

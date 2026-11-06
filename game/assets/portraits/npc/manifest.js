@@ -125,10 +125,52 @@ window.NSK_NPC_MANIFEST = {
   "signal_orphan/v1": [
     "signal_orphan/signal_orphan_v1.webp"
   ],
+  "smelter_apprentice/reveal": [
+    "smelter_apprentice/smelter_apprentice_reveal.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_2.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_3.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_4.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_5.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_6.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_7.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_8.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_9.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_10.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_11.webp"
+  ],
+  "smelter_apprentice/reveal_eye": [
+    "smelter_apprentice/smelter_apprentice_reveal_eye.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_eye_2.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_eye_3.webp"
+  ],
+  "smelter_apprentice/reveal_limb": [
+    "smelter_apprentice/smelter_apprentice_reveal_limb.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_limb_2.webp",
+    "smelter_apprentice/smelter_apprentice_reveal_limb_3.webp"
+  ],
+  "smelter_apprentice/v1": [
+    "smelter_apprentice/smelter_apprentice_v1.webp"
+  ],
   "smelter_apprentice/v1_limb": [
     "smelter_apprentice/smelter_apprentice_v1_limb.webp",
     "smelter_apprentice/smelter_apprentice_v1_limb_2.webp",
     "smelter_apprentice/smelter_apprentice_v1_limb_3.webp"
+  ],
+  "smelter_apprentice/v2": [
+    "smelter_apprentice/smelter_apprentice_v2.webp",
+    "smelter_apprentice/smelter_apprentice_v2_2.webp",
+    "smelter_apprentice/smelter_apprentice_v2_3.webp",
+    "smelter_apprentice/smelter_apprentice_v2_4.webp"
+  ],
+  "smelter_apprentice/v2_eye": [
+    "smelter_apprentice/smelter_apprentice_v2_eye.webp"
+  ],
+  "smelter_apprentice/v2_limb": [
+    "smelter_apprentice/smelter_apprentice_v2_limb.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_2.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_3.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_4.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_5.webp"
   ],
   "smelter_apprentice/v4": [
     "smelter_apprentice/smelter_apprentice_v4.webp",
