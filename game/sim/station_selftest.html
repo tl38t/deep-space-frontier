@@ -127,13 +127,53 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   }
 
   // 6) 指挥塔面板：说明文案
-  const cmdBtn=q('[data-act="baseinfo:command"]');
-  if(cmdBtn){
-    hit(cmdBtn); await wait(400);
-    ok("指挥塔面板说明全局战斗加成", /全队命中/.test(txt(q(".base-station"))), txt(q(".base-station-tip")));
-  } else ok("指挥塔舱段存在", false);
+  // ❗ 选择器必须**限定在 .bi-body 之内**。根因（2026-11-03 查实）：
+  //    工业舱段的工作台（.wb-detail）也会渲染一份「当前 baseFocus 明细」，一旦它开过，
+  //    页面上同时存在 2 个 .base-station（.wb-detail 里一个、.bi-body 里一个）。
+  //    全局 q(".base-station") 取文档序靠前的工作台那一份 —— 内容是别的舱段的，
+  //    于是断言长期读错元素、假红 22/1（HEAD 起就红，与功能无关；功能本身是好的）。
+  const cmdExists = !!q('[data-act="baseinfo:command"]');
+  ok("指挥塔舱段存在", cmdExists);
+  if (cmdExists) {
+    hit(q('[data-act="baseinfo:command"]'));
+    await until(() => /全队命中/.test(txt(q(".bi-body .base-station"))), 4000);
+    ok("指挥塔面板说明全局战斗加成", /全队命中/.test(txt(q(".bi-body .base-station"))), txt(q(".bi-body .base-station-tip")));
+  }
 
-  // 7) 成员页的「演训」按钮（默认练最高项）
+  // 7) 反应实验室 / 制造车间（工业舱段 → 工作台 .wb-detail）：驻舱面板必须显示所属技能
+  //    回归 2026-11-03：QUEUE_SKILL.booster 曾写成死键 "booster"（不在 SKILL_KEYS / XP_RATE），
+  //    且 app.js 的 STATION_SKILL 另抄一份表时漏了 booster / equip →
+  //    这两个面板既不显示「科研 Lv.x / 制造 Lv.x」，也不提示「无人 · 该队列耗时 +40%」。
+  //    ⚠️ 技能中文名取 SKILL_CN：research 显示为「科研」（不是「研究」）。
+  for (const item of [["booster", "科研"], ["equip", "制造"]]) {
+    const slotId = item[0], skillCn = item[1];
+    const btn = q('[data-act="baseinfo:' + slotId + '"]');
+    ok("舰基页有舱段入口（" + skillCn + " · " + slotId + "）", !!btn);
+    if (!btn) continue;
+    hit(q('[data-act="baseinfo:' + slotId + '"]'));
+    const reSkill = new RegExp(skillCn + " Lv\\.");
+    const shown = await until(() => {
+      const e = q(".wb-detail .base-station");
+      if (!e) return false;
+      const t = txt(e);
+      return reSkill.test(t) || /\+40%/.test(t);
+    }, 8000);
+    const panel = q(".wb-detail .base-station");
+    ok("驻舱面板显示「" + skillCn + "」等级或 +40% 惩罚（" + slotId + "）", shown, panel ? txt(panel) : "无面板");
+    // 派人进去 → 面板必须显示「<技能> Lv.N」。这是修复前完全缺失的那行：
+    // 旧版 STATION_SKILL 没有 booster/equip 条目 → extra 恒为空，面板只有名字没有技能。
+    const cands = qa(".wb-detail .base-station-mem");
+    if (cands.length) {
+      hit(cands[0]);
+      await wait(600);
+      const t2 = txt(q(".wb-detail .base-station"));
+      ok("派人后显示「" + skillCn + " Lv.N」（" + slotId + "）", reSkill.test(t2), t2.slice(0, 60));
+      const clearB = q('.wb-detail [data-act^="station:clear:"]');
+      if (clearB) { hit(clearB); await wait(400); }
+    }
+  }
+
+  // 8) 成员页的「演训」按钮（默认练最高项）
   const memTab=q('[data-act="tab:members"]');
   if(memTab){ hit(memTab); await until(()=>qa('[data-act^="station:train:"]').length>0,8000); }
   const trainBtn=qa('[data-act^="station:train:"]');

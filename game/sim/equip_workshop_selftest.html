@@ -152,11 +152,22 @@ const LIVE=()=>W().NSK.Core.Persistence&&W().NSK.Core.Persistence.state;
   clickEl(emptyCard);
   await until(()=>q(".bi-overlay.active"),6000);
   ok("空舱位点开走明细弹窗(.bi-overlay)而非工作台", !!q(".bi-overlay.active") && !q(".wb-overlay.active"));
-  const instBtn=q('.bi-overlay.active [data-act="moduleInstall:equip:module_equip_01"]');
-  ok("明细弹窗里有「安装到该舱位」按钮", !!instBtn);
-  if(instBtn) clickEl(instBtn);
-  await wait(400);
-  ok("点安装后制造车间回到已装状态", (st.base.modules.installed||[]).some(x=>x.slotId==="equip"), JSON.stringify((st.base.modules.installed||[]).find(x=>x.slotId==="equip")||null));
+  // 2026-11-03 用户决策 ④：明细弹窗里的「模块库 · N 个兼容模块 / 安装到该舱位」列表退役，
+  // 收成一行指引；装配统一走舰船图右侧的「舱段库」（点选中 → 点舱位，或直接拖）。
+  const tip=q('.bi-overlay.active .base-module-library-tip');
+  ok("明细弹窗里改为一行装配指引", !!tip && /舱段库/.test(tip.textContent||""), ((tip||{}).textContent||"").slice(0,36));
+  ok("旧的「安装到该舱位」按钮已退役", !q('.bi-overlay.active [data-act^="moduleInstall:"]'));
+  const BI=W().NSK.UI.BaseInfo; if(BI&&BI.close) BI.close();   // 关掉明细弹窗才能点舰基页的库卡片
+  await wait(420);                        // 越过拖拽后 320ms 的点击抑制窗口
+  const libItem=q('#mod-stock .bs-item[data-module="module_equip_01"]');
+  ok("拆下的制造车间出现在舱段库", !!libItem, libItem?libItem.getAttribute("data-module"):"none");
+  if(libItem) clickEl(libItem);
+  await wait(260);
+  ok("点库卡片进入选中态", !!q('#mod-stock .bs-item.sel'));
+  const emptyEq=q('.base-module.base-equip');
+  if(emptyEq) clickEl(emptyEq);
+  await wait(420);
+  ok("点同类型空舱位后制造车间回到已装状态", (st.base.modules.installed||[]).some(x=>x.slotId==="equip"), JSON.stringify((st.base.modules.installed||[]).find(x=>x.slotId==="equip")||null));
   ok("安装消耗计入电网（负载 +15）", B.energyUsed(st)===usedAll, B.energyUsed(st)+" vs "+usedAll);
 
   // === 9. 旧存档 normalize：自动补模块到库、不自动装、补空队列、不升版本 ===

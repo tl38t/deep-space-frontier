@@ -35,6 +35,10 @@
   function EData() { return (window.NSK.Data && window.NSK.Data.Equipment) || null; }
   function eqName(id) { const E = EData(); const e = E && E.byId ? E.byId(id) : null; return e ? e.name : id; }
   function boosterName(itemId) { const B = BEngine(); const it = B && B.getItem(itemId); return it ? it.name : itemId; }
+  // 队列项产出名：精炼 / 发明 / 部件的队列项里存的是**资源内部键**（fe_alloy / struct / bp），
+  // 直接上屏会露出英文标识符（玩家反馈「精炼下面还是显示的英文」）。一律过 Resources 显示名，
+  // 与配方卡的写法（CTX.resName(r.out)）保持同口径。
+  function outName(resId) { return CTX.resName(resId); }
   function clampN(n) { return Math.max(1, Math.min(MAX_CONTINUOUS, n | 0 || 1)); }
 
   function isOpen() { return !!cur; }
@@ -54,6 +58,12 @@
     const st = state();
     const slot = slotIfIndustrial(st, slotId);
     if (!slot) return;
+    // ⚠️ 同一时刻只允许一个工作台。旧实现直接重建 cur 并 ensureOverlay 新建 DOM，
+    //    旧 overlay 既不 close 也不从 DOM 移除 → 每点一个工业舱段就叠一层（实测连点
+    //    精炼环→反应实验室→制造车间后 DOM 里有 3 个 .wb-overlay）。
+    //    后果：① 点 × 只关最上面那个，玩家会看到「关了还开着」；② 残留 overlay 的明细
+    //    容器一直留在文档里，全局选择器/点按命中会命中旧内容（station_selftest 因此长期假红）。
+    if (cur && cur.overlay) close();
     cur = {
       slotId: slotId, type: slot.type,
       tab: slot.type === "manufacture" ? "component" : null,
@@ -129,15 +139,15 @@
     const st = state();
     const ind = st.base.industry;
     if (cur.type === "smelt")
-      return (ind.smeltQueue || []).map((j, i) => ({ qk: "smeltQueue", i: i, it: j, out: j.out }));
+      return (ind.smeltQueue || []).map((j, i) => ({ qk: "smeltQueue", i: i, it: j, out: outName(j.out) }));
     if (cur.type === "invent")
-      return (ind.inventQueue || []).map((j, i) => ({ qk: "inventQueue", i: i, it: j, out: j.out }));
+      return (ind.inventQueue || []).map((j, i) => ({ qk: "inventQueue", i: i, it: j, out: outName(j.out) }));
     if (cur.type === "booster")
       return (ind.boosterQueue || []).map((j, i) => ({ qk: "boosterQueue", i: i, it: j, out: boosterName(j.out) }));
     if (cur.type === "equip")
       return (ind.equipQueue || []).map((j, i) => ({ qk: "equipQueue", i: i, it: j, out: eqName(j.out) }));
     const list = [];
-    (ind.manufactureQueue || []).forEach((j, i) => list.push({ qk: "manufactureQueue", i: i, it: j, out: j.out }));
+    (ind.manufactureQueue || []).forEach((j, i) => list.push({ qk: "manufactureQueue", i: i, it: j, out: outName(j.out) }));
     (ind.buildQueue || []).forEach((j, i) => {
       const s = Data().Ships.shipById(j.shipId);
       list.push({ qk: "buildQueue", i: i, it: j, out: s ? s.name : j.shipId });
@@ -231,7 +241,7 @@
       const dis = can ? "" : " dis";
       return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + r.id + '">'
         + '<div class="wb-r1">' + inStr(r.in) + ' → ' + CTX.resIcon(r.out) + CTX.resName(r.out) + ' ×' + r.qty + '</div>'
-        + '<div class="wb-r2">' + (durMult < 0.995 ? r.dur + 's → ' + adjDur + 's' : adjDur + 's / 批') + ' / 批 ' + gateTag + '</div>'
+        + '<div class="wb-r2">' + (durMult < 0.995 ? r.dur + 's → ' + adjDur + 's' : adjDur + 's') + ' / 批 ' + gateTag + '</div>'
         + '</button>';
     }).join("");
   }

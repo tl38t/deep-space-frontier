@@ -273,6 +273,27 @@
     return { ok: true, module: state.base.modules.owned.find(m => m.id === removed.moduleId) || null };
   }
 
+  // 顶替（2026-11-03 用户决策 ③：舱段库拖到「已占用」舱位 = 直接交换，不再要求先拆）。
+  // 语义 = 先拆后装，但**失败要整体回滚**：电网超载 / 类型不兼容时原舱段必须留在原位。
+  // 不做成「install 前偷偷 uninstall」的原因：installModule 的门禁（负载、已安装、类型）
+  // 会读 installed 列表，摘掉旧件才能算出正确的替换后负载；所以顺序只能是「摘→装→失败回插」。
+  function replaceModule(state, slotId, moduleId) {
+    const slot = slotById(state, slotId);
+    if (!slot || slot.type === "core") return { ok: false, err: "舱位不存在" };
+    const prev = state.base.modules.installed.find(x => x.slotId === slotId);
+    if (!prev) return installModule(state, slotId, moduleId);
+    if (prev.moduleId === moduleId) return { ok: false, err: "该模块已装在此舱位" };
+    const index = state.base.modules.installed.indexOf(prev);
+    const prevModule = state.base.modules.owned.find(m => m.id === prev.moduleId) || null;
+    state.base.modules.installed.splice(index, 1);
+    const r = installModule(state, slotId, moduleId);
+    if (!r.ok) {
+      state.base.modules.installed.splice(index, 0, prev);   // 原地回插，保持 installed 顺序
+      return r;
+    }
+    return { ok: true, replaced: prevModule, module: r.module, slot: r.slot };
+  }
+
   function slotEffects(state, slotId) {
     const slot = slotById(state, slotId);
     const current = moduleAt(state, slotId);
@@ -334,8 +355,11 @@
   // 队列 → 承担该队列的舱段模块类型（造船与部件制造共用总装船坞）
   const QUEUE_MODULE = { smelt: "smelt", manufacture: "manufacture", invent: "invent", build: "manufacture", booster: "booster", equip: "equip" };
   // 队列 → 驻舱者决定耗时的技能键
-  // equip 复用「制造」技能：12 项技能体系不新增键（上限 10 级 / 总和 30 的约束不变）。
-  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture", booster: "booster", equip: "manufacture" };
+  // ⚠️ 值必须是 SKILL_KEYS 里真实存在的 12 项之一 —— 否则 grantBatchXp 的白名单（!XP_RATE[key]）
+  //    会静默 return 0，驻舱者永远拿不到经验（曾用 "booster"，一个体系外死键）。
+  // equip 复用「制造」；booster 复用「科研」：科研同时管「研究科技」与「制造增强剂」，
+  // 两条路都在涨同一项 research（用户 2026-11-03 定），不新增第 13 个技能键。
+  const QUEUE_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", build: "manufacture", booster: "research", equip: "manufacture" };
   const UNMANNED_PENALTY = 1.4;   // 舱段无人：该队列耗时 ×1.4（约 71% 速度）
 
   function stationedAt(state, slotId) {
@@ -384,7 +408,7 @@
   return {
     normalize, hullOf, stateSlots, slotById, adjacentSlots, moduleAt, availableModules,
     swapSlots, resetSlotPos, hasCustomLayout,
-    buyBlueprint, switchHull, installModule, uninstallModule, slotEffects,
+    buyBlueprint, switchHull, installModule, uninstallModule, replaceModule, slotEffects,
     queueDurationMultiplier, hullStatus,
     energyBudget, energyUsed, powerReport, powerMult, upgradeCore,
     stationedAt, stationedOfType, stationWorker, stationSpeedMult, memberSkillLv,

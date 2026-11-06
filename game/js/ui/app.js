@@ -23,6 +23,12 @@
     { id: "report", name: "日报" },
     { id: "settings", name: "设置" },
   ];
+  const TAB_GROUPS = [
+    { name: "航行", tabs: ["starmap", "system"] },
+    { name: "运营", tabs: ["base", "fleet", "warehouse"] },
+    { name: "组织", tabs: ["members", "factions", "tech"] },
+    { name: "档案", tabs: ["story", "report", "settings"] },
+  ];
 
   // 12 项（2026-11-01 定案）。无人机暂缓，不进表；顺序即名册里的显示顺序。
   const SKILL_CN = { mining: "采矿", gas: "采气", archaeology: "考古", combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", refine: "冶炼", manufacture: "制造", research: "科研", capacitor: "电容管理", logistics: "物流" };
@@ -32,12 +38,16 @@
 
   let state = null;
   let tab = "starmap";
+  let factionSubtab = "factions";
   let curSystem = null;      // 星系视图当前选中系统（独立 Tab）
   let baseFocus = "core";   // 舰基可视化当前选中的舱段
   // 舱段拖拽换位（2026-10-29）：active=true 期间 renderView 必须跳过重绘，
   // 否则 1Hz 定时器会把正在跟随手指的卡片连同 innerHTML 一起销毁。
   let baseDragState = null;
   let baseDragEndedAt = 0;
+  // 舱段库触屏通道（2026-11-03）：先点库卡片选中，再点/拖到舱位放下。
+  // 存的是 moduleId；null = 未选。渲染在 viewBase，点击在 baseinfo 分发前拦截。
+  let baseStockPick = null;
   let warehouseFilter = "all"; // 仓库页类别筛选（all/ore/gas/mineral/component/blueprint）
   let whShowEmpty = false;     // 仓库页是否显示空仓条目（默认只看有货的）
   // 星图平移/缩放状态（跨 1Hz 重渲染保持，避免每次重建丢视角）
@@ -399,9 +409,10 @@
     const opts = state.starMap.nodes.filter(n => n.discovered)
       .map(n => '<option value="' + n.id + '"' + (n.id === node.id ? " selected" : "") + ">" + esc(n.name) + "</option>").join("");
     let html = "<h2>星系视图 · " + esc(node.name) + "</h2>";
-    html += '<div class="panel map-hint"><span class="dim">选择星系</span>' +
+    const systemSelectPanel = '<div class="panel map-hint"><span class="dim">选择星系</span>' +
       '<select class="sys-sel">' + opts + "</select>" +
       '<span class="dim">' + (node.discovered ? "已探明" : "未探明") + "</span></div>";
+    let systemRegionPanel = "";
     // 当前星域威胁（EVE 式安全等级分档 + 主导海盗）——星带/死亡空间风险总览
     const _reg = (state.starMap.regions || []).find(r => r.id === node.region) || null;
     if (_reg) {
@@ -410,7 +421,7 @@
       const _slp = (Data.StarMap.SECLEVEL_TABLE && Data.StarMap.SECLEVEL_TABLE[_sl]) || { name: "高安", iskMult: 1, repMult: 1 };
       const _stageTag = _reg.stage === 3 ? "后期星域" : _reg.stage === 2 ? "中期星域" : "初期星域";
       const _secCls = (_sl === "1.0-0.8" || _sl === "0.7-0.5") ? "good" : (_sl === "0.4-0.3") ? "warn" : "bad";
-      html += '<div class="panel map-hint"><span class="dim">所属</span><b>' + esc(_reg.name) + "</b>" +
+      systemRegionPanel = '<div class="panel map-hint"><span class="dim">所属</span><b>' + esc(_reg.name) + "</b>" +
         '<span class="tag">' + _stageTag + "</span>" +
         '<span class="tag ' + _secCls + '>安全 ' + _sl + " · " + _slp.name + "</span>" +
         fleetLevelTag(_slp.band, _reg.pirate) +
@@ -418,8 +429,8 @@
         '<span class="dim">安全越低，海盗越强、剿匪赏金越丰</span></div>';
     }
 
-    // SVG 星系图（中央恒星 + 环绕天体，按种类配色；可点击派遣）
-    html += '<div class="system-wrap"><svg class="sys-svg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">';
+    // 主区：放大的星系图；右栏集中显示在岗成员与战斗据点情报。
+    html += '<div class="system-layout"><div class="system-main"><div class="system-wrap"><svg class="sys-svg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">';
     for (const b of bodies) if (b.orbit > 0) html += '<circle cx="200" cy="200" r="' + b.orbit + '" class="orbit"/>';
     for (const b of bodies) {
       const col = kindColor(b.kind);
@@ -510,10 +521,10 @@
     }
     // 海盗据点（战斗节点）在星系图里的锚点。据点按 data/raids.js 的设计挂在星图节点上、
     // 不是天体，所以这里**不参与轨道布点、不消耗任何随机数**——只按「四角哪边最空」挑个落点。
-    // 为什么必须画：星系图是点天体派遣的主场景，而派遣面板在页面最底部，
-    // 从星图橙环点进来后画面上完全没有「这里能打」的提示。
+    // 星图标记保留直接入口；据点战况与派遣信息统一放在右侧栏，点标记即可打开编队弹窗。
     html += raidAnchorSvg(node, bodies);
-    html += "</svg></div>";
+    html += "</svg></div></div><aside class='system-aside'>";
+    html += systemSelectPanel + systemRegionPanel;
 
     // 本星系在岗汇总（含未指定天体的派遣，例如成员页直接点「采矿」）
     const sysWorkers = state.members.filter(m => !m.destroyed && m.assignment && m.assignment.nodeId === node.id && m.assignment.type !== "logistics");
@@ -523,6 +534,9 @@
         + '<div class="dim">' + sysWorkers.map(m => esc(m.name) + "（" + jobName(m.assignment.type)
           + (m.assignment.bodyId ? "" : " · 未指定天体") + "）").join("、") + "</div></div>";
     }
+
+    html += viewRaid(node);
+    html += "</aside></div>";
 
     // 天体卡（手机/精确操作）
     html += "<h3>天体（点击派遣）</h3><div class='grid body-grid'>";
@@ -550,8 +564,6 @@
         "<div class='row'>" + actHtml + "</div></div>";
     }
     html += "</div>";
-    // 海盗据点（若本星系有据点）：战斗节点面板 + 派遣入口
-    html += viewRaid(node);
     return html;
   }
   function colOf2(k) { return kindColor(k); }
@@ -565,11 +577,10 @@
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, node.id) : null;
     if (!raid) return "";
     const engaged = state.members.some(m => !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === node.id);
-    // 敌对锚点是战术信号而不是天体：用锁定框 + 敌舰剪影，名称留在同一枚可点击标记里。
+    // 敌对锚点是战术信号而不是天体：据点实景小图 + 据点名，整枚标记可点击。
     let nameW = 0;
     for (const ch of raid.name) nameW += (ch.charCodeAt(0) > 0x2000 ? 10.5 : 7);
-    const eliteW = raid.elite ? 42 : 10;
-    const w = Math.round(Math.max(116, nameW + 57 + eliteW)), h = 30, pad = 10;
+    const w = Math.round(Math.max(110, nameW + (raid.elite ? 84 : 54))), h = 34, pad = 10;
     // 每个天体的占用框：本体 + 下方名字 + 上方在岗徽章，垂直方向各留一行。
     // 把它当外接矩形（而不是圆）是保守估计——宁可离远点，也别压在标签上。
     const boxes = [];
@@ -600,22 +611,46 @@
     }
     const cx = best.cx.toFixed(1), cy = best.cy.toFixed(1);
     const markerState = (raid.elite ? " elite" : "") + (engaged ? " engaged" : "");
-    const iconX = -w / 2 + 16;
-    const textX = -w / 2 + 32;
-    let s = '<g class="sys-raid click' + markerState + '" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
-    s += '<rect class="sys-raid-frame" x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="5"/>';
-    s += '<circle class="sys-raid-reticle" cx="' + iconX + '" r="9" fill="none"/>';
-    s += '<path class="sys-raid-brackets" d="M' + (iconX - 12) + ' -5v-6h6 M' + (iconX + 12) + ' -5v-6h-6 M' + (iconX - 12) + ' 5v6h6 M' + (iconX + 12) + ' 5v6h-6" fill="none"/>';
-    s += '<path class="sys-raid-ship" d="M' + iconX + ' -6 L' + (iconX + 6) + ' 0 L' + iconX + ' 6 L' + (iconX - 5) + ' 0 Z"/>';
-    s += '<circle class="sys-raid-beacon" cx="' + (iconX + 9) + '" cy="-8" r="2.2"/>';
+    const iconX = -w / 2 + 18;
+    const textX = -w / 2 + 38;
+    let s = '<g class="sys-raid click' + markerState + '" data-faction="' + esc(raid.faction) + '" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
+    s += '<rect class="sys-raid-frame" x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="4"/>';
+    s += raidSiteIconSvg(raid, iconX - 14, -14, 28);
     s += '<text class="sys-raid-label" x="' + textX + '" y="4">' + esc(raid.name) + '</text>';
     if (raid.elite) {
-      const bx = w / 2 - 37;
-      s += '<rect class="sys-raid-elite-bg" x="' + bx + '" y="-8" width="30" height="16" rx="2"/>';
-      s += '<text class="sys-raid-elite" x="' + (bx + 15) + '" y="3">精锐</text>';
+      const bx = w / 2 - 35;
+      s += '<rect class="sys-raid-elite-bg" x="' + bx + '" y="-7" width="28" height="14" rx="2"/>';
+      s += '<text class="sys-raid-elite" x="' + (bx + 14) + '" y="3">精锐</text>';
     }
     s += "</g>";
     return s;
+  }
+
+  // 精灵图每系 3×4 格，NAME_POOL 顺序与生成图集单元格一一对应。
+  function raidSiteSpriteInfo(raid) {
+    const faction = (raid && (raid.faction === "angel" || raid.faction === "blood" || raid.faction === "sansha")) ? raid.faction : "sansha";
+    const pool = Data.Raids && Data.Raids.NAME_POOL && Data.Raids.NAME_POOL[faction];
+    let index = pool ? pool.indexOf(raid && raid.word) : 0;
+    if (index < 0) index = 0;
+    const col = index % 3, row = Math.floor(index / 3);
+    return {
+      faction: faction,
+      src: "assets/raid-icons/raid-sites-" + faction + ".png",
+      position: (col * 50) + "% " + (row * (100 / 3)).toFixed(3) + "%",
+      viewBox: (col * 362) + " " + (row * 362) + " 362 362",
+    };
+  }
+
+  function raidSiteIconHtml(raid, extraClass) {
+    const sprite = raidSiteSpriteInfo(raid);
+    return '<span class="raid-site-icon' + (extraClass ? " " + extraClass : "") + '" data-faction="' + sprite.faction
+      + '" style="background-position:' + sprite.position + '" aria-hidden="true"></span>';
+  }
+
+  function raidSiteIconSvg(raid, x, y, size) {
+    const sprite = raidSiteSpriteInfo(raid);
+    return '<svg class="sys-raid-art" x="' + x + '" y="' + y + '" width="' + size + '" height="' + size + '" viewBox="' + sprite.viewBox
+      + '" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><image href="' + sprite.src + '" x="0" y="0" width="1086" height="1448" preserveAspectRatio="none"/></svg>';
   }
 
   // 单条三防血条（label + 百分比宽度填充）。cur/max 任一非法都退化为空条，不抛错。
@@ -975,6 +1010,64 @@
       + '</div>';
   }
 
+  // 舱段库（2026-11-03 用户决策）：舰船图右侧常驻一列，列出**未装配**的舱段。
+  //   ① 位置：图内右侧 196px（窄屏 ≤760 变底部横条，见 main.css）
+  //   ② 内容：只放未装配的 —— 已装的在船上，重复列会让两边都变长
+  //   ③ 拖到已占用舱位 = 直接交换（走 Base.replaceModule，不再要求先拆）
+  //   ④ 舱位详情弹窗里的「模块库」列表退役，改一行指引（避免两套入口状态不同步）
+  function baseStockModules() {
+    const mods = (state.base.modules && state.base.modules.owned) || [];
+    const used = new Set(((state.base.modules && state.base.modules.installed) || []).map(x => x.moduleId));
+    return mods.filter(m => !used.has(m.id));
+  }
+  function baseStockPanel() {
+    const list = baseStockModules();
+    const body = list.length
+      ? list.map(m => {
+          const d = Data.Ships.baseModuleByType(m.type) || {};
+          const sel = baseStockPick === m.id ? " sel" : "";
+          return '<button class="bs-item' + sel + '" data-act="stockPick:' + esc(m.id) + '" data-module="' + esc(m.id) + '" data-type="' + esc(m.type) + '">'
+            + '<span class="bs-ic" style="color:' + esc(d.color || "#79a9ff") + '">' + (d.icon || "▣") + '</span>'
+            + '<span class="bs-tx"><b>' + esc(d.name || m.type) + '</b><small>⚡' + (d.energy || 0) + ' · ' + esc(d.desc || "") + '</small></span>'
+            + '</button>';
+        }).join("")
+      : '<div class="bs-empty">所有舱段都已装配。<br>拆下的舱段会回到这里。</div>';
+    return '<aside class="mod-stock' + (baseStockPick ? " picking" : "") + '" id="mod-stock">'
+      + '<div class="bs-head"><b>舱段库</b><small>待装配 ' + list.length + '</small></div>'
+      + '<div class="bs-list">' + body + '</div>'
+      + '<div class="bs-foot">拖到<b>同类型</b>舱位装配<br>拖到已占舱位 = <em>直接交换</em><br>拖回此处 = 拆下</div>'
+      + '</aside>';
+  }
+
+  // 把库里的模块落到某个舱位。空舱位 = 装配；已占用 = 直接交换（原舱段退回库）。
+  // 门禁全在引擎里（类型 / 电网 / 唯一核心），这里只负责把 err 变成 toast。
+  function applyStockToSlot(moduleId, slotId) {
+    const slot = Engine.Base.slotById(state, slotId);
+    if (!slot || slot.type === "core") { toast("唯一核心不可改装"); return false; }
+    const m = state.base.modules.owned.find(x => x.id === moduleId);
+    if (!m) { toast("模块不在库存中"); return false; }
+    const d = Data.Ships.baseModuleByType(m.type) || {};
+    if (m.type !== slot.type) {
+      const sd = Data.Ships.baseModuleByType(slot.type) || {};
+      toast("舱位不兼容：这里是「" + (sd.name || slot.type) + "」位");
+      return false;
+    }
+    const occupied = !!Engine.Base.moduleAt(state, slotId);
+    const r = occupied
+      ? Engine.Base.replaceModule(state, slotId, moduleId)
+      : Engine.Base.installModule(state, slotId, moduleId);
+    if (!r.ok) { toast(r.err || "装配失败"); return false; }
+    baseFocus = slotId;
+    if (occupied) {
+      const oldName = (r.replaced && (Data.Ships.baseModuleByType(r.replaced.type) || {}).name) || "原舱段";
+      toast("已换上「" + (d.name || m.type) + "」·「" + oldName + "」退回舱段库");
+    } else toast("已装配「" + (d.name || m.type) + "」");
+    if (Persistence) Persistence.save(state); else Core.save(state);
+    renderView();
+    refreshOpenModuleModal();
+    return true;
+  }
+
   function baseModule(slot, plan) {
     const def = Data.Ships.baseModuleByType(slot.type);
     const installed = Engine.Base.moduleAt(state, slot.id);
@@ -1035,10 +1128,13 @@
       if (bCount > 0) html += '<div class="base-focus-effect">全局增强剂生效中 · ' + bCount + ' 槽</div>';
       html += '<button class="sm ghost base-module-action" data-act="moduleRemove:' + slot.id + '">拆卸并收入模块库</button>';
       } else {
+      // 2026-11-03：原先这里是一列「模块库 · N 个兼容模块 / 安装到该舱位」按钮。
+      // 右侧舱段库上线后两套入口会状态不同步，按用户决策 ④ 收成一行指引。
       const choices = Engine.Base.availableModules(state, slot.id);
-      html += '<div class="base-module-library-title">模块库 · ' + choices.length + ' 个兼容模块</div>';
-      html += choices.length ? choices.map(m => '<button class="base-module-choice" data-act="moduleInstall:' + slot.id + ':' + m.id + '"><span>' + def.icon + '</span><b>' + esc(def.name) + '</b><small>安装到该舱位</small></button>').join("")
-        : '<div class="dim">模块已安装在其他位置；先拆卸后即可移装。</div>';
+      html += '<div class="base-module-library-title">装配方式</div>';
+      html += '<div class="dim base-module-library-tip">从舰船图右侧的<b>舱段库</b>拖入「' + esc(def.name) + '」即可装配'
+        + (choices.length ? '（库中有 ' + choices.length + ' 个可用）' : '（库中暂无同型舱段，先拆下其他位置的）')
+        + '；拖到已占用的舱位会<b>直接交换</b>，原舱段自动退回舱段库。</div>';
     }
     return html;
   }
@@ -1059,7 +1155,18 @@
   }
 
   // 舱段 ↔ 驻舱技能（2026-11-01 技能体系）。command 特殊（看三战斗技能均值）、habitat 特殊（玩家选）。
-  const STATION_SKILL = { smelt: "refine", manufacture: "manufacture", invent: "research", cargo: "logistics", energy: "capacitor", dock: "manufacture" };
+  // 工业舱段**直接取引擎的 QUEUE_SKILL（唯一源）**：booster→research、equip→manufacture 都在那里定。
+  // UI 再抄一份必然漏（曾漏掉 booster / equip → 这两个舱段的驻舱面板既不显示「研究 Lv.x」，
+  // 也不提示「无人 · 该队列耗时 +40%」，玩家以为驻舱没效果）。
+  const QSKILL = (Engine.Base && Engine.Base.QUEUE_SKILL) || {};
+  const STATION_SKILL = {
+    smelt: QSKILL.smelt || "refine",
+    manufacture: QSKILL.manufacture || "manufacture",
+    invent: QSKILL.invent || "research",
+    booster: QSKILL.booster || "research",
+    equip: QSKILL.equip || "manufacture",
+    cargo: "logistics", energy: "capacitor", dock: "manufacture",
+  };
   let habitatSkill = "combatLaser";   // 演训舱当前选中的技能（UI 态，不入存档）
 
   // 驻舱面板：一人一岗。驻舱只提供技能倍率，**不产经验**（经验只在批次真产出时结算）。
@@ -1132,11 +1239,11 @@
     const smeltMult = Engine.Base.queueDurationMultiplier(state, "smelt");
     const manufactureMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const inventMult = Engine.Base.queueDurationMultiplier(state, "invent");
-    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + '" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg();
+    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + ' has-stock" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg();
     html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
     for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
     const installedCount = state.base.modules.installed.length;
-    html += '</div><div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span></div></div>';
+    html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span></div></div>';
     html += '</div>';
     html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>装备 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
     // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
@@ -1677,7 +1784,7 @@
     const artEyebrow = engaged ? "FRIENDLY FLEET ENGAGED" : (raid.elite ? "ELITE HOSTILE SIGNAL" : "HOSTILE SIGNAL");
     return '<div class="raid-keyart ' + artState + '">'
       + '<img src="assets/system-concepts/raid-encounter-concept.png" alt="">'
-      + '<div class="raid-keyart-stamp"><i></i><span>' + artEyebrow + '</span></div>'
+      + '<div class="raid-keyart-stamp">' + raidSiteIconHtml(raid, "in-keyart") + '<i></i><span>' + artEyebrow + '</span></div>'
       + '<span class="raid-keyart-code">CONTACT / ' + esc(nodeId) + '</span>'
       + '<div class="raid-keyart-title"><small>RAIDER ENCOUNTER · THREAT BAND ' + String(raid.band).padStart(2, "0") + '</small>'
       + '<b>' + esc(raid.name) + (raid.elite ? ' <i>精锐</i>' : "") + '</b></div>'
@@ -1686,7 +1793,7 @@
 
   function raidOverviewHtml(raid, factionName, participants, cap) {
     const tier = ["", "I", "II", "III", "IV", "V"][raid.band] || String(raid.band);
-    return '<div class="raid-site-meta"><b>' + esc(factionName) + ' · 劫掠编队</b><div class="raid-site-tags">'
+    return '<div class="raid-site-meta"><b>' + raidSiteIconHtml(raid, "in-heading") + '<span>' + esc(factionName) + ' · 劫掠编队</span></b><div class="raid-site-tags">'
       + '<span class="tag">安全 ' + raid.secLevel + ' · ' + raid.secName + '</span>'
       + fleetLevelTag(raid.band, raid.faction)
       + (raid.elite ? '<span class="tag bad">精锐目标</span>' : '')
@@ -2054,49 +2161,93 @@
     return html;
   }
 
-  function viewFactions() {
-    let html = "<h2>势力与任务板</h2>";
-    // questGiver:false 的野怪势力（静默集群）不进任务板
-    const board = state.factions.filter(f => {
-      const m = Data.Factions.factionById(f.id);
-      return m && m.questGiver !== false;
-    });
+  function factionMissionCard(f, q) {
+    const reward = '<div class="fac-rewards"><span>报酬</span><b>💠 ' + fmt(q.reward.credits) + '</b><b>⭐ ' + fmt(q.reward.rep) + '</b></div>';
+    if (q.mode === "dispatch") {
+      // 派遣类突发任务：选团员 + 预测成功率 + 派遣
+      const available = state.members.filter(m => !m.destroyed);
+      const opts = available.map(m =>
+        '<option value="' + esc(m.id) + '">' + esc(m.name) + "（" + (SKILL_CN[q.skill] || q.skill) + " Lv." + Engine.Settle.levelOf(m.skills[q.skill] || 0) + "）</option>").join("");
+      const first = available[0];
+      const hint = first ? Math.round(Engine.Faction.missionSuccessChance(first, q) * 100) : 0;
+      return '<article class="fac-mission-card fac-mission-dispatch">'
+        + '<div class="fac-mission-top"><span class="fac-mission-type urgent">紧急派遣</span><span class="fac-mission-code">OPS / ' + esc(q.skill || "FIELD") + '</span></div>'
+        + '<h4>' + esc(q.title || "突发委托") + '</h4>'
+        + '<p>' + esc(q.desc || "派遣一名成员执行势力委托。") + '</p>'
+        + '<div class="fac-mission-tools"><label>执行成员<select class="mbr-sel fac-mission-select" data-qid="' + esc(q.id) + '" data-fid="' + esc(f.id) + '">' + (opts || '<option value="">无可用成员</option>') + '</select></label>'
+        + '<div class="fac-chance"><span>预估成功率</span><b id="chance_' + esc(q.id) + '">' + hint + '%</b></div>'
+        + '<button class="sm primary" data-act="attempt:' + esc(f.id) + ':' + esc(q.id) + '"' + (first ? "" : " disabled") + '>派遣执行</button></div>'
+        + reward + '</article>';
+    }
+    const have = state.res[q.item] || 0;
+    const can = have >= q.qty;
+    const progress = q.qty > 0 ? Math.min(100, Math.round(have / q.qty * 100)) : 0;
+    const itemName = resName(q.item);
+    return '<article class="fac-mission-card fac-mission-delivery">'
+      + '<div class="fac-mission-top"><span class="fac-mission-type">物资交付</span><span class="fac-mission-code">SUPPLY / ' + esc(q.item || "CARGO") + '</span></div>'
+      + '<h4>交付 ' + esc(itemName) + '</h4>'
+      + '<p>' + esc(q.desc || "提交指定物资以换取势力报酬。") + '</p>'
+      + '<div class="fac-stock"><div><span>库存进度</span><b>' + fmt(have) + ' / ' + fmt(q.qty) + '</b></div><i><b style="width:' + progress + '%"></b></i></div>'
+      + '<div class="fac-mission-bottom">' + reward + '<button class="sm primary" data-act="deliver:' + esc(f.id) + ':' + esc(q.id) + '"' + (can ? "" : " disabled") + '>交付物资</button></div>'
+      + '</article>';
+  }
+
+  function viewFactionDirectory(factions) {
+    const trusted = factions.filter(f => (f.relation || 0) >= 60).length;
+    let html = '<div class="fac-grid">';
+    for (const f of factions) {
+      const meta = Data.Factions.factionById(f.id);
+      if (!meta) continue;
+      const c = meta.contact || {};
+      const relation = Math.max(0, Math.min(100, Number(f.relation) || 0));
+      const scale = meta.questGiver === false ? "静默集群" : (meta.tier === "major" ? "核心势力" : (meta.scale || "地方势力"));
+      const portrait = c.img
+        ? '<img src="' + esc(c.img) + '" alt="" loading="lazy">'
+        : '<span>◈</span>';
+      html += '<article class="fac-card' + (meta.questGiver === false ? ' hostile' : '') + '" style="--fac-color:' + esc(meta.color || "#4fc4d3") + '">'
+        + '<div class="fac-card-signal"><span><i></i> NETWORK NODE</span><b>' + (meta.tier === "major" ? "CORE" : "LOCAL") + '</b></div>'
+        + '<div class="fac-card-identity"><div class="fac-portrait">' + portrait + '</div><div class="fac-card-name"><small>' + esc(scale) + '</small><h3>' + esc(meta.name) + '</h3>'
+        + (c.name ? '<span>' + esc(c.name) + (c.title ? ' · ' + esc(c.title) : '') + '</span>' : '<span>未登记联络人</span>') + '</div></div>'
+        + '<p class="fac-card-blurb">' + esc(meta.blurb || "暂无势力档案。") + '</p>'
+        + '<div class="fac-relation"><div><span>关系指数</span><b>' + relation + '<small> / 100</small></b></div><i><b style="width:' + relation + '%"></b></i></div>'
+        + '<div class="fac-card-foot"><span>' + (meta.questGiver === false ? '无委托协议' : '委托协议已接入') + '</span><span class="fac-node-id">ID · ' + esc(meta.id.toUpperCase()) + '</span></div>'
+        + '</article>';
+    }
+    html += '</div>';
+    return '<div class="fac-overview"><div><small>登记节点</small><b>' + factions.length + '</b></div><div><small>关系稳固</small><b>' + trusted + '</b></div><div><small>协议状态</small><b>ONLINE</b></div></div>' + html;
+  }
+
+  function viewFactionMissions(board, taskCount) {
+    let html = '<div class="fac-mission-intro"><div><span class="fac-kicker">CONTRACT UPLINK / ' + String(taskCount).padStart(2, "0") + ' ACTIVE</span><h3>外部委托终端</h3><p>提交物资或派遣成员完成行动，可获取星币与声望，并提升势力关系。</p></div><span class="fac-refresh">合约轮换 <b>每 6 小时</b></span></div>';
+    if (!taskCount) return html + '<div class="fac-empty">当前没有可执行委托，新的合约将在刷新周期到达后接入。</div>';
+    html += '<div class="fac-contract-grid">';
     for (const f of board) {
       const meta = Data.Factions.factionById(f.id);
-      const c = meta.contact || {};
-      const tierTag = meta.tier === "minor"
-        ? '<span class="tag">' + esc(meta.scale || "中小型") + "势力</span>"
-        : '<span class="tag good">主要势力</span>';
-      html += '<div class="panel"><div class="row" style="display:flex;gap:10px;align-items:flex-start">'
-        + (c.img ? '<img class="fac-avatar" src="' + c.img + '" alt="" loading="lazy" style="width:64px;height:64px;object-fit:cover;object-position:top;border-radius:8px;border:1px solid rgba(255,255,255,0.15);flex:0 0 auto;background:#111">' : '')
-        + '<div style="flex:1;min-width:0">'
-        + '<div class="row"><b style="color:' + meta.color + '">' + esc(meta.name) + "</b>" + tierTag
-        + '<span class="tag">关系 ' + f.relation + "</span></div>"
-        + (c.name ? '<div class="dim">联络人：' + esc(c.name) + (c.title ? " · " + esc(c.title) : "") + "</div>" : "")
-        + '<div class="dim">' + esc(meta.blurb) + "</div></div></div>";
-      for (const q of f.quests) {
-        if (q.mode === "dispatch") {
-          // 派遣类突发任务：选团员 + 预测成功率 + 派遣
-          const opts = state.members.filter(m => !m.destroyed).map(m =>
-            '<option value="' + m.id + '">' + esc(m.name) + "（" + (SKILL_CN[q.skill] || q.skill) + " L" + Engine.Settle.levelOf(m.skills[q.skill] || 0) + "）</option>").join("");
-          const firstId = state.members.find(m => !m.destroyed);
-          const hint = firstId ? Math.round(Engine.Faction.missionSuccessChance(firstId, q) * 100) : 0;
-          html += '<div class="row quest-dispatch"><span>' + esc(q.desc) +
-            ' <span class="tag good">💠' + q.reward.credits + " ⭐" + q.reward.rep + "</span></span>" +
-            '<select class="mbr-sel" data-qid="' + q.id + '" data-fid="' + f.id + '">' + (opts || '<option value="">无可用团员</option>') + "</select>" +
-            '<span class="tag warn chance" id="chance_' + q.id + '">成功率 ' + hint + "%</span>" +
-            '<button class="sm" data-act="attempt:' + f.id + ":" + q.id + '">派遣</button></div>';
-        } else {
-          const have = state.res[q.item] || 0;
-          const can = have >= q.qty;
-          html += '<div class="row"><span>' + esc(q.desc) +
-            ' <span class="tag ' + (can ? "good" : "warn") + '">持有 ' + fmt(have) + "/" + q.qty + "</span>" +
-            '<span class="tag good">💠' + q.reward.credits + " ⭐" + q.reward.rep + "</span></span>" +
-            '<button class="sm" data-act="deliver:' + f.id + ":" + q.id + '"' + (can ? "" : " disabled") + ">交付</button></div>";
-        }
-      }
-      html += "</div>";
+      const quests = f.quests || [];
+      if (!meta || !quests.length) continue;
+      html += '<section class="fac-contract-panel" style="--fac-color:' + esc(meta.color || "#4fc4d3") + '"><header><div class="fac-contract-led"></div><div><small>CONTRACT SOURCE</small><b>' + esc(meta.name) + '</b></div><span>' + quests.length + ' OPEN</span></header>'
+        + '<div class="fac-mission-stack">' + quests.map(q => factionMissionCard(f, q)).join("") + '</div></section>';
     }
+    html += '</div>';
+    return html;
+  }
+
+  function viewFactions() {
+    const factions = state.factions.map(f => ({ ...f, relation: Number(f.relation) || 0 }));
+    // questGiver:false 的野怪势力显示在档案中，但不发布委托。
+    const board = factions.filter(f => {
+      const meta = Data.Factions.factionById(f.id);
+      return meta && meta.questGiver !== false;
+    });
+    const taskCount = board.reduce((sum, f) => sum + ((f.quests || []).length), 0);
+    const missionTab = factionSubtab === "missions";
+    let html = '<section class="faction-page"><header class="fac-page-head"><div><div class="fac-kicker"><i></i> FACTION NETWORK / BORDER SECTOR</div>'
+      + '<h2>势力关系网</h2><p>边疆势力情报、关系指数与外部契约接入点。</p></div><div class="fac-head-readout"><small>OPEN CONTRACTS</small><b>' + String(taskCount).padStart(2, "0") + '</b><span>任务协议在线</span></div></header>'
+      + '<div class="fac-subtabs" role="tablist" aria-label="势力与任务子页面">'
+      + '<button type="button" role="tab" aria-selected="' + (!missionTab) + '" class="fac-subtab' + (!missionTab ? ' on' : '') + '" data-act="factionView:factions"><span class="fac-subtab-index">01</span><span><b>势力档案</b><small>' + factions.length + ' 个关系节点</small></span><i>↗</i></button>'
+      + '<button type="button" role="tab" aria-selected="' + missionTab + '" class="fac-subtab' + (missionTab ? ' on' : '') + '" data-act="factionView:missions"><span class="fac-subtab-index">02</span><span><b>任务终端</b><small>' + taskCount + ' 项可用委托</small></span><i>↗</i></button></div>'
+      + (missionTab ? viewFactionMissions(board, taskCount) : viewFactionDirectory(factions))
+      + '</section>';
     return html;
   }
 
@@ -2914,9 +3065,14 @@
     // 剧情有未播完的一屏 → 「剧情」标签挂红点，提示玩家回去继续
     const S = storyRuntime();
     const storyActive = !!(S && S.hasActive(state));
-    $tabs.innerHTML = TABS.map(t => {
-      const dot = (t.id === "story" && storyActive) ? '<i class="tab-dot"></i>' : "";
-      return '<div class="tab' + (t.id === tab ? " on" : "") + '" data-act="tab:' + t.id + '">' + t.name + dot + "</div>";
+    $tabs.innerHTML = TAB_GROUPS.map(group => {
+      const groupTabs = TABS.filter(t => group.tabs.includes(t.id));
+      const groupActive = groupTabs.some(t => t.id === tab);
+      const items = groupTabs.map(t => {
+        const dot = (t.id === "story" && storyActive) ? '<i class="tab-dot"></i>' : "";
+        return '<div class="tab' + (t.id === tab ? " on" : "") + '" data-act="tab:' + t.id + '">' + t.name + dot + "</div>";
+      }).join("");
+      return '<div class="tab-group' + (groupActive ? " has-active" : "") + '"><div class="tab-group-label">' + group.name + '</div><div class="tab-group-items">' + items + "</div></div>";
     }).join("");
   }
 
@@ -2924,6 +3080,7 @@
   function onAction(act, e) {
     hideNodeMenu();   // 任何操作先收起星图节点浮层
     const [cmd, a, b] = act.split(":");
+    if (cmd === "factionView") { factionSubtab = a === "missions" ? "missions" : "factions"; renderView(); return; }
     if (cmd === "workbench") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.handle) Wb.handle(act); return; }
     if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); const Bi2 = window.NSK.UI && NSK.UI.BaseInfo; if (Bi2) Bi2.close(); tab = a; renderTabs(); renderView(); return; }
     if (cmd === "booster") {
@@ -3000,6 +3157,19 @@
     if (cmd === "openSettings") { openSettings(); return; }
     if (cmd === "nodeinfo") { openNodeMenu(a, e); return; }
     if (cmd === "body") { showBody(a, b); return; }
+    // 舱段库（2026-11-03）：点卡片选中 → 再点舱位落地（触屏等价于拖放）。
+    // 必须排在 baseinfo 之前：否则「已选中」状态下点舱位会弹详情而不是装配。
+    if (cmd === "stockPick") {
+      baseStockPick = (baseStockPick === a) ? null : a;
+      renderView();
+      return;
+    }
+    if (cmd === "baseinfo" && baseStockPick && a && a !== "close" && a !== "core") {
+      const mid = baseStockPick;
+      baseStockPick = null;
+      applyStockToSlot(mid, a);
+      return;
+    }
     if (cmd === "baseinfo") {
       if (a === "close") { const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.close(); return; }
       baseFocus = a || "core";
@@ -3261,32 +3431,45 @@
     if (Persistence) Persistence.save(state); else Core.save(state);
   }
 
-  // ---------- 舱段拖拽换位（2026-10-29）----------
+  // ---------- 舱段拖拽（2026-10-29 换位 / 2026-11-03 扩到舱段库）----------
   // 用 pointer 事件统一鼠标 / 触屏，不依赖 HTML5 DnD（移动端不支持）。
   // 关键点：
   //  1) 换的是「舱位坐标」，模块类型与舱位一一绑定 → 拖动会真实改变相邻增效与特化舱位位置。
-  //  2) 6px 阈值区分「点击看详情」与「拖动换位」，未越阈值时不动，原 data-act 流程照旧。
+  //  2) 6px 阈值区分「点击看详情/选中」与拖动，未越阈值时不动，原 data-act 流程照旧。
   //  3) 拖动中的卡片加 .dragging（pointer-events:none），让 elementFromPoint 穿透拿到下方目标卡。
   //  4) 唯一核心固定（舰体中轴锚点），不能拖也不能作为落点。
+  //  2026-11-03 新增两种以舱段库为起点的语义：
+  //  a) 库 → 同类型空舱位 = 装配   b) 库 → 同类型已占舱位 = 直接交换（原舱段退回库）
+  //  以及 c) 已装 → 舱段库 = 拆下。
   const BASE_DRAG_THRESHOLD = 6;
   function baseSlotIdOf(el) {
     const act = (el && el.getAttribute) ? el.getAttribute("data-act") || "" : "";
     return act.indexOf("baseinfo:") === 0 ? act.slice(9) : "";
   }
-  function setBaseDropTarget(el) {
-    const prev = document.querySelector(".base-module.drop-target");
-    if (prev && prev !== el) prev.classList.remove("drop-target");
-    if (el) el.classList.add("drop-target");
+  function clearBaseDropMarks() {
+    const nodes = document.querySelectorAll(".base-module.drop-target,.base-module.drop-deny,.mod-stock.drop-target");
+    for (let i = 0; i < nodes.length; i++) nodes[i].classList.remove("drop-target", "drop-deny");
+  }
+  function markBaseDrop(el, deny) {
+    if (!el) return;
+    el.classList.add(deny ? "drop-deny" : "drop-target");
   }
   function onBaseDragDown(e) {
     if (tab !== "base") return;
     if (e.button != null && e.button > 0) return;
+    const stockEl = e.target && e.target.closest ? e.target.closest(".bs-item") : null;
+    if (stockEl) {
+      const mid = stockEl.getAttribute("data-module");
+      if (!mid) return;
+      baseDragState = { el: stockEl, kind: "stock", moduleId: mid, pid: e.pointerId, sx: e.clientX, sy: e.clientY, active: false };
+      return;
+    }
     const el = e.target && e.target.closest ? e.target.closest(".base-module") : null;
     if (!el || !el.closest(".base-layout")) return;
     if (el.classList.contains("base-core")) return;   // 唯一核心固定
     const slotId = baseSlotIdOf(el);
     if (!slotId) return;
-    baseDragState = { el: el, slotId: slotId, pid: e.pointerId, sx: e.clientX, sy: e.clientY, active: false };
+    baseDragState = { el: el, kind: "slot", slotId: slotId, pid: e.pointerId, sx: e.clientX, sy: e.clientY, active: false };
   }
   function onBaseDragMove(e) {
     const d = baseDragState;
@@ -3296,14 +3479,28 @@
       if (Math.abs(dx) < BASE_DRAG_THRESHOLD && Math.abs(dy) < BASE_DRAG_THRESHOLD) return;
       d.active = true;
       d.el.classList.add("dragging");
-      const layout = d.el.closest(".base-layout");
+      const layout = document.querySelector(".base-layout");
       if (layout) layout.classList.add("is-dragging");
     }
     d.el.style.setProperty("--dx", dx + "px");
     d.el.style.setProperty("--dy", dy + "px");
+    clearBaseDropMarks();
     const hit = document.elementFromPoint(e.clientX, e.clientY);
-    const target = hit && hit.closest ? hit.closest(".base-module") : null;
-    setBaseDropTarget(target && target !== d.el && !target.classList.contains("base-core") ? target : null);
+    const slotEl = hit && hit.closest ? hit.closest(".base-module") : null;
+    if (slotEl && !slotEl.classList.contains("base-core")) {
+      if (d.kind === "stock") {
+        // 同类型即可落（空的=装配、已占=交换），异类型给拒绝反馈
+        const m = state.base.modules.owned.find(x => x.id === d.moduleId);
+        const sid = baseSlotIdOf(slotEl);
+        const slot = sid ? Engine.Base.slotById(state, sid) : null;
+        markBaseDrop(slotEl, !(m && slot && slot.type === m.type));
+      } else if (slotEl !== d.el) {
+        markBaseDrop(slotEl, false);
+      }
+    } else if (d.kind === "slot" && hit && hit.closest && hit.closest("#mod-stock")) {
+      const zone = document.getElementById("mod-stock");
+      if (zone) zone.classList.add("drop-target");
+    }
   }
   function onBaseDragEnd(e, cancelled) {
     const d = baseDragState;
@@ -3311,15 +3508,35 @@
     baseDragState = null;
     if (!d.active) return;              // 未越阈值 = 普通点击，交给既有 click 委托
     baseDragEndedAt = Date.now();
-    const target = document.querySelector(".base-module.drop-target");
+    // 必须在移除 .dragging（pointer-events:none）**之前**取命中，否则拿到的是自己
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
     d.el.classList.remove("dragging");
     d.el.style.removeProperty("--dx");
     d.el.style.removeProperty("--dy");
     const layout = document.querySelector(".base-layout.is-dragging");
     if (layout) layout.classList.remove("is-dragging");
-    if (target) target.classList.remove("drop-target");
-    if (!target || cancelled) return;
-    const toId = baseSlotIdOf(target);
+    clearBaseDropMarks();
+    if (cancelled) return;
+    const slotEl = hit && hit.closest ? hit.closest(".base-module") : null;
+    const toId = (slotEl && !slotEl.classList.contains("base-core")) ? baseSlotIdOf(slotEl) : "";
+    if (d.kind === "stock") {
+      if (!toId) return;                // 没落到舱位 = 取消（库卡片留在库里）
+      baseStockPick = null;             // 拖放已完成意图，别让残留选中态影响下一次点击
+      applyStockToSlot(d.moduleId, toId);
+      return;
+    }
+    const inStock = hit && hit.closest && hit.closest("#mod-stock");
+    if (inStock) {
+      const r = Engine.Base.uninstallModule(state, d.slotId);
+      if (!r.ok) { toast(r.err || "拆不下来"); renderView(); return; }
+      baseFocus = d.slotId;
+      const rd = (r.module && Data.Ships.baseModuleByType(r.module.type)) || null;
+      toast("已拆下「" + (rd ? rd.name : "舱段") + "」· 退回舱段库");
+      if (Persistence) Persistence.save(state); else Core.save(state);
+      renderView();
+      return;
+    }
+    if (!toId || toId === d.slotId) return;
     const r = Engine.Base.swapSlots(state, d.slotId, toId);
     if (!r.ok) { if (r.err) toast(r.err); renderView(); return; }
     baseFocus = d.slotId;
@@ -3341,7 +3558,9 @@
     });
     document.addEventListener("click", e => {
       // 拖动舱段后紧跟的 click：target 是「落到的那张卡」，会误开右侧详情，用时间窗吞掉。
-      if (Date.now() - baseDragEndedAt < 320 && e.target.closest && e.target.closest(".base-layout")) return;
+      // 舱段库卡片拖完松手也会冒一个 click（不在 .base-layout 内），条件必须带上 #mod-stock，
+      // 否则「拖到舱位装配」之后紧接着的 click 会再走一次 stockPick，把刚装好的舱段重新选中。
+      if (Date.now() - baseDragEndedAt < 320 && e.target.closest && e.target.closest(".base-layout, #mod-stock")) return;
       // 轻点/拖拽收尾的误触：抑制窗口内、且不是点在菜单自身的点击，全部吞掉。
       // 关键：setPointerCapture 会把轻点后的 click 目标重定向到 $view 容器，若只判断
       // 「落在星图内」会漏掉——重定向的 click.target 是 $view（starmap-wrap 的父级），

@@ -55,7 +55,15 @@ function gcs(el,prop){ try{ return W().getComputedStyle(el).getPropertyValue(pro
   const stage=q(".base-stage");
   const mh=gcs(stage,"min-height");
   ok("蓝图舞台放大（min-height ≥ 560px）", mh && parseInt(mh,10)>=560, mh.trim());
-  ok("舱段网格放大（≈56% 舞台宽）", (function(){ const sw=parseFloat(gcs(stage,"width"))||0; const lw=parseFloat(gcs(q(".base-layout"),"width"))||0; return lw>sw*0.5 && lw<sw*0.62; })(), gcs(q(".base-layout"),"width").trim()+" / stage "+gcs(stage,"width").trim());
+  // 2026-11-03：右侧新增「舱段库」后，网格必须让位——判据从「≈56% 舞台宽」（该值在网格改宽后早已失效）
+  // 改为真实设计意图：不越过舱段库左边界，且仍占舞台一半以上。
+  ok("舱段网格让位舱段库且不被压瘪", (function(){
+    const sw=parseFloat(gcs(stage,"width"))||0, lw=parseFloat(gcs(q(".base-layout"),"width"))||0;
+    const lib=q("#mod-stock");
+    const lw2=lib?parseFloat(gcs(lib,"width"))||0:0;
+    return lw>sw*0.5 && (lw2? lw <= sw-lw2+6 : true);
+  })(), gcs(q(".base-layout"),"width").trim()+" / stage "+gcs(stage,"width").trim()
+    +" / lib "+(q("#mod-stock")?gcs(q("#mod-stock"),"width").trim():"-"));
 
   // === 3. 点非工业舱段（能源舱）弹 BaseInfo 明细 ===
   const energyBtn=q("button.base-energy");

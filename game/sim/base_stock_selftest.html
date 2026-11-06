@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-stock-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [];
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  function W() { return document.getElementById("f").contentWindow; }
+  function q(s) { return W().document.querySelector(s); }
+  function qa(s) { return [].slice.call(W().document.querySelectorAll(s)); }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  // ⚠️ 不要 scrollIntoView：它会在 iframe 内滚动文档，令先前取到的中心坐标整体失效
+  // （曾因此把「已装→库」判成没拆下：down 落在滚动后的空处、move 的命中点也跑偏）。
+  // iframe 高度设为 1720，让舰基页首屏整块可见，全程零滚动。
+  function center(el) {
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: r.width, h: r.height };
+  }
+  function pev(el, type, x, y, pid) {
+    el.dispatchEvent(new (W().PointerEvent)(type, {
+      pointerId: pid || 71, pointerType: "mouse", isPrimary: true, bubbles: true, cancelable: true,
+      clientX: x, clientY: y, button: 0, buttons: type === "pointerup" ? 0 : 1,
+    }));
+  }
+  // 拖动：源卡片中心 → 目标坐标（走真实 pointerdown/move/up，跨 6px 阈值）
+  async function dragTo(fromEl, toEl, offset) {
+    var a = center(fromEl);
+    var b = toEl ? center(toEl) : (offset || null);
+    if (!a || !b) return { hit: "no-el" };
+    pev(fromEl, "pointerdown", a.x, a.y);
+    var atDown = W().document.elementFromPoint(a.x, a.y);
+    pev(fromEl, "pointermove", a.x + 12, a.y + 12);
+    await wait(30);
+    var dragCls = !!W().document.querySelector(".dragging");
+    pev(fromEl, "pointermove", b.x, b.y);
+    await wait(30);
+    var hit = W().document.elementFromPoint(b.x, b.y);
+    var marks = W().document.querySelectorAll(".drop-target,.drop-deny").length;
+    var dxv = fromEl.style.getPropertyValue("--dx");
+    var stillDrag = !!W().document.querySelector(".dragging");
+    pev(fromEl, "pointerup", b.x, b.y);
+    await wait(260);
+    var hd = hit ? ((hit.id ? "#" + hit.id : "") + "." + String(hit.className || "").replace(/\s+/g, " ")) : "null";
+    var dd = atDown ? ("down@" + (atDown.id ? "#" + atDown.id : "") + "|" + (atDown.tagName || "") + "." + String(atDown.className || "").replace(/\s+/g, " ")) : "down@null";
+    return { hit: hd.trim(), a: a, b: b, dragCls: dragCls, marks: marks, atDown: dd.trim(), dx: dxv, stillDrag: stillDrag };
+  }
+  // ⚠️ 拖拽结束后 320ms 内的 click 会被 app 主动吞掉（防「拖完松手误开详情」），
+  // 因此每次点击前先越过这个窗口，否则「点库卡片选中」这条路径永远测不到。
+  async function clickEl(el) {
+    if (!el) return;
+    await wait(340);
+    var c = center(el);
+    pev(el, "pointerdown", c.x, c.y, 99);
+    pev(el, "pointerup", c.x, c.y, 99);
+    el.dispatchEvent(new (W().MouseEvent)("click", { bubbles: true, cancelable: true, clientX: c.x, clientY: c.y }));
+  }
+  async function toBase() {
+    await clickEl(q('[data-act="tab:base"]'));
+    await wait(420);
+  }
+  function installedId(st, slotId) {
+    var e = st.base.modules.installed.find(function (x) { return x.slotId === slotId; });
+    return e ? e.moduleId : null;
+  }
+  function stockIds(st) {
+    var used = {};
+    st.base.modules.installed.forEach(function (x) { used[x.moduleId] = 1; });
+    return st.base.modules.owned.filter(function (m) { return !used[m.id]; }).map(function (m) { return m.id; });
+  }
+
+  (async function () {
+    var f = document.getElementById("f");
+    await new Promise(function (r) {
+      if (f.contentDocument && f.contentDocument.readyState === "complete") r();
+      else f.addEventListener("load", r, { once: true });
+    });
+    await wait(2800);
+    W().addEventListener("error", function (e) { ERR.push(e.message); out.push("[ERR] " + e.message); });
+    W().addEventListener("unhandledrejection", function (e) { ERR.push(String(e.reason)); out.push("[REJ] " + e.reason); });
+
+    if (!W().NSK || !W().NSK.Core || !W().NSK.Core.Persistence) {
+      ok("运行时可用", false, "NSK.Core.Persistence 缺失"); dump(); return;
+    }
+    var B = W().NSK.Engine.Base, Ships = W().NSK.Data.Ships;
+    var st = LIVE();
+
+    // === 0. 归零到「开局全装」：库为空，便于逐条构造 ===
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
+    st.base.modules.owned = st.base.modules.owned.filter(function (m) { return m.id !== "module_smelt_02"; });
+    await toBase();
+
+    // === A. 渲染 ===
+    ok("A1 舱段库面板已渲染", !!q("#mod-stock"));
+    ok("A2 标题为「舱段库」", ((q("#mod-stock .bs-head b") || {}).textContent || "") === "舱段库",
+      (q("#mod-stock .bs-head b") || {}).textContent);
+    ok("A3 全装时库为空（无卡片）", qa("#mod-stock .bs-item").length === 0, "n=" + qa("#mod-stock .bs-item").length);
+    ok("A4 空库有「所有舱段都已装配」提示",
+      ((q("#mod-stock .bs-empty") || {}).textContent || "").indexOf("所有舱段都已装配") >= 0);
+    ok("A5 库计数与已装之和 = 库存总数",
+      st.base.modules.installed.length === st.base.modules.owned.length && stockIds(st).length === 0,
+      st.base.modules.installed.length + "/" + st.base.modules.owned.length);
+    ok("A6 舰船图因库让位（has-stock）", !!q(".base-stage.has-stock .base-layout"));
+
+    // === B. 已装 → 拖回库 = 拆下 ===
+    var smeltCard = q(".base-module.base-smelt");
+    var dbgB = await dragTo(smeltCard, q("#mod-stock"));
+    ok("B1 拖到舱段库 = 拆下（installed 少 1）", !installedId(st, "smelt"),
+      "installed=" + installedId(st, "smelt") + " | hit=" + dbgB.hit);
+    ok("B2 精炼环出现在库中", stockIds(st).indexOf("module_smelt_01") >= 0, stockIds(st).join(","));
+    ok("B3 库渲染出 1 张卡片", qa("#mod-stock .bs-item").length === 1, "n=" + qa("#mod-stock .bs-item").length);
+    ok("B4 卡片文案是中文「精炼环」",
+      ((q("#mod-stock .bs-item .bs-tx b") || {}).textContent || "") === Ships.baseModuleByType("smelt").name,
+      (q("#mod-stock .bs-item .bs-tx b") || {}).textContent);
+    ok("B5 对应的舱位卡变空", !!q(".base-module.base-smelt.empty"));
+
+    // === C1. 库 → 空舱位：点击通道（触屏等价物） ===
+    await clickEl(q("#mod-stock .bs-item"));
+    await wait(200);
+    ok("C1 点库卡片进入选中态（.sel）", !!q("#mod-stock .bs-item.sel"));
+    await clickEl(q(".base-module.base-smelt"));
+    await wait(300);
+    ok("C2 再点同类型空舱位 = 装回去", installedId(st, "smelt") === "module_smelt_01", installedId(st, "smelt"));
+    ok("C3 装回后库清空、选中态清掉", qa("#mod-stock .bs-item").length === 0 && !q("#mod-stock .bs-item.sel"));
+    ok("C4 装回后舱位不再是空舱", !q(".base-module.base-smelt.empty"));
+
+    // === C2. 库 → 空舱位：拖拽通道 ===
+    await dragTo(q(".base-module.base-smelt"), q("#mod-stock"));
+    ok("C5 再造一次库状态", stockIds(st).indexOf("module_smelt_01") >= 0);
+    await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-smelt"));
+    ok("C6 拖拽库卡片到同类型空舱位 = 装配", installedId(st, "smelt") === "module_smelt_01", installedId(st, "smelt"));
+
+    // === D. 库 → 已占用舱位 = 直接交换（用户决策 ③） ===
+    // 同类型第二件（现版本只有一类型一件，手工补一件模拟「多模块」库存）
+    st.base.modules.owned.push({ id: "module_smelt_02", type: "smelt" });
+    await toBase();
+    ok("D1 库里出现第二件精炼环", stockIds(st).indexOf("module_smelt_02") >= 0, stockIds(st).join(","));
+    ok("D2 目标舱位当前装的是 01", installedId(st, "smelt") === "module_smelt_01", installedId(st, "smelt"));
+    await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-smelt"));
+    ok("D3 拖到已占用同类型舱位 = 直接换上新件", installedId(st, "smelt") === "module_smelt_02", installedId(st, "smelt"));
+    ok("D4 原舱段退回库（01 在库、02 不在）",
+      stockIds(st).indexOf("module_smelt_01") >= 0 && stockIds(st).indexOf("module_smelt_02") < 0, stockIds(st).join(","));
+    ok("D5 库数量守恒（拆一件进一件 = 仍 1 张）", qa("#mod-stock .bs-item").length === 1, "n=" + qa("#mod-stock .bs-item").length);
+    ok("D6 已装总数不变（没凭空多/少）",
+      st.base.modules.installed.length === st.base.modules.owned.length - 1,
+      st.base.modules.installed.length + "/" + st.base.modules.owned.length);
+
+    // === E. 异类型 = 拒绝，库与舱位都不变 ===
+    var cargoBefore = installedId(st, "cargo");
+    await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-cargo"));
+    ok("E1 拖到异类型舱位被拒绝（仓储舱原样）", installedId(st, "cargo") === cargoBefore, installedId(st, "cargo"));
+    ok("E2 被拒后精炼环仍在库中", stockIds(st).indexOf("module_smelt_01") >= 0, stockIds(st).join(","));
+
+    // === F. 引擎层：replaceModule 的失败回滚 ===
+    var r1 = B.replaceModule(st, "smelt", "module_cargo_01");
+    ok("F1 类型不兼容时 replaceModule 报错", !r1.ok, r1.ok ? "ok" : r1.err);
+    ok("F2 失败后原舱段仍在原位（回滚生效）", installedId(st, "smelt") === "module_smelt_02", installedId(st, "smelt"));
+    ok("F3 失败后 installed 数量不变", st.base.modules.installed.length === st.base.modules.owned.length - 1,
+      st.base.modules.installed.length);
+    var r2 = B.replaceModule(st, "core", "module_smelt_01");
+    ok("F4 唯一核心拒绝 replaceModule", !r2.ok, r2.ok ? "ok" : r2.err);
+    var r3 = B.replaceModule(st, "smelt", "module_smelt_02");
+    ok("F5 换成已装在同一舱位的同一件 = 拒绝", !r3.ok, r3.ok ? "ok" : r3.err);
+
+    // === G. 舱位详情弹窗：模块库列表退役，改一行指引（决策 ④） ===
+    // 腾空发明舱：把它的模块拆下（引擎直调，避免依赖拖拽布局）
+    B.uninstallModule(st, "invent");
+    await toBase();
+    await clickEl(q(".base-module.base-invent"));
+    await wait(500);
+    var tip = q(".base-module-library-tip");
+    ok("G1 详情里有「装配方式」一行指引", !!tip);
+    ok("G2 指引提到舱段库", tip ? tip.textContent.indexOf("舱段库") >= 0 : false, tip ? tip.textContent.slice(0, 40) : "");
+    ok("G3 旧的「安装到该舱位」按钮已退役", qa(".base-module-choice").length === 0,
+      "n=" + qa(".base-module-choice").length);
+    ok("G4 指引给出库中可用数量", tip ? tip.textContent.indexOf("个可用") >= 0 : false,
+      tip ? tip.textContent : "");
+
+    // === H. 收尾：零未捕获错误 ===
+    await wait(400);
+    ok("H1 无未捕获运行时错误", ERR.length === 0, ERR.join(" | "));
+    ok("H2 收尾时库/舰船图同时存在（没有互相踩坏）", !!q("#mod-stock") && !!q(".base-stage.has-stock .base-layout"));
+
+    dump();
+  })().catch(function (e) {
+    ok("harness 未抛异常", false, e && e.message ? e.message : String(e));
+    dump();
+  });
+})();
+</script>
+</body>
+</html>

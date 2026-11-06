@@ -28,7 +28,10 @@
 
     ok("进入舰基页", !!q(".base-layout"), "layout=" + !!q(".base-layout"));
     if (!q(".base-layout")) { dump(); return; }
-    ok("舱段卡片 9 张（含核心）", qa(".base-layout .base-module").length === 9, "n=" + qa(".base-layout .base-module").length);
+    // 不钉死数量：舱段类型会随版本增删（2026-11-03 新增「制造车间」），一律按船体拓扑推导。
+    const expectCards = Object.keys(w.NSK.Data.Ships.BASE_MODULES).length + 1;   // 各类型各一 + 唯一核心
+    ok("舱段卡片数 = 舱段类型数 + 核心", qa(".base-layout .base-module").length === expectCards,
+      "n=" + qa(".base-layout .base-module").length + " / expect " + expectCards);
     ok("提示条已渲染", !!q(".base-drag-hint b") && q(".base-drag-hint b").textContent.indexOf("拖动舱段") >= 0);
     ok("初始无「恢复默认布局」按钮（未自定义）", !qa('[data-act="baseSlotReset"]').length);
 
@@ -46,6 +49,16 @@
     ok("阈值内点击仍打开舱位详情", (q(".base-focus-panel h3") || {}).textContent === "发明舱",
       "h3=" + ((q(".base-focus-panel h3") || {}).textContent || ""));
     ok("点击后未留下拖拽残留类", !q(".base-module.dragging") && !q(".base-module.drop-target"));
+    // 工业舱段现在打开的是「舱段工作台」浮层（2026-11-03 迁移），必须关掉：
+    // 它的 .wb-overlay 覆盖全屏，留着会让后续所有 elementFromPoint 命中遮罩，
+    // 拖拽用例集体假红（曾 8 条误报）。非工业舱段才走 BaseInfo。
+    (function () {
+      const Wb = w.NSK.UI && w.NSK.UI.Workbench;
+      if (Wb && Wb.close) Wb.close();
+      const Bi = w.NSK.UI && w.NSK.UI.BaseInfo;
+      if (Bi && Bi.close) Bi.close();
+    })();
+    ok("浮层已关闭（遮罩不残留）", !q(".wb-overlay.active") && !q(".bi-overlay.active"));
 
     const energy = q(".base-module.base-energy");
     const dock = q(".base-module.base-dock");
