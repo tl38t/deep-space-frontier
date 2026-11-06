@@ -145,7 +145,7 @@
 <script src="js/data/factions.js"></script>
 <script src="js/engine/state.js"></script>
 <script src="js/data/names.js"></script>
-<script src="js/data/asset-prompts.js?v=2"></script>
+<script src="js/data/asset-prompts.js?v=3"></script>
 <script src="assets/portraits/npc/manifest.js?v=2"></script>
 <script>
 (function(){
@@ -982,9 +982,11 @@
     try{ existing = await npcExistingDraws(archId, variantIdx, opts); }catch(_){}
     const used = new Set(existing.map(x=>x.draw));
     let draw = 1;
-    while(used.has(draw) && draw <= AP.NPC_DRAW_MAX) draw++;
-    const name = AP.npcOutName(archId, variantIdx, Object.assign({}, opts, {draw}));
-    return {name, draw, existing: existing.map(x=>x.name)};
+    // 修正越界：先判「未超上限」再判「已占用」。否则 1..MAX 全满时会算出 MAX+1（如 _10）并反复覆盖同一张
+    while(draw <= AP.NPC_DRAW_MAX && used.has(draw)) draw++;
+    const full = draw > AP.NPC_DRAW_MAX;
+    const name = full ? "" : AP.npcOutName(archId, variantIdx, Object.assign({}, opts, {draw}));
+    return {name, draw: full ? AP.NPC_DRAW_MAX : draw, full, existing: existing.map(x=>x.name)};
   }
   // 一次性建齐 14 个原型文件夹（方便手动拖图进去）
   async function initNpcDirs(){
@@ -1299,9 +1301,17 @@
     try{
       const {blob,width,height}=await imageToWebp(fileOrBlob);
       const warn = width<768 ? " ⚠ 宽 "+width+"px 疑似缩略图" : "";
-      const {name,draw} = await npcNextDraw(archId, variantIdx, opts);
+      const nd = await npcNextDraw(archId, variantIdx, opts);
+      if(nd.full){
+        refreshArt();
+        const st=document.querySelector(`[data-savekey="${cssAttr(savekey)}"]`);
+        if(st) setStatus(st, "该 combo 已存满 "+AP.NPC_DRAW_MAX+" 张（NPC_DRAW_MAX），停止写入以免覆盖；调大 asset-prompts.js 的 NPC_DRAW_MAX 或清理旧图后重试", "npc/"+archId, "npc:"+archId);
+        toast("该 combo 已存满 "+AP.NPC_DRAW_MAX+" 张，停止写入以免覆盖");
+        return;
+      }
+      const {name,draw} = nd;
       const sub = "npc/"+AP.npcSubDir(archId);
-      const res=await writeImage(sub, name, blob, {width,height}); // 名字唯一（draw 递增），不会触发覆盖对比
+      const res=await writeImage(sub, name, blob, {width,height}); // 名字唯一（draw 递增且封顶 NPC_DRAW_MAX），不会触发覆盖对比
       if(res.ok) await rebuildNpcManifest(true);                   // 写盘后按磁盘实际情况重建清单
       refreshArt();
       const st=document.querySelector(`[data-savekey="${cssAttr(savekey)}"]`);
