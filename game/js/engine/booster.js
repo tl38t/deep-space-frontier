@@ -69,8 +69,11 @@
   };
   // 槽位 → 技能经验键（神经增强器经验茶模型）。
   // ⚠️ 本作技能键名与 1 代不同：1 代 gasHarvesting/refining/shipEngineering/equipmentEngineering/
-  // boosterEngineering 在本作分别为 gas/refine/manufacture/booster；战斗技能拆分为
-  // combatLaser/combatTurret/missile/defense/capacitor（见 state.js SKILL_KEYS）。
+  // boosterEngineering 在本作分别为 gas/refine/manufacture/manufacture/research；
+  // 战斗技能拆分为 combatLaser/combatTurret/missile/defense/capacitor（见 state.js SKILL_KEYS）。
+  // ⚠️ 值必须是 SKILL_KEYS 里真实存在的 12 项之一：boosterEngineering 在 12 项体系里没有对应键，
+  //    曾直接映射成 "booster" → 写进 eff.skillXpMultBySkill.booster，而 xpMultOf(state,m,"research")
+  //    永远读不到 → 增强剂「经验茶」对反应实验室完全无效。2026-11-03 并入科研（research）。
   // 故此处一律映射到本作键名，combat 桶在 getEffectState 末尾广播到战斗子键。
   const SLOT_XP_SKILL = {
     miningSpeed: "mining", miningYield: "mining",
@@ -79,7 +82,7 @@
     smeltSpeed: "refine", smeltYield: "refine",
     shipSpeed: "manufacture", shipYield: "manufacture",
     equipmentSpeed: "manufacture", equipmentYield: "manufacture",
-    boosterSpeed: "booster", boosterYield: "booster",
+    boosterSpeed: "research", boosterYield: "research",
     combatWeapon: "combat", combatRepair: "combat",
   };
 
@@ -310,8 +313,11 @@
       doubleBoosterChance: 0,
       weaponDamageMultiplier: { laser: 1, missile: 1, cannon: 1 },
       repairMultiplier: { shield: 1, armor: 1, structure: 1 },
-      skillLevelBySkill: { mining: 0, gas: 0, refine: 0, manufacture: 0, booster: 0, archaeology: 0, combat: 0 },
-      skillXpMultBySkill: { mining: 1, gas: 1, refine: 1, manufacture: 1, booster: 1, archaeology: 1, combat: 1 },
+      // ⚠️ 白名单即这两张表：SLOT_XP_SKILL 的值不在这里出现时，写入分支的 `!== undefined`
+      //    会静默跳过（曾因表里只有 "booster"、而 SLOT_XP_SKILL 也写 "booster"，
+      //    看起来自洽，实际整个 "booster" 键全游戏无人读）。现统一为 research。
+      skillLevelBySkill: { mining: 0, gas: 0, refine: 0, manufacture: 0, research: 0, archaeology: 0, combat: 0 },
+      skillXpMultBySkill: { mining: 1, gas: 1, refine: 1, manufacture: 1, research: 1, archaeology: 1, combat: 1 },
       activeEntries: {},
     };
     for (const slot of slots()) {

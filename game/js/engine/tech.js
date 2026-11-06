@@ -224,12 +224,14 @@
     if (state.tech.prog[a.id] !== undefined) delete state.tech.prog[a.id];  // 升级后进度归零
     state.tech.active = null;
     // 科研经验（2026-11-01）：研究**真的完成**才给，与「真正使用才涨」同口径。
-    // 发给发明舱驻舱者；无人驻舱则没人涨。基数用节点标称 sec（不含技能因子，避免负反馈）。
+    // 发给发明舱驻舱者；无人驻舱则没人涨。基数用节点固定 xp（方案 A，与增强剂同量级，
+    // 解耦研究时长 sec 这个「节奏/付费门槛」）；节点漏配 xp 时回退按 sec×0.03 估，避免 0 经验。
+    const rxp = (node.xp != null) ? node.xp : Math.round((node.sec || 0) * 0.03);
     const E2 = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
     const B2 = E2 ? E2.Base : null, S2 = E2 ? E2.Settle : null;
     if (B2 && B2.stationedOfType && S2 && S2.grantBatchXp) {
       const w = B2.stationedOfType(state, "invent");
-      if (w) S2.grantBatchXp(state, w, "research", node.sec || 0);
+      if (w) S2.grantBatchXp(state, w, "research", rxp);
     }
     return { node: node, bonus: node.bonus || {}, level: want };
   }

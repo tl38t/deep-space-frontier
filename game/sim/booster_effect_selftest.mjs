@@ -86,7 +86,11 @@ console.log("[① 技能键名对齐本作]");
   ok("gas 键（非 gasHarvesting）", approx(eff.skillXpMultBySkill.gas, 2.0, 1e-9), eff.skillXpMultBySkill.gas);
   ok("refine 键（非 refining）", approx(eff.skillXpMultBySkill.refine, 2.0, 1e-9), eff.skillXpMultBySkill.refine);
   ok("manufacture 键（非 shipEngineering）", approx(eff.skillXpMultBySkill.manufacture, 2.0, 1e-9), eff.skillXpMultBySkill.manufacture);
-  ok("booster 键（非 boosterEngineering）", approx(eff.skillXpMultBySkill.booster, 2.0, 1e-9), eff.skillXpMultBySkill.booster);
+  // boosterYield 槽（1 代 boosterEngineering）→ 本作 research（2026-11-03 并入科研）。
+  // ⚠️ 历史：这里曾断言 skillXpMultBySkill.booster === 2.0 —— 一个 SKILL_KEYS 里不存在的键。
+  //    断言通过反而把死键固化了：xpMultOf(state,m,"research") 永远读不到它，经验茶形同摆设。
+  ok("boosterYield 槽 → research 键（非 boosterEngineering / booster 死键）", approx(eff.skillXpMultBySkill.research, 2.0, 1e-9), eff.skillXpMultBySkill.research);
+  ok("不再产出体系外的 booster 键", eff.skillXpMultBySkill.booster === undefined, eff.skillXpMultBySkill.booster);
   ok("combat 桶 → combatLaser=2", approx(eff.skillXpMultBySkill.combatLaser, 2.0, 1e-9), eff.skillXpMultBySkill.combatLaser);
   ok("combat 桶 → combatTurret=2", approx(eff.skillXpMultBySkill.combatTurret, 2.0, 1e-9), eff.skillXpMultBySkill.combatTurret);
   ok("combat 桶 → missile=2", approx(eff.skillXpMultBySkill.missile, 2.0, 1e-9), eff.skillXpMultBySkill.missile);
