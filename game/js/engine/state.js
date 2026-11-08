@@ -99,7 +99,7 @@
   // 2026-11-01 用户定案（见 深空星疆·技能体系_13项设计稿.md）：
   //   战斗攻击三系独立 → combatLaser / combatTurret / missile（原 command 已删，导弹不再借用指挥）；
   //   gas 承担气体采集（原 scanning 并入）、research 取代 invent（科研 = 科技研究 / 增强剂 / 蓝图）；
-  //   capacitor / logistics 为新增后勤项，各接一处既有乘区。
+  //   capacitor 为 combat 系技能（对回 1 代：战斗涨经验、效果降跃迁燃料消耗），logistics 为新增后勤项（物流岗涨经验）。
   // ⚠️ drones（无人机）用户定「以后再说」，**不进本表** —— 有 key 但无人读就是死技能，本轮的
   //    全部目的就是消灭死技能（12 项每项都必须既「能涨」又「有用」，见 sim/skill_matrix.mjs）。
   const SKILL_KEYS = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "logistics"];

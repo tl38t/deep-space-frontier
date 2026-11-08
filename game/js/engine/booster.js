@@ -390,7 +390,7 @@
     }
     // 战斗神经加成广播：combat 桶 → 本作战斗子技能键（combatLaser/combatTurret/missile/defense/capacitor）。
     // 1 代按 laserOps/cannonOps/missileOperations/targeting/... 十个子键广播；本作战斗技能键已重构为
-    // combatLaser/combatTurret/missile/defense，电容为 capacitor（物流副技能，但属战斗技能族），
+    // combatLaser/combatTurret/missile/defense，电容为 capacitor（combat 系技能：战斗涨经验、效果降跃迁燃料消耗），
     // 故广播到这五个本作键，保证「战斗增强剂」经验茶作用于本作实际战斗经验结算。
     const combatMult = Number(eff.skillXpMultBySkill.combat) || 1;
     if (combatMult !== 1) {

@@ -165,7 +165,7 @@
     if (node && node.trialOpen === false) return { ok: false, err: "该星域试玩期未开放" };
     const T = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
     const fuelMult = (T && T.fuelMult) ? T.fuelMult(state) : 1;
-    const need = edge.fuelCost * fuelMult;   // 科技树·跃迁增效：实测消耗折算（校验与扣减同一值）
+    const need = edge.fuelCost * fuelMult;   // 科技树·跃迁增效：校验与扣减同一值（电容管理只减战斗燃料，不影响跃迁 warpFuel）
     if (state.base.fuel < need) return { ok: false, err: "跃迁燃料不足" };
     state.base.fuel -= need;
     state.base.nodeId = toNodeId;
@@ -226,6 +226,29 @@
   }
 
   // 主结算
+  // —— 燃料效率乘区接口（对回 1 代 getArchaeologyFuelCostState 的两项减免）——
+  // 本作暂缺「船体燃料效率 ship.fuelEfficiency」与「考古燃料效率改装件 archaeologyFuelEfficiency」字段，
+  // 按 1.0 占位；后续接入时只改此两处 TODO 钩子 return 真实乘区，调用方（archaeologyFuelCost）不变。
+  function fuelEfficiencyMult(state, m) {
+    const Data = (typeof window !== "undefined" && window.NSK) ? window.NSK.Data : null;
+    let mult = 1;
+    // TODO(hull): 船体燃料效率 —— const ship = Data && Data.Ships && Data.Ships.shipById(m.shipId); if (ship && typeof ship.fuelEfficiency === "number") mult *= ship.fuelEfficiency;
+    // TODO(mod):  考古燃料效率改装件 —— const mod = ...; if (mod && typeof mod.archaeologyFuelEfficiency === "number") mult *= mod.archaeologyFuelEfficiency;
+    return mult;
+  }
+
+  // 考古每周期燃料（对回 1 代 getArchaeologyFuelCostState：baseFuel = Σ上场装备 combat.fuelCost，
+  //   × 船体燃料效率 × 考古燃料效率改装件 × 电容折扣）。后两项效率暂无字段 → 1.0 占位，留接口。
+  function archaeologyFuelCost(state, m) {
+    const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
+    const baseFuel = Combat && Combat.fittedFuelCost ? Combat.fittedFuelCost(m) : 0;
+    const eff = fuelEfficiencyMult(state, m);
+    const capXp = (m && m.skills && typeof m.skills.capacitor === "number") ? m.skills.capacitor : 0;
+    const capLv = levelOf(capXp);   // xp=0 → levelOf=1（Lv1 电容即有 2% 折扣，对回 1 代）
+    const capMult = 1 / (1 + capLv * 0.02);   // 1 代 selectors.js:2671：电容管理降燃料消耗 2%/级，战斗+考古通用
+    return baseFuel * eff * capMult;
+  }
+
   function settle(state, now) {
     const raw = Math.max(0, (now - state.lastSeen) / 1000);
     const dt = Math.min(raw, MAX_OFFLINE_SECONDS); // 封顶：超出部分丢弃（标准放置做法）
@@ -296,6 +319,9 @@
             if (!m || m.destroyed) continue;
             for (const key of c.keys) grantBatchXp(state, m, key, COMBAT_VOLLEY_XP * volleys * inten);
             if (r.damage > 0) grantBatchXp(state, m, "defense", COMBAT_DEF_XP * volleys * inten);
+            // 电容管理（对回 1 代 combat 系技能）：战斗涨经验，量级与武器技能同锚（volleys×inten）。
+            // 1 代真值 volleyFuel×0.3 依赖 volleyFuel 追踪，本作战斗不扣燃料，故用同口径 volleys×inten 等价表达（待标定）。
+            grantBatchXp(state, m, "capacitor", COMBAT_VOLLEY_XP * volleys * inten);
           }
         }
         // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
@@ -338,20 +364,8 @@
       }
     }
 
-    // 1) 燃料回复
-    //    电容管理（2026-11-01 技能体系）：驻能源舱者的 capacitor 等级提升燃料再生 ×(1+lv×2%)。
-    //    为什么不挂在「减少消耗」上：本作燃料只有 moveBase 一处消耗，是玩家点按钮触发的，
-    //    没有「谁在执行」这个角色；而再生是持续的，驻舱者正好对应。
-    let capMult = 1;
-    {
-      const E0 = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
-      const B0 = E0 ? E0.Base : null;
-      if (B0 && B0.stationedOfType) {
-        const w = B0.stationedOfType(state, "energy");
-        if (w) capMult = 1 + B0.memberSkillLv(w, "capacitor") * 0.02;
-      }
-    }
-    state.base.fuel = Math.min(state.base.fuelMax, state.base.fuel + FUEL_REGEN * dt * capMult);
+    // 1) 燃料回复（基础再生，与电容管理无关；电容管理效果为降战斗/考古燃料消耗，见 Combat.advance / archaeologyFuelCost）
+    state.base.fuel = Math.min(state.base.fuelMax, state.base.fuel + FUEL_REGEN * dt);
 
     // 1.5) 物流补偿累积（由 logistics 岗成员持续产生，软顶 70pp）
     if (Logistics) Logistics.accumulate(state, dt);
@@ -428,6 +442,12 @@
             let guard = 0;
             while (a.exploreProgress >= 1 && guard < 2000) {
               guard++;
+              // 考古燃料扣减（对回 1 代 getArchaeologyFuelCostState：每成功解析周期扣 baseFuel×效率×电容折扣；
+              //   不足则本周期不推进，保留进度待下 tick 重试）。后两项效率暂无字段 → 1.0 占位，留接口。
+              const fuelPool = (state.base && typeof state.base.fuel === "number") ? state.base.fuel : 0;
+              const fuelCost = archaeologyFuelCost(state, m);
+              if (fuelPool < fuelCost) break;
+              state.base.fuel = Math.max(0, state.base.fuel - fuelCost);
               a.exploreProgress -= 1;
               if (!Arch) break;
               const res = Arch.cycle(state, m, ebody, focus, fit);
@@ -468,10 +488,10 @@
         const sk = (a.trainSkill && m.skills && m.skills[a.trainSkill] !== undefined) ? a.trainSkill : "combatLaser";
         m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
       } else if (a.type === "logistics") {
-        // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景；
-        // 电容管理作副技能（0.5×）——它管的是航程开销，与调度是同一件事的两面。
+        // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景。
+        // 电容管理已对回 1 代口径：战斗涨经验（见战斗块）、效果降战斗/考古燃料消耗（见 Combat.advance / archaeologyFuelCost），
+        // 不再在物流岗顺带涨（1 代电容管理为 combat 系，与跃迁 warpFuel 分离）。
         m.skills.logistics = (m.skills.logistics || 0) + XP_RATE.logistics * dt * passionMult(m, "logistics") * xpMultOf(state, m, "logistics");
-        m.skills.capacitor = (m.skills.capacitor || 0) + XP_RATE.capacitor * 0.5 * dt * passionMult(m, "capacitor") * xpMultOf(state, m, "capacitor");
       } else if (a.type === "station") {
         // 驻舱（2026-11-01，用户定「驻舱不涨技能」）：**只有演训舱按时间涨经验** ——
         // 全游戏唯一「不产出也涨」的通道，玩家付的是一个人力。
@@ -602,5 +622,6 @@
     MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
     ARCH_XP_BY_BAND, archXpForBand,
     COMBAT_VOLLEY_XP, COMBAT_DEF_XP, COMBAT_INTENSITY_BY_BAND, combatIntensity,
+    fuelEfficiencyMult, archaeologyFuelCost,
   };
 });

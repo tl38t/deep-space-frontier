@@ -181,7 +181,7 @@
     const out = {
       weapons: [], dpsByType: { laser: 0, missile: 0, cannon: 0 },
       ammoRate: { laser: 0, missile: 0, cannon: 0 },
-      repair: 0, dmgRed: 0,
+      repair: 0, dmgRed: 0, fuelPerVolley: 0,
     };
     const fit = m && m.fitted;
     if (!fit) return out;
@@ -192,6 +192,7 @@
         const eq = Eq ? Eq.byId(id) : null;
         if (!eq || !eq.combat) continue;
         const c = eq.combat;
+        out.fuelPerVolley += (c.fuelCost || 0);   // 1 代每齐射燃料 = Σ参战装备 combat.fuelCost（武器+维修+损伤控制）
         if (c.kind === "weapon") {
           const skKey = SKILL_OF_WEAPON[c.weaponType];
           const lv = (Settle && m.skills && skKey) ? Settle.levelOf(m.skills[skKey]) : 1;
@@ -238,6 +239,36 @@
     return null;
   }
 
+  // 成员战斗装配的「每齐射燃料」（对回 1 代 getVolleyFuelCostState / 考古 getArchaeologyFuelCostState 的 baseFuel）。
+  // 船绑定成员：m.fitted 即该成员舰的装配，与 1 代「考古舰装载装备」完全等价，无需区分舰/成员。
+  function fittedFuelCost(m) {
+    const Eq = _Eq();
+    let sum = 0;
+    if (!m || !m.fitted || !Eq) return sum;
+    for (const slot of ["high", "mid", "low", "rig"]) {
+      for (const id of (m.fitted[slot] || [])) {
+        const eq = Eq.byId(id);
+        const c = eq && eq.combat;
+        if (!c) continue;
+        sum += (c.fuelCost || 0);
+      }
+    }
+    return sum;
+  }
+
+  // 舰队最高电容管理等级（1 代 squad 取最优电容管理成员统筹能效）。
+  function maxCapacitorLevel(state) {
+    const S = _Settle();
+    let lv = 0;
+    if (!state || !state.members || !S) return lv;
+    for (const m of state.members) {
+      if (!m || m.destroyed || !m.skills) continue;
+      const x = m.skills.capacitor;
+      if (typeof x === "number") { const l = S.levelOf(x); if (l > lv) lv = l; }  // xp=0 → levelOf=1（Lv1 电容即有 2% 折扣）
+    }
+    return lv;
+  }
+
   // 预聚合某节点战斗参数（O(成员) 一次）。无参战成员返回 null。
   function prepareNode(state, nodeId) {
     const Data = _Data(), Settle = _Settle(), Pirates = _Pirates();
@@ -261,7 +292,7 @@
     let dpsByType = { laser: 0, missile: 0, cannon: 0 };
     let ammoRate = { laser: 0, missile: 0, cannon: 0 };
     let weapons = [];
-    let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0;
+    let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0, fuelPerVolley = 0;
     // 指挥塔全局加成只算一次（驻塔者不参战，是远程指挥）
     const cmdBuff = stationCommandBuff(state);
 
@@ -273,6 +304,7 @@
 
       // 装配战斗贡献（每门武器按自己的类型取技能：命中 +lv×4、伤害 ×(1+lv×0.02)，见 scanFit）
       const f = scanFit(m, fleet.evasion, fleet.split, cmdBuff, state);
+      fuelPerVolley += f.fuelPerVolley;
       for (const t of AMMO_TYPES) {
         dpsByType[t] += f.dpsByType[t] || 0;
         ammoRate[t] += f.ammoRate[t] || 0;
@@ -344,6 +376,7 @@
       dpsByType: dpsByType,
       ammoRate: ammoRate,
       weapons: weapons,
+      fuelPerVolley: fuelPerVolley,
       repairPerSec: repairPerSec,
       dmgReduction: dmgReduction,
       incomingDps: incomingDps,
@@ -620,7 +653,7 @@
     for (const m of P.members) pool += Math.max(0, (m.hp && m.hp.shield) || 0) + Math.max(0, (m.hp && m.hp.armor) || 0) + Math.max(0, (m.hp && m.hp.structure) || 0);
     const maxFightSec = P.incomingDps > 0 ? (pool / P.incomingDps) : dt;
 
-    let dmg = 0, fireSec = 0, ammoUsed = null, allDry = false, hits = 0, misses = 0, simmed = false;
+    let dmg = 0, fireSec = 0, ammoUsed = null, allDry = false, hits = 0, misses = 0, simmed = false, fuelStarved = false;
     let noWeapon = false;
 
     if (focus && dt > 0 && dt <= SIM_MAX_SEC) {
@@ -652,6 +685,30 @@
       allDry = false;                       // 这次不是弹尽，是血尽
     }
 
+    // 燃料截断（对回 1 代「燃料耗尽即停火」：战斗燃料按每齐射扣，烧光则本场停火）。
+    // 本作唯一燃料池 = base.fuel（与跃迁共用，资源描述已声明「派遣小队与基地迁移」）。
+    // perSec = 参战装备每齐射燃料 × 电容折扣 ÷ ROUND_SEC；capMult = 1/(1+最高电容等级×0.02)（1 代 selectors.js:2671）。
+    // 燃料不足以支撑整场时，按可用秒数等比缩放产出（与上方「血尽」同口径）。
+    const fuelPool = (state.base && typeof state.base.fuel === "number") ? state.base.fuel : 0;
+    const fuelPerVolley = (P.fuelPerVolley || 0);
+    if (fuelPerVolley > 0 && fuelPool > 0) {
+      const capLv = maxCapacitorLevel(state);   // 舰队最高电容等级统筹能效（1 代 squad 取最优）
+      const capMult = 1 / (1 + capLv * 0.02);
+      const perSec = fuelPerVolley * capMult / ROUND_SEC;
+      const fuelMaxSec = fuelPool / perSec;
+      if (fuelMaxSec < fireSec - 1e-9) {
+        const ratio = fuelMaxSec / fireSec;
+        dmg *= ratio;
+        fireSec = fuelMaxSec;
+        if (ammoUsed) for (const k in ammoUsed) ammoUsed[k] *= ratio;
+        state.base.fuel = 0;          // 烧光（1 代 clamp 到 0 后门禁停火）
+        fuelStarved = true;
+        allDry = false;
+      } else {
+        state.base.fuel = Math.max(0, state.base.fuel - perSec * fireSec);
+      }
+    }
+
     wHp += dmg;
     const waves = P.fleetHp > 0 ? Math.floor(wHp / P.fleetHp) : 0;
     if (P.fleetHp > 0) wHp -= waves * P.fleetHp;
@@ -668,6 +725,7 @@
       damage: damage,
       fightSec: fireSec,
       wiped: wiped,
+      fuelStarved: fuelStarved,
       allDry: allDry,
       noWeapon: noWeapon,
       ammoUsed: ammoUsed,
@@ -723,6 +781,6 @@
     AMMO_TYPES, AMMO_OF, AMMO_CN, COUNTER_OF, LAYER_ORDER,
     SKILL_OF_WEAPON, weaponSkillOf,
     hitCoeff, counterMult, layerAt, layerDps, fullWaveSec,
-    prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp,
+    prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp, fittedFuelCost,
   };
 });

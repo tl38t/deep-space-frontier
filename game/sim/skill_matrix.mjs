@@ -244,13 +244,14 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
   m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 };
   m.status = "dispatched";
   m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;  // 放大 hp 排除阵亡干扰，专测经验机制
-  const x0 = { L: m.skills.combatLaser, T: m.skills.combatTurret, M: m.skills.missile, D: m.skills.defense };
+  const x0 = { L: m.skills.combatLaser, T: m.skills.combatTurret, M: m.skills.missile, D: m.skills.defense, C: m.skills.capacitor };
   tick(st, now, 30);
-  const dL = m.skills.combatLaser - x0.L, dT = m.skills.combatTurret - x0.T, dM = m.skills.missile - x0.M, dD = m.skills.defense - x0.D;
+  const dL = m.skills.combatLaser - x0.L, dT = m.skills.combatTurret - x0.T, dM = m.skills.missile - x0.M, dD = m.skills.defense - x0.D, dC = m.skills.capacitor - x0.C;
   ok("激光:剿匪(装激光) 30s 后 xp 增长", dL > 0, "+" + dL.toFixed(1));
   ok("炮台:未装炮台 → 零增长", Math.abs(dT) < 1e-9, "+" + dT.toFixed(1));
   ok("导弹:未装导弹 → 零增长（且不写进 command）", Math.abs(dM) < 1e-9 && m.skills.command === undefined, "+" + dM.toFixed(1));
   ok("防御:受创 → 增长（与武器归属独立）", dD > 0, "+" + dD.toFixed(1));
+  ok("电容管理:剿匪 30s 后 xp 增长（对回 1 代 combat 系）", dC > 0, "+" + dC.toFixed(1));
 }
 {
   // 炮台 / 导弹 各自能涨（按舰归驾驶成员，装配对应武器才涨）
@@ -417,21 +418,65 @@ function logisticsRun(lv, sec) {
 {
   const r = logisticsRun(0, 30);
   ok("物流:物流岗 30s 后 xp 增长", r.xp > 0, "xp=" + r.xp.toFixed(1));
-  ok("电容管理:物流岗顺带涨（副 0.5×）", r.capXp > 0 && r.capXp < r.xp, "cap=" + r.capXp.toFixed(1) + " log=" + r.xp.toFixed(1));  const lo = logisticsRun(1, 30), hi = logisticsRun(44, 30);
+  ok("电容管理:物流岗不再顺带涨（已挪至战斗）", Math.abs(r.capXp) < 1e-9, "cap=" + r.capXp.toFixed(1));  const lo = logisticsRun(1, 30), hi = logisticsRun(44, 30);
   ok("物流:技能提升 → 补偿累积更快", hi.comp > lo.comp * 1.05,
     "Lv1=" + lo.comp.toFixed(2) + " Lv10=" + hi.comp.toFixed(2) + " (" + pct(hi.comp, lo.comp) + ")");
 }
 {
-  // 电容管理：驻能源舱 → 燃料再生更快
+  // 电容管理 × 跃迁：1 代 warpFuel 与战斗燃料分离，电容管理只减战斗/考古燃料 → 跃迁实耗 = 原价
+  const adj = Data.StarMap.adjacency;
   const st = fresh();
   const m = solo(st);
-  st.base.fuel = 0;
-  const noOne = (function () { const s2 = fresh(); solo(s2); s2.base.fuel = 0; tick(s2, now, 10); return s2.base.fuel; })();
   setLv(m, "capacitor", 10);
-  station(st, "energy", m);
-  tick(st, now, 10);
-  ok("电容管理:驻能源舱 Lv10 → 燃料再生更快", st.base.fuel > noOne * 1.05,
-    "无人=" + noOne.toFixed(3) + " Lv10=" + st.base.fuel.toFixed(3));
+  st.base.fuel = 99999; st.base.fuelMax = 99999;
+  const edges = adj(st.starMap)[st.base.nodeId] || [];
+  const edge = edges.find(e => { const nd = Data.StarMap.nodeById(st.starMap, e.to); return nd && nd.trialOpen !== false; }) || edges[0];
+  const before = st.base.fuel;
+  const r = Settle.moveBase(st, edge.to);
+  const spent = r.ok ? (before - st.base.fuel) : -1;
+  ok("电容管理: 不影响跃迁燃料（1 代 warpFuel ≠ 战斗燃料）", r.ok && Math.abs(spent - edge.fuelCost) < 1e-6,
+    "原价=" + edge.fuelCost.toFixed(2) + " 实耗=" + spent.toFixed(2));
+}
+{
+  // 战斗燃料：剿匪扣 base.fuel（对回 1 代战斗燃料）；电容每级降耗 2%（×1/(1+Lv×0.02)）
+  function combatFuelOf(st, capLv) {
+    const m = solo(st);
+    if (capLv != null) setLv(m, "capacitor", capLv);
+    const n = st.starMap.nodes.find(x => !!x.raid);
+    m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
+    m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 };
+    m.status = "dispatched";
+    m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;
+    st.base.fuel = 1e9; st.base.fuelMax = 1e9;   // 大池避免再生成上限干扰（真实 fuelMax=200）
+    tick(st, now, 30);
+    return 1e9 - st.base.fuel;
+  }
+  const lo = fresh(), hi = fresh();
+  const f0 = combatFuelOf(lo, 0);      // 电容 Lv1（xp=0 → levelOf=1）
+  const f10 = combatFuelOf(hi, 10);    // 电容 Lv10
+  ok("战斗燃料: 剿匪 30s 消耗 fuel（对回 1 代战斗燃料）", f0 > 0 && f0 < 1e9, "耗油=" + f0.toFixed(2));
+  // 折扣比 = (1/(1+10×0.02)) / (1/(1+1×0.02))（lo 为 Lv1 起步）
+  const expRatio = (1 / (1 + 10 * 0.02)) / (1 / (1 + 1 * 0.02));
+  ok("电容管理: Lv10 战斗燃料降耗比 ≈ (1+1×0.02)/(1+10×0.02)", f10 < f0 && Math.abs(f10 / f0 - expRatio) < 0.02,
+    "Lv1=" + f0.toFixed(2) + " Lv10=" + f10.toFixed(2) + " 实测比=" + (f10 / f0).toFixed(4) + " 期望比=" + expRatio.toFixed(4));
+}
+{
+  // 考古燃料：baseFuel = Σ上场装备 combat.fuelCost × 电容折扣（Lv1 起步）；接口占位效率=1
+  const st = fresh();
+  const m = solo(st);
+  m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
+  const eq = Data.Equipment.byId("t1_small_laser");
+  const fc = eq && eq.combat ? eq.combat.fuelCost : 0;
+  m.skills.capacitor = 0;                       // xp=0 → levelOf=1，电容折扣 1/(1+1×0.02)
+  const cost0 = Settle.archaeologyFuelCost(st, m);
+  const exp0 = fc / (1 + Settle.levelOf(0) * 0.02);
+  setLv(m, "capacitor", 10);
+  const cost10 = Settle.archaeologyFuelCost(st, m);
+  const expect = fc / (1 + 10 * 0.02);
+  ok("考古燃料: 基础 = 武器 combat.fuelCost × 电容折扣（Lv1 起步）", Math.abs(cost0 - exp0) < 1e-9, "cost0=" + cost0.toFixed(4) + " 期望=" + exp0.toFixed(4));
+  ok("考古燃料: Lv10 电容降耗 ×1/(1+10×0.02)", Math.abs(cost10 - expect) < 1e-9, "cost10=" + cost10.toFixed(4) + " 期望=" + expect.toFixed(4));
+  // 燃料效率接口当前为 1.0 占位（后续接 hull.fuelEfficiency + mod.archaeologyFuelEfficiency）
+  ok("燃料效率接口: 当前返回 1.0 占位（待接 hull + mod 两项）", Settle.fuelEfficiencyMult(st, m) === 1, "v=" + Settle.fuelEfficiencyMult(st, m));
 }
 
 // ── 6. 反向断言：锁住 2026-11-01 的三条口径 ────────────────────
