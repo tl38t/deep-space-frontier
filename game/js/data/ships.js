@@ -25,13 +25,13 @@
   //   frigate/destroyer 可在起始本体（空间站 Lv1，bodyLevel=0）直接建造；
   //   cruiser/battlecruiser 需升级核心一次（星堡 Lv2）；battleship/capital 需 Lv3；supercapital 需 Lv4。
   const SHIPS = {
-    frigate:      { id: "frigate",      name: "启程级", classTier: 1, bodyLevelReq: 0, cost: { struct: 2, prop: 2, weapon: 2 },          buildTime: 30,  xp: 15,  slots: 2, dodge: 22, hp: { shield: 240,  armor: 320,  structure: 460 },  archaeologyScanStrength: 5 },
-    destroyer:     { id: "destroyer",     name: "星矛级", classTier: 1, bodyLevelReq: 0, cost: { struct: 3, prop: 3, weapon: 4 },           buildTime: 45, xp: 23, slots: 3, dodge: 18, hp: { shield: 360,  armor: 520,  structure: 680 },  archaeologyScanStrength: 8 },
-    cruiser:       { id: "cruiser",       name: "铁卫级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 5, weapon: 4 },           buildTime: 70, xp: 39, slots: 4, dodge: 12, hp: { shield: 700,  armor: 980,  structure: 1300 }, archaeologyScanStrength: 12 },
-    battlecruiser: { id: "battlecruiser", name: "闪刃级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 4, weapon: 4 },           buildTime: 90, xp: 50, slots: 5, dodge: 10, hp: { shield: 1000, armor: 1400, structure: 1900 }, archaeologyScanStrength: 14 },
-    battleship:    { id: "battleship",    name: "岩脊级", classTier: 3, bodyLevelReq: 2, cost: { struct: 6, prop: 5, weapon: 5 },           buildTime: 100, xp: 62, slots: 6, dodge: 8, hp: { shield: 1800, armor: 2600, structure: 3400 }, archaeologyScanStrength: 18 },
-    capital:       { id: "capital",       name: "山海级", classTier: 3, bodyLevelReq: 2, cost: { struct: 10, prop: 8, weapon: 8 },           buildTime: 300, xp: 186, slots: 8, dodge: 5, hp: { shield: 3000, armor: 4200, structure: 5600 }, archaeologyScanStrength: 24 },
-    supercapital:  { id: "supercapital",  name: "星渊泰坦", classTier: 4, bodyLevelReq: 3, cost: { struct: 18, prop: 16, weapon: 18 },        buildTime: 600, xp: 408, slots: 10, dodge: 3, hp: { shield: 6000, armor: 9000, structure: 12000 }, archaeologyScanStrength: 32 },
+    frigate:      { id: "frigate",      name: "启程级", classTier: 1, bodyLevelReq: 0, cost: { struct: 2, prop: 2, weapon: 2 },          buildTime: 30,  xp: 15,  slots: 2, dodge: 22, hp: { shield: 240,  armor: 320,  structure: 460 },  archaeologyScanStrength: 5,  fuelEfficiency: 0.85 }, // 燃料效率：小型探索舰更省（提议值，待标定）
+    destroyer:     { id: "destroyer",     name: "星矛级", classTier: 1, bodyLevelReq: 0, cost: { struct: 3, prop: 3, weapon: 4 },           buildTime: 45, xp: 23, slots: 3, dodge: 18, hp: { shield: 360,  armor: 520,  structure: 680 },  archaeologyScanStrength: 8,  fuelEfficiency: 0.90 },
+    cruiser:       { id: "cruiser",       name: "铁卫级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 5, weapon: 4 },           buildTime: 70, xp: 39, slots: 4, dodge: 12, hp: { shield: 700,  armor: 980,  structure: 1300 }, archaeologyScanStrength: 12, fuelEfficiency: 0.95 },
+    battlecruiser: { id: "battlecruiser", name: "闪刃级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 4, weapon: 4 },           buildTime: 90, xp: 50, slots: 5, dodge: 10, hp: { shield: 1000, armor: 1400, structure: 1900 }, archaeologyScanStrength: 14, fuelEfficiency: 1.00 },
+    battleship:    { id: "battleship",    name: "岩脊级", classTier: 3, bodyLevelReq: 2, cost: { struct: 6, prop: 5, weapon: 5 },           buildTime: 100, xp: 62, slots: 6, dodge: 8, hp: { shield: 1800, armor: 2600, structure: 3400 }, archaeologyScanStrength: 18, fuelEfficiency: 1.10 },
+    capital:       { id: "capital",       name: "山海级", classTier: 3, bodyLevelReq: 2, cost: { struct: 10, prop: 8, weapon: 8 },           buildTime: 300, xp: 186, slots: 8, dodge: 5, hp: { shield: 3000, armor: 4200, structure: 5600 }, archaeologyScanStrength: 24, fuelEfficiency: 1.25 },
+    supercapital:  { id: "supercapital",  name: "星渊泰坦", classTier: 4, bodyLevelReq: 3, cost: { struct: 18, prop: 16, weapon: 18 },        buildTime: 600, xp: 408, slots: 10, dodge: 3, hp: { shield: 6000, armor: 9000, structure: 12000 }, archaeologyScanStrength: 32, fuelEfficiency: 1.40 },
   };
 
   // 舰船装配槽位布局（2026-10-31 舰船装配系统）：把原有扁平 slots 拆成 high/mid/low/rig 四槽，总数与 slots 对齐。

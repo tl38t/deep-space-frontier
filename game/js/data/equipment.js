@@ -52,6 +52,15 @@
     decoder_t4: { id: "decoder_t4", name: "文物译码器 IV",  slot: "low", level: 55, time: 120, xp:110, cost: { fe_alloy: 900, mx_alloy: 200, hy_gas: 20, morph_alloy: 5 },              bonuses: { archaeologyDecoder: 0.22, archaeologyCopyChance: 0.04 }, cat: "archaeology" },
     decoder_t5: { id: "decoder_t5", name: "文物译码器 V",   slot: "low", level: 80, time: 200, xp:180, cost: { fe_alloy: 2000, mx_alloy: 500, morph_alloy: 12, poly_gas: 40 },           bonuses: { archaeologyDecoder: 0.26, archaeologyCopyChance: 0.07 }, cat: "archaeology" },
 
+    // —— 改装件（rig）：同位素节流器（archaeologyFuelEfficiency，降低考古每周期燃料成本；乘性叠加）——
+    //    仅 battlecruiser 及以上有 rig 槽（slots.js SLOT_LAYOUT），故小舰只能靠船体 fuelEfficiency。
+    //    数值为提议值，待平衡 pass（见数值标定清单）。
+    fe_rig_t1: { id: "fe_rig_t1", name: "同位素节流器 I",   slot: "rig", level: 1,  time: 20,  xp: 14,  cost: { fe_alloy: 40,  ni_alloy: 15 },                                  bonuses: { archaeologyFuelEfficiency: 0.92 }, cat: "archaeology" },
+    fe_rig_t2: { id: "fe_rig_t2", name: "同位素节流器 II",  slot: "rig", level: 15, time: 40,  xp: 35,  cost: { fe_alloy: 160, ni_alloy: 60, mx_alloy: 15 },                       bonuses: { archaeologyFuelEfficiency: 0.86 }, cat: "archaeology" },
+    fe_rig_t3: { id: "fe_rig_t3", name: "同位素节流器 III", slot: "rig", level: 35, time: 70,  xp: 60,  cost: { fe_alloy: 400, ni_alloy: 150, bo_alloy: 25, no_alloy: 12 },         bonuses: { archaeologyFuelEfficiency: 0.80 }, cat: "archaeology" },
+    fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5 },          bonuses: { archaeologyFuelEfficiency: 0.74 }, cat: "archaeology" },
+    fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40 },      bonuses: { archaeologyFuelEfficiency: 0.68 }, cat: "archaeology" },
+
     // —— 高槽：采矿/气采/武器 ——
     t1_mining_laser: { id: "t1_mining_laser", name: "T1采矿激光器", slot: "high", level: 1, time: 15, xp: 8, cost: {fe_alloy: 20, ni_alloy: 10}, bonuses: {miningEfficiency: 0.05}, cat: "mining" },
     t1_gas_harvester: { id: "t1_gas_harvester", name: "T1气云采集器", slot: "high", level: 1, time: 15, xp: 8, cost: {fe_alloy: 20, crude_fullerene: 6}, bonuses: {gasEfficiency: 0.05}, cat: "gas" },
@@ -210,6 +219,7 @@
     archaeologyDecoder: "稀有发现掉率加成",
     archaeologyCycleReduction: "考古周期缩短",
     archaeologyCopyChance: "货柜额外掉落",
+    archaeologyFuelEfficiency: "考古燃料效率",
     // —— 生产/采集/工业线（Phase 2 接入）——
     miningEfficiency: "采矿效率",
     gasEfficiency: "气采效率",

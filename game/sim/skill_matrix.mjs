@@ -258,6 +258,7 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
   // 驾驶(piloting) 每级 +1 闪避（对回 1 代 selectors.js:2619）：prepareNode 返回的 playerDodge 随之提升
   function dodgeOf(lv) {
     const st = fresh(); const n = raidNodeOf(st); const m = solo(st);
+    m.shipId = "frigate";                       // 钉死船型（dodge=22），否则 fresh() 随机船型让对照失真
     m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
     m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 }; m.status = "dispatched";
     m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;
@@ -478,22 +479,22 @@ function logisticsRun(lv, sec) {
     "Lv1=" + f0.toFixed(2) + " Lv10=" + f10.toFixed(2) + " 实测比=" + (f10 / f0).toFixed(4) + " 期望比=" + expRatio.toFixed(4));
 }
 {
-  // 考古燃料：baseFuel = Σ上场装备 combat.fuelCost × 电容折扣（Lv1 起步）；接口占位效率=1
+  // 考古燃料：baseFuel(武器 combat.fuelCost) × hull 燃料效率 × 电容折扣（Lv1 起步）
   const st = fresh();
   const m = solo(st);
+  m.shipId = "frigate";                         // 钉死船型 → hull.fuelEfficiency=0.85
   m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
   const eq = Data.Equipment.byId("t1_small_laser");
   const fc = eq && eq.combat ? eq.combat.fuelCost : 0;
+  const hullEff = Data.Ships.shipById(m.shipId).fuelEfficiency;   // 0.85
   m.skills.capacitor = 0;                       // xp=0 → levelOf=1，电容折扣 1/(1+1×0.02)
   const cost0 = Settle.archaeologyFuelCost(st, m);
-  const exp0 = fc / (1 + Settle.levelOf(0) * 0.02);
+  const exp0 = fc * hullEff / (1 + Settle.levelOf(0) * 0.02);
   setLv(m, "capacitor", 10);
   const cost10 = Settle.archaeologyFuelCost(st, m);
-  const expect = fc / (1 + 10 * 0.02);
-  ok("考古燃料: 基础 = 武器 combat.fuelCost × 电容折扣（Lv1 起步）", Math.abs(cost0 - exp0) < 1e-9, "cost0=" + cost0.toFixed(4) + " 期望=" + exp0.toFixed(4));
+  const expect = fc * hullEff / (1 + 10 * 0.02);
+  ok("考古燃料: 基础 = 武器 combat.fuelCost × 船体效率 × 电容折扣（Lv1 起步）", Math.abs(cost0 - exp0) < 1e-9, "cost0=" + cost0.toFixed(4) + " 期望=" + exp0.toFixed(4));
   ok("考古燃料: Lv10 电容降耗 ×1/(1+10×0.02)", Math.abs(cost10 - expect) < 1e-9, "cost10=" + cost10.toFixed(4) + " 期望=" + expect.toFixed(4));
-  // 燃料效率接口当前为 1.0 占位（后续接 hull.fuelEfficiency + mod.archaeologyFuelEfficiency）
-  ok("燃料效率接口: 当前返回 1.0 占位（待接 hull + mod 两项）", Settle.fuelEfficiencyMult(st, m) === 1, "v=" + Settle.fuelEfficiencyMult(st, m));
 }
 
 // ── 6. 反向断言：锁住 2026-11-01 的三条口径 ────────────────────
@@ -608,6 +609,21 @@ function logisticsRun(lv, sec) {
   // 幂等：再跑一次不能把同一个 xp 再加一遍（存档越读越强是致命 bug）
   Store.normalize(st);
   ok("迁移:重复规范化不会重复累加（幂等）", st.members[0].skills.gas === 500, "gas=" + st.members[0].skills.gas);
+}
+
+// —— 燃料效率乘区（2026-11-08 接入的两项减免：hull.fuelEfficiency + rig 改装件）——
+{
+  const st0 = St.defaultState(now, Data);
+  const fe = (shipId, rigId) => Settle.fuelEfficiencyMult(st0, { shipId, fitted: { high: [], mid: [], low: [], rig: rigId ? [rigId] : [] } });
+  ok("燃料:护卫舰 hull.fuelEfficiency=0.85 生效", Math.abs(fe("frigate") - 0.85) < 1e-9, "mult=" + fe("frigate"));
+  ok("燃料:泰坦 hull.fuelEfficiency=1.40 生效", Math.abs(fe("supercapital") - 1.40) < 1e-9, "mult=" + fe("supercapital"));
+  ok("燃料:rig 节流器 t1(0.92) 乘性叠加到护卫舰", Math.abs(fe("frigate", "fe_rig_t1") - 0.85 * 0.92) < 1e-9, "mult=" + fe("frigate", "fe_rig_t1"));
+  ok("燃料:泰坦 + t5(0.68) 乘性叠加", Math.abs(fe("supercapital", "fe_rig_t5") - 1.40 * 0.68) < 1e-9, "mult=" + fe("supercapital", "fe_rig_t5"));
+  // 考古燃料成本：baseFuel(小型激光 fuelCost=3) × hullEff(0.85) × capMult(Lv1=1/1.02)
+  const mArch = { shipId: "frigate", skills: { capacitor: 0 }, fitted: { high: ["t1_small_laser"], mid: [], low: [], rig: [] } };
+  const afc = Settle.archaeologyFuelCost(st0, mArch);
+  const expectAfc = 3 * 0.85 / 1.02;
+  ok("燃料:archaeologyFuelCost 同时含 hull+电容折扣", Math.abs(afc - expectAfc) < 1e-6, "afc=" + afc.toFixed(4) + " 期望=" + expectAfc.toFixed(4));
 }
 
 console.log("\n======== RESULT: PASS=" + pass + " FAIL=" + fail + " ========");

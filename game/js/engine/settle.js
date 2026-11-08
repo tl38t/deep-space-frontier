@@ -226,14 +226,28 @@
   }
 
   // 主结算
-  // —— 燃料效率乘区接口（对回 1 代 getArchaeologyFuelCostState 的两项减免）——
-  // 本作暂缺「船体燃料效率 ship.fuelEfficiency」与「考古燃料效率改装件 archaeologyFuelEfficiency」字段，
-  // 按 1.0 占位；后续接入时只改此两处 TODO 钩子 return 真实乘区，调用方（archaeologyFuelCost）不变。
+  // —— 燃料效率乘区（对回 1 代 getArchaeologyFuelCostState 的两项减免）——
+  // 1) 船体燃料效率 ship.fuelEfficiency（本作扩展字段，1 代无对应；提议值待标定）
+  // 2) 考古燃料效率改装件（rig 槽，bonuses.archaeologyFuelEfficiency，与 archaeologyScan 等同置于 bonuses）
+  // 两者均乘性叠加进 eff；调用方 archaeologyFuelCost 不变。
   function fuelEfficiencyMult(state, m) {
     const Data = (typeof window !== "undefined" && window.NSK) ? window.NSK.Data : null;
     let mult = 1;
-    // TODO(hull): 船体燃料效率 —— const ship = Data && Data.Ships && Data.Ships.shipById(m.shipId); if (ship && typeof ship.fuelEfficiency === "number") mult *= ship.fuelEfficiency;
-    // TODO(mod):  考古燃料效率改装件 —— const mod = ...; if (mod && typeof mod.archaeologyFuelEfficiency === "number") mult *= mod.archaeologyFuelEfficiency;
+    // 船体燃料效率：smaller 探索舰更省、capital/supercapital 更费（提议值，见数值标定清单）
+    if (Data && Data.Ships && Data.Ships.shipById && m && m.shipId) {
+      const ship = Data.Ships.shipById(m.shipId);
+      if (ship && typeof ship.fuelEfficiency === "number") mult *= ship.fuelEfficiency;
+    }
+    // 装配的考古燃料效率改装件（遍历 high/mid/low/rig 四槽，多件乘性叠加）
+    if (Data && Data.Equipment && Data.Equipment.byId && m && m.fitted) {
+      for (const slot of ["high", "mid", "low", "rig"]) {
+        for (const id of (m.fitted[slot] || [])) {
+          const eq = Data.Equipment.byId(id);
+          const v = eq && eq.bonuses && eq.bonuses.archaeologyFuelEfficiency;
+          if (typeof v === "number") mult *= v;
+        }
+      }
+    }
     return mult;
   }
 
