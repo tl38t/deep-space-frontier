@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>invention-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+/* ?shot=1：把 iframe 移到可见区域，供 headless Chrome 截图做实机视觉核验 */
+body.shot { padding: 0; }
+body.shot #log { display: none; }
+body.shot iframe { position: static; left: auto; width: 1280px; height: 1100px; }
+body.shot.narrow iframe { width: 390px; height: 1100px; }
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// 蓝图效率研究（ME/TE）+ 科研经验四路 · 自测（2026-11-08 建立）
+// 设计稿：深空星疆·蓝图发明与科研经验_设计稿.md §6（A~J 组）
+//
+// 纪律（沿用 moon_selftest / warehouse_selftest）：
+//  1. iframe 加载**真实 index.html**，取真实 NSK.*；所有结算跑在 LIVE() 的深拷贝上，真档一次不动；
+//  2. 反 mock：66 张蓝图和五档减免都从真实 BOOSTER_RECIPES / Recipes.COMPONENT 派生，不造样例数据；
+//  3. 1 代真值用「E78 数组 + FNV 签名」内嵌（2972 字节的 22KB 表不复制），
+//     签名由 1 代正本 invention.js 的 INVENTION_BLUEPRINTS 逐值算出 = 2f866de2；
+//  4. 未捕获异常一律计入 ERR，dump 里可见。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [], ran = false;
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  window.addEventListener("error", function (e) { ERR.push(String(e.message)); });
+  function W() { return document.getElementById("f").contentWindow; }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function clone() { return JSON.parse(JSON.stringify(LIVE())); }
+  function fnv(str) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16);
+  }
+  function fixState(st) {
+    st.base.bodyLevel = 3;                       // 确保发明舱有槽位
+    st.res.credits = 1e9; st.res.bp = 1e6;
+    if (!st.members.length) st.members.push({ id: "probe_m", destroyed: false, skills: {}, assignment: null });
+    var m = st.members[0];
+    m.destroyed = false;
+    m.skills = m.skills || {}; m.skills.research = m.skills.research || 0;
+    m.assignment = { type: "station", slotType: "invent", slotId: "invent" };
+    return m;
+  }
+
+  // 1 代正本 78 张蓝图的 E 序列（由 EVEIDLE-WORKBUDDY-FRESH/js/systems/invention.js 抽取）
+  var E78 = [1,1,1,1,1,1,1,1,1,1,4,7,10,13,16,20,20,24,28,30,32,33,34,35,35,35,35,36,37,38,38,39,39,40,42,43,47,51,55,55,59,60,63,64,67,68,70,70,70,71,72,73,74,75,76,76,77,78,78,79,80,80,82,84,88,89,90,91,92,92,92,93,94,94,95,96,96,98];
+  var TRUTH_SIG = "2f866de2";   // 78 张 (tier|xp|perIsk|perCore) 的 FNV，1 代真值
+  var RED = [0.05, 0.10, 0.15, 0.20, 0.25];
+  var EXPECT_A = [3.5, 10.9, 15.2, 17.9, 26.5];       // 总额确定性分摊（经授权偏离）
+  var EXPECT_L = [25.3, 25.3, 28.4, 28.4, 32.7];      // 1 代 floor（偏离依据）
+
+  function run() {
+    if (ran) return; ran = true;
+    var shot = /[?&]shot=1/.test(location.search);
+    if (shot) document.body.classList.add("shot");
+    if (/[?&]narrow=1/.test(location.search)) document.body.classList.add("narrow");
+    try { runAll(); } catch (e) { ERR.push("EXCEPTION " + (e && e.stack || e)); }
+    // UI 组要等 App.boot 把页签 / 舱段卡挂上（Persistence.state 就绪 ≠ UI 挂载）
+    setTimeout(function () {
+      try { runUI(); } catch (e) { ERR.push("UI EXCEPTION " + (e && e.stack || e)); }
+      dump();
+    }, 1600);
+  }
+  var boot = setInterval(function () {
+    var w = W();
+    if (w && w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state
+        && w.NSK.Engine && w.NSK.Engine.Invention && w.NSK.Engine.Production
+        && w.NSK.Engine.Settle && w.NSK.Engine.Base) {
+      clearInterval(boot); setTimeout(run, 80);
+    }
+  }, 50);
+  setTimeout(function () { if (!ran) { ok("boot 完成", false, "10s 超时"); dump(); } }, 10000);
+
+  function runAll() {
+    var I = W().NSK.Engine.Invention;
+    var P = W().NSK.Engine.Production;
+    var S = W().NSK.Engine.Settle;
+    var Core = W().NSK.Core;
+    var D = W().NSK.Data;
+
+    // ================= A 数据派生 =================
+    var L = I.list();
+    ok("A1 蓝图总数 = 66", L.length === 66, "实得 " + L.length);
+    var dist = {}; for (var i = 0; i < L.length; i++) dist[L[i].tier] = (dist[L[i].tier] || 0) + 1;
+    ok("A2 本作 tier 分布 9/15/7/17/18", JSON.stringify([dist[1],dist[2],dist[3],dist[4],dist[5]]) === "[9,15,7,17,18]", JSON.stringify(dist));
+    var BR = W().BOOSTER_RECIPES || [], Eok = 0;
+    for (var j = 0; j < BR.length; j++) {
+      var b = I.blueprintByKey("booster:" + BR[j].id);
+      if (b && b.E === (Number(BR[j].level) || 1)) Eok++;
+    }
+    ok("A3 63 张 E === recipe.level", Eok === 63 && BR.length === 63, Eok + "/" + BR.length);
+    var canon = E78.map(function (E) {
+      var t = Math.min(5, Math.floor(E / 20) + 1);
+      return [t, Math.ceil(0.4 * Math.pow(1.1, E)), 2000 * t, t].join("|");
+    }).join(";");
+    ok("A4 1 代 78 张派生公式零差异（FNV）", fnv(canon) === TRUTH_SIG, fnv(canon) + " vs " + TRUTH_SIG);
+    var drift = 0;
+    for (var k = 0; k < L.length; k++) {
+      var x = L[k], t2 = Math.min(5, Math.floor(x.E / 20) + 1);
+      if (x.tier !== t2 || x.xp !== Math.ceil(0.4 * Math.pow(1.1, x.E))
+          || x.cycle !== 30 * t2 || x.costCycle.credits !== 2000 * t2
+          || x.costCycle.bp !== t2 || x.gate !== [1,20,40,60,80][t2-1]) drift++;
+    }
+    ok("A5 本作 66 张字段与独立公式逐值一致", drift === 0, "不符 " + drift);
+    var s1 = I.blueprintByKey("booster:mining_lubricant_n"), s5 = I.blueprintByKey("booster:neural_booster_l");
+    ok("A6 T1 样本硬值", !!s1 && s1.E === 1 && s1.tier === 1 && s1.xp === 1 && s1.cycle === 30 && s1.costCycle.credits === 2000);
+    ok("A7 T5 样本硬值", !!s5 && s5.E === 98 && s5.tier === 5 && s5.xp === 4556 && s5.cycle === 150 && s5.costCycle.bp === 5);
+    ok("A8 1 代常量原样", JSON.stringify(I.MILESTONES) === "[10,50,250,1250,5000]"
+       && JSON.stringify(I.GATES) === "[1,20,40,60,80]" && JSON.stringify(I.REDUCTIONS) === "[0.05,0.1,0.15,0.2,0.25]");
+
+    // ================= B 里程碑 =================
+    var EDGE = [[9,0],[10,1],[49,1],[50,2],[249,2],[250,3],[1249,3],[1250,4],[4999,4],[5000,5],[5001,5]];
+    var bedge = EDGE.every(function (e) { return I.milestoneLevel(e[0]) === e[1]; });
+    ok("B1 里程碑 10/50/250/1250/5000 边界", bedge);
+    ok("B2 减免 5/10/15/20/25%", RED.every(function (r, n) { return I.reductionFor(n + 1) === r; }) && I.reductionFor(0) === 0);
+    ok("B3 距下一里程碑", I.nextMilestone(0) === 10 && I.nextMilestone(12) === 50 && I.nextMilestone(5000) === null);
+    var stB = clone(); fixState(stB); I.ensure(stB);
+    var KEY = "booster:mining_lubricant_n";
+    I.settleCycle(stB, KEY, "me", { paid: true });
+    ok("B4 ME/TE 计数互不干扰", I.countOf(stB, KEY, "me") === 1 && I.countOf(stB, KEY, "te") === 0);
+    for (var q = 0; q < 9; q++) I.settleCycle(stB, KEY, "me", { paid: true });
+    for (var q2 = 0; q2 < 50; q2++) I.settleCycle(stB, KEY, "te", { paid: true });
+    ok("B5 各线独立跨档", I.meReduction(stB, KEY) === 0.05 && I.teReduction(stB, KEY) === 0.10,
+       "me=" + I.meReduction(stB, KEY) + " te=" + I.teReduction(stB, KEY));
+
+    // ================= C ME 取整（经批准偏离 1 代） =================
+    var S0 = 0;
+    for (var c0 = 0; c0 < BR.length; c0++) for (var kk in BR[c0].cost) S0 += BR[c0].cost[kk];
+    ok("C0 63 配方成本总量 S0 = 486", S0 === 486, "S0=" + S0);
+    var gotA = [], gotL = [];
+    for (var ri = 0; ri < RED.length; ri++) {
+      var Sa = 0, Sl = 0;
+      for (var c1 = 0; c1 < BR.length; c1++) {
+        var A = I.applyMeReduction(BR[c1].cost, RED[ri]), G = I.applyMeReductionLegacy(BR[c1].cost, RED[ri]);
+        for (var ka in A) Sa += A[ka];
+        for (var kl in G) Sl += G[kl];
+      }
+      gotA.push(+((1 - Sa / S0) * 100).toFixed(1));
+      gotL.push(+((1 - Sl / S0) * 100).toFixed(1));
+    }
+    ok("C1 总额分摊五档 3.5/10.9/15.2/17.9/26.5%", JSON.stringify(gotA) === JSON.stringify(EXPECT_A), JSON.stringify(gotA));
+    ok("C2 1 代 floor 五档贴平 25.3/25.3/28.4/28.4/32.7%", JSON.stringify(gotL) === JSON.stringify(EXPECT_L), JSON.stringify(gotL));
+    ok("C3 分摊口径单调递增", gotA.every(function (v, n) { return n === 0 || v > gotA[n-1]; }));
+    var ml = BR.find(function (r) { return r.id === "mining_lubricant_n"; });
+    var mlCost = I.applyMeReduction(ml.cost, 0.05), mlSum = 0;
+    for (var km in mlCost) mlSum += mlCost[km];
+    ok("C4 ME I 不把成本 4 砍成 2", mlSum === 4, "实际 " + mlSum);
+    ok("C5 Math.round(0.5) 方向锁定 +∞", I.applyMeReduction({ a: 1, b: 1 }, 0.25).a + I.applyMeReduction({ a: 1, b: 1 }, 0.25).b === 2);
+    // ME 真正接进制造报价
+    var stC = clone(); fixState(stC); I.ensure(stC);
+    I.entry(stC, KEY, true).meCount = 5000;
+    var B = W().NSK.Engine.Booster;
+    var costBefore = B.craftCost(stC, "mining_lubricant_n"), sumBefore = 0;
+    for (var kb in costBefore) sumBefore += costBefore[kb];
+    ok("C6 craftCost 已接 ME（ME V 生效）", I.meReduction(stC, KEY) === 0.25 && sumBefore < 4, "sum=" + sumBefore);
+    // 弹药 T1 的 ME 必须走 discountedCost 之后（用入队结果反查扣料）。
+    // 用 ME V（25%）：S=2 → saved=round(0.5)=1 → 成本由 2 降到 1，可从扣料量直接反查。
+    var stC2 = clone(); fixState(stC2); I.ensure(stC2);
+    stC2.base.industry.manufactureQueue = []; stC2.base.industry.buildQueue = [];
+    stC2.res.mx_alloy = 100;
+    I.entry(stC2, "ammo:ammo_laser", true).meCount = 5000;
+    var beforeCr = stC2.res.credits, beforeMx = stC2.res.mx_alloy;
+    var enqC = P.enqueue(stC2, "manufacture", "mk_ammo_laser", 1);
+    ok("C7 弹药 T1 制造已接 ME（ME V 成本 2→1）", enqC.ok === true && (beforeMx - stC2.res.mx_alloy) === 1,
+       "enq=" + JSON.stringify(enqC) + " 扣 mx_alloy=" + (beforeMx - stC2.res.mx_alloy));
+
+    // ================= D TE 挂载 =================
+    var stD = clone(); fixState(stD); I.ensure(stD);
+    var baseSpeed = P.boosterSpeedFor(stD, "booster", { recipeId: "mining_lubricant_n" });
+    I.entry(stD, KEY, true).teCount = 10;   // TE I = 5%
+    var teSpeed = P.boosterSpeedFor(stD, "booster", { recipeId: "mining_lubricant_n" });
+    ok("D1 TE 用 /(1−r) 缩短制造耗时", Math.abs(teSpeed - baseSpeed / 0.95) < 1e-9,
+       "base=" + baseSpeed + " te=" + teSpeed);
+    ok("D2 不是 ×(1+r)", Math.abs(teSpeed - baseSpeed * 1.05) > 1e-9);
+    ok("D3 研究队列自身不吃 TE", P.boosterSpeedFor(stD, "invent", { recipeId: "x" }) === 1);
+    var stD2 = clone(); fixState(stD2); I.ensure(stD2);
+    I.entry(stD2, "ammo:ammo_laser", true).teCount = 10;
+    var mBase = P.boosterSpeedFor(stD2, "manufacture", { recipeId: "mk_ammo_laser" });
+    ok("D4 弹药 T1 制造已接 TE", Math.abs(mBase - P.boosterSpeedFor(stD2, "manufacture", { recipeId: "mk_struct" }) / 0.95) < 1e-9);
+
+    // ================= E 原子性 =================
+    var stE = clone(); fixState(stE); I.ensure(stE);
+    stE.res.credits = 100; stE.res.bp = 0;
+    var snapC = I.countOf(stE, KEY, "me"), snapR = stE.res.credits;
+    var r0 = I.settleCycle(stE, KEY, "me");
+    ok("E1 资源不足 → ok:false 且计数/资源零变化",
+       r0.ok === false && I.countOf(stE, KEY, "me") === snapC && stE.res.credits === snapR);
+    stE.res.credits = 2000; stE.res.bp = 1;
+    var r1 = I.settleCycle(stE, KEY, "me");
+    ok("E2 正常循环 → 计数 +1 / 扣费 2000+1 / 返回 xp",
+       r1.ok === true && r1.xp === 1 && I.countOf(stE, KEY, "me") === snapC + 1
+       && stE.res.credits === 0 && stE.res.bp === 0, JSON.stringify(r1));
+    var beforePaid = I.countOf(stE, KEY, "te"), paidRes = stE.res.credits;
+    var r2 = I.settleCycle(stE, KEY, "te", { paid: true });
+    ok("E3 队列 paid:true 只计数不重复扣费",
+       r2.ok === true && I.countOf(stE, KEY, "te") === beforePaid + 1 && stE.res.credits === paidRes);
+
+    // ================= F 在线 / 离线逐值一致 =================
+    function scenario(onlineSteps) {
+      var st = clone(); fixState(st); I.ensure(st);
+      var m = st.members[0]; m.skills.research = 0;
+      st.base.industry.inventQueue = [];
+      var enq = P.enqueueStudy(st, KEY, "me", 3);
+      if (!enq.ok) return { err: enq.err };
+      var it = st.base.industry.inventQueue[0];
+      var T0 = Date.now() - 1000000; it.startedAt = T0;
+      // ⚠️ now / startedAt 是**毫秒**时间戳；it.dur 是秒。step 必须 ×1000，
+      //    否则 elapsed 只有 0.3s，一批都跑不完（2026-11-08 探针首版踩过）。
+      var step = it.dur * 10 * 1000;
+      if (onlineSteps) {
+        for (var n = 1; n <= 10; n++) P.processQueue(st, "invent", T0 + step * n, 1);
+      } else {
+        P.processQueue(st, "invent", T0 + step * 10, 1);
+      }
+      return {
+        count: I.countOf(st, KEY, "me"),
+        credits: st.res.credits, bp: st.res.bp,
+        xp: (m.skills && m.skills.research) || 0,
+        // grantBatchXp 会叠激情 / 词条乘区（既有口径），xp 终值 = 3 × 该乘区
+        mult: S.passionMult(m, "research") * S.xpMultOf(st, m, "research"),
+        left: st.base.industry.inventQueue.length,
+      };
+    }
+    var fOn = scenario(true), fOff = scenario(false);
+    ok("F1 入队成功", !fOn.err && !fOff.err, (fOn.err || fOff.err || ""));
+    ok("F2 离线一次性结算 = 在线逐批推进（计数/扣费/xp 逐值相等）",
+       JSON.stringify(fOn) === JSON.stringify(fOff), "on=" + JSON.stringify(fOn) + " off=" + JSON.stringify(fOff));
+    ok("F3 3 循环计数 = 3 且队列已清空", fOn.count === 3 && fOn.left === 0, JSON.stringify(fOn));
+    ok("F4 3 循环共扣 6000 星币 + 3 张图纸", fOn.credits === 1e9 - 6000 && fOn.bp === 1e6 - 3,
+       "credits=" + fOn.credits + " bp=" + fOn.bp);
+    ok("F5 3 循环 research xp = 3 × 既有激情/词条乘区（每循环 1 xp）",
+       fOn.xp > 0 && Math.abs(fOn.xp - 3 * fOn.mult) < 1e-6,
+       "xp=" + fOn.xp + " mult=" + fOn.mult);
+
+    // ================= G 科研经验四路 =================
+    var stG = clone(); fixState(stG); I.ensure(stG);
+    var gxBooster = S.recipeBatchXp(stG, "booster", { recipeId: "mining_lubricant_n", dur: 18 });
+    var gxStudy = S.recipeBatchXp(stG, "invent", { outType: "study", studyKey: "booster:neural_booster_l", dur: 150 });
+    var gxInvBp = S.recipeBatchXp(stG, "invent", { recipeId: "inv_bp", dur: 40 });
+    var totalTech = 0, techOk = true;
+    for (var ti = 0; ti < D.Tech.NODES.length; ti++) {
+      var nd = D.Tech.NODES[ti]; totalTech += nd.xp * nd.maxLevel;
+      if (nd.xp == null) techOk = false;
+    }
+    ok("G1 增强剂逐配方 xp", gxBooster === (BR.find(function(r){return r.id==="mining_lubricant_n";}) || {}).xp, "xp=" + gxBooster);
+    ok("G2 发明研究 xp = ceil(0.4×1.1^E)", gxStudy === 4556, "xp=" + gxStudy);
+    ok("G3 inv_bp 显式 xp:12", gxInvBp === 12, "xp=" + gxInvBp);
+    ok("G4 科技节点全树 900 xp（bounty_1 40→60）", totalTech === 900 && techOk, "总=" + totalTech);
+    var allExplicit = [
+      S.recipeBatchXp(stG, "smelt", { recipeId: "smelt_fe_alloy", dur: 10 }),
+      S.recipeBatchXp(stG, "manufacture", { recipeId: "mk_struct", dur: 63 }),
+      S.recipeBatchXp(stG, "equip", { recipeId: (D.Equipment.bySlot("high")[0] || {}).id, dur: 60 }),
+      S.recipeBatchXp(stG, "build", { shipId: (Object.values(D.Ships.SHIPS)[0] || {}).id, dur: 60 }),
+      gxBooster, gxStudy, gxInvBp,
+    ];
+    var eq0 = (D.Equipment.bySlot("high")[0] || {});
+    var ship0 = Object.values(D.Ships.SHIPS)[0] || {};
+    var truth = [
+      (D.Recipes.SMELT.find(function (r) { return r.id === "smelt_fe_alloy"; }) || {}).xp,
+      (D.Recipes.COMPONENT.find(function (r) { return r.id === "mk_struct"; }) || {}).xp,
+      eq0.xp, ship0.xp,
+      (BR.find(function (r) { return r.id === "mining_lubricant_n"; }) || {}).xp,
+      I.xpForBlueprint(I.blueprintByKey("booster:neural_booster_l")),
+      (D.Recipes.INVENT.find(function (r) { return r.id === "inv_bp"; }) || {}).xp,
+    ];
+    var mismatch = 0;
+    for (var gi = 0; gi < allExplicit.length; gi++) if (allExplicit[gi] !== truth[gi]) mismatch++;
+    // ⚠️ 不能用「xp 是否等于 rate×dur×0.5」判回退：inv_bp 定稿值 12 恰好等于
+    //    XP_RATE.research 0.6×40×0.5（设计上就是把占位值转正、手感不变），会假红。
+    //    改为逐源硬比对：每一项都必须等于自己那条数据表的显式 xp。
+    ok("G5 七类队列 xp 全部取自显式真值源（回退命中 0 次）", mismatch === 0,
+       "不符 " + mismatch + " / 实得 " + JSON.stringify(allExplicit) + " / 期望 " + JSON.stringify(truth));
+    var odd = S.recipeBatchXp(stG, "invent", { recipeId: "__no_such__", dur: 40 });
+    ok("G5b 异形队列项仍走兼容兜底（常量未删）", Math.abs(odd - 0.6 * 40 * 0.5) < 1e-9, "odd=" + odd);
+    ok("G6 BATCH_XP_RATIO 仍为 0.5（兼容兜底）", S.BATCH_XP_RATIO === 0.5);
+
+    // ================= H 旧档迁移 =================
+    var stH = clone(); delete stH.invention;
+    Core.normalize(stH);
+    ok("H1 旧档无 invention → 补齐", !!stH.invention && stH.invention.schemaVersion === 1
+       && stH.invention.blueprints && typeof stH.invention.blueprints === "object");
+    var h1 = JSON.stringify(stH.invention);
+    Core.normalize(stH); Core.normalize(stH);
+    ok("H2 重复 normalize 三次幂等", JSON.stringify(stH.invention) === h1);
+    stH.invention.blueprints[KEY] = { meCount: NaN, teCount: -7 };
+    I.ensure(stH);
+    ok("H3 脏计数归 0", stH.invention.blueprints[KEY].meCount === 0 && stH.invention.blueprints[KEY].teCount === 0);
+    ok("H4 STATE_VERSION 未升（仍为 8）", Core.STATE_VERSION === 8, "v=" + Core.STATE_VERSION);
+  }
+
+  // ================= I UI（真实 DOM 交互，反 mock） =================
+  function runUI() {
+    var w = W(), doc = w.document;
+    var Wb = w.NSK.UI && w.NSK.UI.Workbench;
+    var Base = w.NSK.Engine.Base, Iu = w.NSK.Engine.Invention;
+    ok("I0 UI.Workbench 已注册", !!Wb);
+
+    // 备份真档：I 组会临时装模块 / 插队列项，结束时原样恢复。
+    var saveKey = "nsk_save_v7", backup = null;
+    try { backup = w.localStorage.getItem(saveKey); } catch (e) { backup = null; }
+    var st = LIVE();
+    var inv = (Base.stateSlots(st) || []).filter(function (s) { return s.type === "invent"; })[0];
+    ok("I1 舰基存在发明舱槽位", !!inv, inv ? inv.id : "无");
+    if (!inv || !Wb) return;
+
+    // 切到舰基页并点开工作台；未装模块则临时装一个（最后恢复存档）
+    var tabBase = doc.querySelector('[data-act="tab:base"]');
+    if (tabBase) tabBase.click();
+    var card = doc.querySelector("button.base-invent");
+    ok("I2 舰基页渲染出发明舱卡片", !!card);
+    if (card) card.click();
+    var ov = doc.querySelector(".wb-overlay.active");
+    if (!ov && !Base.moduleAt(st, inv.id)) {
+      var avail = Base.availableModules(st, inv.id) || [];
+      if (avail.length) Base.installModule(st, inv.id, avail[0].id);
+      var card2 = doc.querySelector("button.base-invent");
+      if (card2) card2.click(); else Wb.open(inv.id, null);
+      ov = doc.querySelector(".wb-overlay.active");
+    }
+    ok("I3 发明舱弹出工作台", !!ov);
+    if (!ov) { restore(); return; }
+
+    function qa(sel) { return Array.prototype.slice.call(ov.querySelectorAll(sel)); }
+    function txt() { return ov.textContent || ""; }
+    function clickAct(a) { var el = ov.querySelector('[data-act="' + a + '"]'); if (el) el.click(); return !!el; }
+
+    var tabs = qa(".wb-tab");
+    ok("I4 双子页签「效率研究 / 图纸合成」", tabs.length === 2
+       && /效率研究/.test(txt()) && /图纸合成/.test(txt()), tabs.map(function (t) { return t.textContent; }).join("/"));
+    ok("I5 效率研究为默认页签", !!ov.querySelector('.wb-tab.on[data-act="workbench:tab:study"]'));
+    var cards = qa(".iv-bp");
+    ok("I6 66 张蓝图落地", cards.length === 66, "实得 " + cards.length);
+    ok("I7 锁定态显示科研门槛", qa(".iv-bp.locked").length > 0 && /科研 Lv\d+ 解锁/.test(txt()),
+       "锁定 " + qa(".iv-bp.locked").length);
+    ok("I8 搜索框与 T1~T5 筛选存在", !!ov.querySelector("#ivq") && qa(".iv-filter").length === 6);
+
+    // T4 筛选：17 张且全锁定
+    ok("I9 T4 筛选按钮可点", clickAct("workbench:stier:4"));
+    var t4 = qa(".iv-bp");
+    ok("I10 T4 = 17 张且全灰显 + Lv60 文案", t4.length === 17 && qa(".iv-bp.locked").length === 17
+       && /科研 Lv60 解锁/.test(txt()), "卡片 " + t4.length + " 锁定 " + qa(".iv-bp.locked").length);
+    clickAct("workbench:stier:0");
+    ok("I11 切回全部恢复 66 张", qa(".iv-bp").length === 66);
+
+    // 选中一张 T1 蓝图 → 详情 + ME/TE 方向
+    var first = qa(".iv-bp:not(.locked)")[0];
+    if (first) first.click();
+    ok("I12 选中蓝图后详情与 ME/TE 方向出现", !!ov.querySelector(".iv-detail h3")
+       && qa(".iv-dir span").length === 2 && /10 \/ 50 \/ 250 \/ 1250 \/ 5000/.test(txt()));
+    ok("I13 方向切换 TE 生效", clickAct("workbench:sdir:te")
+       && !!ov.querySelector('.iv-dir span.on[data-act="workbench:sdir:te"]'));
+    clickAct("workbench:sdir:me");
+
+    // study 队列项显示中文名，不露裸 key
+    st.base.industry.inventQueue = st.base.industry.inventQueue || [];
+    var tmp = {
+      recipeId: "study:booster:mining_lubricant_n:me", studyKey: "booster:mining_lubricant_n",
+      studyDir: "me", dur: 30, out: "study", qty: 0, outType: "study",
+      in: { credits: 2000, bp: 1 }, startedAt: Date.now(), repeat: 2, done: 0,
+    };
+    st.base.industry.inventQueue.push(tmp);
+    Wb.refresh();
+    ok("I14 study 队列项显示中文名、不露裸 key", /材料效率 · 纳米采掘润滑剂/.test(txt())
+       && !/study:booster:/.test(txt()) && !/undefined|NaN/.test(txt()));
+    var idx = st.base.industry.inventQueue.indexOf(tmp);
+    if (idx >= 0) st.base.industry.inventQueue.splice(idx, 1);
+
+    // 图纸合成页签保留原 inv_bp
+    clickAct("workbench:tab:synth");
+    ok("I15 图纸合成页保留 inv_bp 且无蓝图卡", /改装图纸|结构件/.test(txt()) && qa(".iv-bp").length === 0);
+    clickAct("workbench:tab:study");
+    ok("I16 切回效率研究恢复 66 张", qa(".iv-bp").length === 66);
+
+    // 390px 窄屏：改 iframe 视口宽度触发媒体查询（不动外层窗口，绕开 512px 下限）
+    var fr = document.getElementById("f");
+    var oldW = fr.style.width;
+    fr.style.width = "390px";
+    var panel = ov.querySelector(".wb-panel");
+    var grid = ov.querySelector(".wb-recipes");
+    var cols = w.getComputedStyle(grid).gridTemplateColumns;
+    var overflow = panel ? panel.scrollWidth - panel.clientWidth : 999;
+    ok("I17 390px 蓝图卡单列", cols && cols.split(" ").length === 1, "grid=" + cols);
+    ok("I18 390px 面板无横向溢出", overflow <= 1, "溢出 " + overflow + "px");
+    // ⓘ 方案 C 门控：判定条件是 hover 能力而非屏宽。headless Chrome 是 hover:hover 设备，
+    // 此时 ⓘ 必须隐藏（桌面走原生 title）；真机 hover:none 由 @media 打开。
+    // 断言「DOM 存在 + data-info 与卡片 title 完全同源 + 当前设备下隐藏」三件事。
+    var hi = ov.querySelector(".hover-info-btn");
+    var hiCard = hi && hi.closest(".iv-bp");
+    var hiDisplay = hi ? w.getComputedStyle(hi).display : "missing";
+    ok("I19 ⓘ 方案 C 门控正确（桌面隐藏 / 内容与 title 同源）",
+       !!hi && !!hiCard && hi.getAttribute("data-info") === hiCard.getAttribute("title")
+       && hiDisplay === "none", "display=" + hiDisplay);
+    ok("I19b ⓘ 浮层文案含多行研究信息", !!hi && /研究经验/.test(hi.getAttribute("data-info") || ""));
+
+    var shot = /[?&]shot=1/.test(location.search);
+    if (!shot) {
+      fr.style.width = oldW;
+      var close = ov.querySelector(".wb-close"); if (close) close.click();
+      ok("I20 关闭后弹窗消失", !doc.querySelector(".wb-overlay.active"));
+    } else {
+      // 截图模式：保留工作台弹窗与窄屏宽度，让 headless Chrome 拍到发明舱真实界面
+      fr.style.width = /[?&]narrow=1/.test(location.search) ? "390px" : "1280px";
+      clickAct("workbench:stier:0");
+      if (first) first.click();
+    }
+    restore();
+
+    function restore() {
+      try { if (backup === null) w.localStorage.removeItem(saveKey); else w.localStorage.setItem(saveKey, backup); }
+      catch (e) { /* 沙盒无 localStorage 时忽略 */ }
+    }
+  }
+
+})();
+</script>
+</body>
+</html>

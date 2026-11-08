@@ -25,6 +25,8 @@
   const Booster = (typeof window !== "undefined" && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
   // 精通点强化用惰性取用（mastery.js 可能晚于本文件注册，避免 load-time 捕获为 null）
   function _Mastery() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Mastery : null; }
+  // 蓝图效率研究（ME/TE）：同样惰性取用，避免与 UMD 注册顺序耦合
+  function _Invention() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Invention : null; }
 
   const MAX_BATCHES = 2000; // 单次 settle 安全上限，防离线巨量迭代冻结
 
@@ -84,8 +86,14 @@
     repeat = repeat || 1;
     // 精密配给剂材料折扣：仅总装部件(manufacture)享受舰船材料折扣（与 1 代 getShipBuildingQuote kind:"component" 同口径）；
     // 精炼/发明输入不受影响。折扣在入队时锁定到 it.in（与 1 代「报价即扣料」一致）。
-    const inCost = (queueType === "manufacture" && Booster && Booster.discountedCost)
+    const inCost0 = (queueType === "manufacture" && Booster && Booster.discountedCost)
       ? Booster.discountedCost(state, r.in, "ship") : r.in;
+    // 蓝图 ME（材料效率研究）：**必须在 discountedCost 之后**叠，避免 1 代 station.js:1074
+    // 的重复叠折扣 bug。目前仅弹药 T1 三条制造配方有对应蓝图；其余返回 0，原样通过。
+    const I0 = _Invention();
+    const inCost = (I0 && queueType === "manufacture")
+      ? I0.applyMeReduction(inCost0, I0.meReductionForRecipe(state, queueType, recipeId))
+      : inCost0;
     if (!canAfford(state.res, inCost)) return { ok: false, err: "原料不足" };
     spend(state.res, inCost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, queueType) : 1;
@@ -97,20 +105,57 @@
     return { ok: true };
   }
 
+  // ---- 蓝图效率研究（ME / TE）入队：复用 inventQueue 通用批量队列 ----
+  // 队列项 outType:"study"；扣费口径与 1 代等价（每循环 2000×tier 星币 + tier 张改装图纸），
+  // 差异仅在**扣费时机**：1 代每完成 1 循环才扣，本作通用队列入队扣第 1 批、之后每批续扣。
+  // 设计稿已接受（改通用队列会影响其余 5 条产线，风险远大于收益）。
+  function enqueueStudy(state, key, dir, repeat) {
+    const I = _Invention();
+    if (!I) return { ok: false, err: "蓝图研究系统未就绪" };
+    const bp = I.blueprintByKey(key);
+    if (!bp) return { ok: false, err: "蓝图不存在" };
+    if (!I.isUnlocked(state, bp)) return { ok: false, err: "科研 Lv" + bp.gate + " 解锁" };
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    const q = state.base.industry.inventQueue || (state.base.industry.inventQueue = []);
+    if (q.length >= plan.invent) return { ok: false, err: "发明舱槽位已满（需升级舰基）" };
+    const d = dir === "te" ? "te" : "me";
+    const cost = I.cycleCostOf(bp);
+    repeat = repeat || 1;
+    if (!canAfford(state.res, cost)) return { ok: false, err: "星币或改装图纸不足" };
+    spend(state.res, cost);   // 入队即扣第 1 循环；后续续批由 processQueue 的既有逻辑扣
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "invent") : 1;
+    q.push({
+      recipeId: "study:" + key + ":" + d,
+      studyKey: key, studyDir: d,
+      dur: I.cycleSecondsOf(bp) * durationMult,
+      out: "study", qty: 0, outType: "study",
+      in: cost, startedAt: Date.now(), repeat: repeat, done: 0,
+    });
+    return { ok: true };
+  }
+
   // 增强剂速度乘区（按队列 + 队列项类型）：忠实 1 代 getBoosterEffectState 语义。
   // 总装队列里「装备制造」走装备工程加速，「部件/整船」走舰船工程加速；其余队列一一对应。
   function boosterSpeedFor(state, queueType, it) {
     const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
     if (!B || !B.getEffectState) return 1;
     const eff = B.getEffectState(state);
+    const I = _Invention();
     if (queueType === "smelt") return eff.smeltSpeedMultiplier;
-    if (queueType === "invent") return 1;
-    if (queueType === "booster") return eff.boosterSpeedMultiplier;
+    if (queueType === "invent") return 1;   // 研究作业自身**不吃** TE（1 代同口径）
+    if (queueType === "booster") {
+      const r = eff.boosterSpeedMultiplier;
+      const teR = I ? I.teReductionForRecipe(state, "booster", it && it.recipeId) : 0;
+      return teR ? r / (1 - teR) : r;       // 1 代 manufacturing.js:182 原式，禁写 ×(1−teR)
+    }
     // 制造车间（2026-11-03 独立队列）：吃「装备制造速度」增强剂
     if (queueType === "equip") return eff.equipmentSpeedMultiplier;
     if (queueType === "manufacture") {
       const isEquip = !!(it && it.recipeId && Data.Equipment && Data.Equipment.byId && Data.Equipment.byId(it.recipeId));
-      return isEquip ? eff.equipmentSpeedMultiplier : eff.shipSpeedMultiplier;
+      const r = isEquip ? eff.equipmentSpeedMultiplier : eff.shipSpeedMultiplier;
+      // 弹药 T1 三张蓝图有对应制造配方，TE 缩短其制造耗时
+      const teR = I ? I.teReductionForRecipe(state, "manufacture", it && it.recipeId) : 0;
+      return teR ? r / (1 - teR) : r;
     }
     return 1;
   }
@@ -172,7 +217,14 @@
           if (rng() < dblChance) outQty = it.qty * 2;
         }
         if (queueType === "smelt") outQty = outQty * smeltYieldMult;   // 科技树·精炼工艺（在双倍之后叠加，连乘）
-        if (it.outType === "equipment") {
+        const isStudy = it.outType === "study";
+        if (isStudy) {
+          // 研究循环：不产出资源、不进产出日志（1 代研究不计工业产出，故也不给精通点）。
+          // 扣费已由通用队列在「入队 / 上一批完成时续批」扣好 → paid:true，只推进计数。
+          const I = _Invention();
+          const r = I ? I.settleCycle(state, it.studyKey, it.studyDir, { paid: true }) : { ok: false };
+          if (!r.ok) { keep = false; break; }   // 异形 study 项：零副作用丢弃
+        } else if (it.outType === "equipment") {
           state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
           log.push({ out: it.out, qty: outQty, outType: "equipment" });
         } else {
@@ -376,5 +428,5 @@
     });
   }
 
-  return { enqueue, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain };
+  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain };
 });

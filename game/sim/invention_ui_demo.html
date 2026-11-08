@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>发明舱 · 效率研究 UI Demo（演示态）</title>
+<link id="real-css" rel="stylesheet" href="../css/main.css">
+<style id="fallback-css">
+/* 兜底：摘自 game/css/main.css:2-19 / 1271-1343。仅当内置预览无法加载外链时启用；
+   本地 file:// 打开时下面的检测脚本会禁用本段，改用真实 main.css，视觉 100% 一致。 */
+:root { --bg:#071018; --panel:#101c28; --panel2:#152633; --line:#294653;
+  --fg:#dcebef; --dim:#8ca6ae; --good:#62d5af; --warn:#e2bd68; --acc:#4fc4d3; --cyan:#4fc4d3; --bad:#e879a8;
+  --btn-neutral-top:#1a3340; --btn-neutral-bottom:#112530; --btn-border:rgba(93,145,161,.42);
+  --btn-hover-top:#25495a; --btn-hover-bottom:#173947; --btn-hover-border:#4d91a1;
+  --btn-primary-bg:#4fc4d3; --btn-primary-hover:#70d9e2; --btn-primary-fg:#06121a;
+  --btn-radius:4px; --font-tech:"Bahnschrift","Rajdhani","DIN Alternate","Segoe UI",system-ui,sans-serif;
+  color-scheme:dark; }
+* { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+html, body { height:100%; overflow-x:hidden; max-width:100%; }
+body { background:radial-gradient(ellipse at 50% -12%,rgba(35,105,121,.13),transparent 48%),var(--bg);
+  color:var(--fg); font:15px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+.wb-panel { position:relative; width:100%; max-width:420px; max-height:92vh; overflow-y:auto;
+  padding:18px 20px 16px; border-radius:14px; background:radial-gradient(ellipse at 50% 16%,#0e1d27,#060d13 82%);
+  border:1px solid rgba(88,190,206,.30); box-shadow:0 0 60px rgba(0,0,0,.8),inset 0 0 34px rgba(87,200,224,.03); }
+.wb-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+.wb-head b { font:700 15px/1.2 var(--font-tech); color:#eaf6fa; }
+.wb-sub { display:block; font-size:11px; color:var(--dim); margin-top:2px; }
+.wb-close { flex:0 0 auto; width:26px; height:26px; border:1px solid rgba(88,190,206,.35); border-radius:6px;
+  background:rgba(30,50,62,.7); color:#cdd8e3; font-size:15px; line-height:1; cursor:pointer; text-align:center; }
+.wb-tabs { display:flex; gap:8px; margin-bottom:8px; }
+.wb-tab { padding:7px 14px; border:1px solid var(--btn-border); border-radius:var(--btn-radius); font-size:13px;
+  color:#b7cbd0; cursor:pointer; background:linear-gradient(180deg,var(--btn-neutral-top),var(--btn-neutral-bottom)); }
+.wb-tab.on { border-color:var(--cyan); color:#eaf6fa; background:rgba(79,196,211,.15); }
+.wb-sec { font-size:12px; color:#7f8ca3; margin:14px 0 6px; }
+.wb-catcount { float:right; font-size:11px; color:#6d7e93; }
+.wb-recipes { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.wb-recipe { text-align:left; padding:8px 10px; border:1px solid rgba(60,110,130,.6); border-radius:8px;
+  background:rgba(16,32,44,.7); color:#c8d8e0; cursor:pointer; font:inherit; }
+.wb-recipe.sel { border-color:var(--cyan); background:rgba(29,78,120,.55); }
+.wb-r1 { font-size:12px; color:#dceaf0; line-height:1.35; }
+.wb-r2 { font-size:11px; color:var(--dim); margin-top:3px; }
+.wb-empty { font-size:12px; color:var(--dim); padding:10px 0; }
+.wb-stepper { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.wb-step { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; min-width:32px;
+  border:1px solid var(--btn-border); border-radius:var(--btn-radius);
+  background:linear-gradient(180deg,var(--btn-neutral-top),var(--btn-neutral-bottom)); color:var(--fg); font-size:16px; cursor:pointer; }
+.wb-count { min-width:52px; text-align:center; padding:5px 0; border:1px solid rgba(60,110,130,.6);
+  border-radius:6px; background:#0f1726; font-size:14px; color:#eaf6fa; font-variant-numeric:tabular-nums; }
+.wb-chips { display:flex; gap:6px; margin-left:auto; }
+.wb-chip { padding:5px 9px; border:1px solid var(--btn-border); border-radius:var(--btn-radius); font-size:12px;
+  color:#b7cbd0; cursor:pointer; background:linear-gradient(180deg,var(--btn-neutral-top),var(--btn-neutral-bottom)); }
+.wb-chip.cont { border-color:rgba(186,117,23,.6); color:#ef9f27; }
+.wb-cap { font-size:11.5px; color:var(--dim); margin-top:6px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.wb-cap b { color:var(--cyan); }
+.wb-add { width:100%; margin-top:12px; padding:9px 12px; border:1px solid var(--btn-primary-bg);
+  border-radius:var(--btn-radius); background:var(--btn-primary-bg); color:var(--btn-primary-fg);
+  font-size:13px; font-weight:700; cursor:pointer; }
+.wb-add.off { opacity:.5; cursor:not-allowed; }
+.wb-note { font-size:11px; color:var(--dim); margin-top:8px; line-height:1.5; }
+.wb-queue { display:flex; flex-direction:column; gap:6px; }
+.wb-job { padding:8px 10px; border:1px solid rgba(40,70,85,.6); border-radius:8px; background:rgba(12,26,36,.7); }
+.wb-job-top { display:flex; justify-content:space-between; font-size:12px; color:#dceaf0; }
+.wb-x { color:#f09595; cursor:pointer; padding:0 4px; }
+.wb-bar { height:5px; background:#0f1726; border-radius:3px; margin-top:5px; overflow:hidden; }
+.wb-bar i { display:block; height:100%; background:var(--cyan); }
+.wb-job-sub { font-size:11px; color:var(--dim); margin-top:3px; }
+@media (max-width:640px) { .wb-panel { max-width:100%; border-radius:12px 12px 0 0; } .wb-recipes { grid-template-columns:1fr; } }
+</style>
+<script>
+/* 样式源判定：必须查外链 <link> 是否真的解析出规则。
+   两个都不能用：
+   · getComputedStyle(root).getPropertyValue("--bg") —— 兜底 <style> 自己也定义了 --bg，
+     会把 404 误判成「外链已加载」，进而禁用兜底，预览里变成无样式页面；
+   · link.sheet —— Chrome 对 404 的 link 仍返回一个空 CSSStyleSheet 对象（实测
+     sheet=OBJ，访问 cssRules 抛 SecurityError，规则数 0），同样会误判。
+   真实 main.css 实测 cssRules.length = 1418。 */
+(function () {
+  function sheetLoaded() {
+    var link = document.getElementById("real-css");
+    try {
+      var s = link && link.sheet;
+      return !!(s && s.cssRules && s.cssRules.length > 0);
+    } catch (e) { return false; }   // SecurityError / 404 → 未加载
+  }
+  function detect() {
+    var loaded = sheetLoaded();
+    var fb = document.getElementById("fallback-css");
+    if (fb) fb.disabled = loaded;
+    window.__DEMO_CSS_SOURCE = loaded ? "real main.css" : "inline fallback";
+    window.__DEMO_SHEET_LOADED = loaded;
+  }
+  detect();
+  document.addEventListener("DOMContentLoaded", detect);
+  window.addEventListener("load", detect);
+})();
+</script>
+<style>
+  .demo-wrap { max-width: 980px; margin: 0 auto; padding: 16px 16px 40px; }
+  .demo-bar { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px;
+    background: linear-gradient(160deg, #142431, #0e1a25); }
+  .demo-bar h1 { font: 500 16px/1.4 var(--font-tech); color: #eaf6fa; margin: 0 0 4px; }
+  .demo-bar p { font-size: 12px; color: var(--dim); line-height: 1.6; margin: 0; }
+  .demo-bar .iv-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .iv-tag { font-size: 11px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); }
+  .iv-tag.ok { color: var(--good); border-color: rgba(98,213,175,.5); }
+  .iv-tag.warn { color: var(--warn); border-color: rgba(226,189,104,.5); }
+  .demo-stage { display: flex; justify-content: center; }
+  .demo-stage .wb-panel { max-height: none; }
+  .iv-search { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; }
+  .iv-search input { flex: 1; min-width: 0; padding: 7px 10px; font-size: 12px; color: var(--fg);
+    background: #0b1721; border: 1px solid rgba(60,110,130,.6); border-radius: 6px; outline: none; }
+  .iv-search input:focus { border-color: var(--cyan); }
+  .iv-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+  .iv-filter { display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 7px;
+    border: 1px solid rgba(60,110,130,.55); background: rgba(16,32,44,.7); color: #a9cdd6;
+    font-size: 12px; line-height: 1; cursor: pointer; }
+  .iv-filter.sel { border-color: var(--cyan); color: #eaf6fa; background: rgba(29,78,120,.6); box-shadow: inset 0 -2px var(--cyan); }
+  .iv-filter small { font-size: 10px; opacity: .65; font-variant-numeric: tabular-nums; }
+  .iv-list { max-height: 210px; overflow-y: auto; padding-right: 2px; }
+  .iv-bp { position: relative; display: block; text-align: left; padding: 8px 10px 9px; }
+  .iv-bp.locked { opacity: .48; cursor: not-allowed; }
+  .iv-bp-top { display: flex; align-items: flex-start; gap: 6px; }
+  .iv-bp-name { flex: 1; min-width: 0; font-size: 12px; color: #dceaf0; line-height: 1.35;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .iv-tier { flex: 0 0 auto; font: 500 10px/1 var(--font-tech); padding: 3px 5px; border-radius: 4px;
+    border: 1px solid rgba(79,196,211,.5); color: var(--cyan); background: rgba(79,196,211,.1); }
+  .iv-tier.t4, .iv-tier.t5 { color: var(--warn); border-color: rgba(226,189,104,.5); background: rgba(226,189,104,.08); }
+  .iv-bp-sub { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
+  .iv-bars { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .iv-bar-row { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .iv-bar-row span { flex: 0 0 76px; }
+  .iv-bar { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .iv-bar i { display: block; height: 100%; background: var(--cyan); }
+  .iv-bar.te i { background: var(--warn); }
+  .iv-lockline { display: block; margin-top: 5px; font-size: 10px; color: #f0b48a; }
+  .hover-info-btn { display: none; position: absolute; top: 5px; right: 5px; width: 20px; height: 20px;
+    align-items: center; justify-content: center; border: 1px solid rgba(88,190,206,.5); border-radius: 50%;
+    background: rgba(10,24,34,.9); color: var(--cyan); font-size: 11px; line-height: 1; cursor: pointer; }
+  @media (hover: none) { .hover-info-btn { display: inline-flex; } }
+  .demo-narrow .hover-info-btn { display: inline-flex; }
+  @media (hover: hover) { .iv-bp:not(.locked):hover { background: rgba(24,52,66,.9); } }
+  .iv-bp:not(.locked):active { background: rgba(29,78,120,.7); }
+  .iv-detail { margin-bottom: 12px; }
+  .iv-detail h3 { font: 500 14px/1.4 var(--font-tech); color: #eaf6fa; margin: 0 0 2px; }
+  .iv-detail .iv-sub { font-size: 11px; color: var(--dim); }
+  .iv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .iv-cell { padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(9,20,28,.6); }
+  .iv-cell em { display: block; font-size: 10px; color: var(--dim); font-style: normal; }
+  .iv-cell b { font: 500 13px/1.4 var(--font-tech); color: #eaf6fa; }
+  .iv-note { margin-top: 9px; padding: 7px 9px; border-left: 2px solid var(--warn);
+    background: rgba(232,180,90,.07); color: #e8c46a; font-size: 11px; line-height: 1.5; }
+  .iv-dir { display: flex; gap: 8px; margin-top: 10px; }
+  .iv-dir span { flex: 1; text-align: center; padding: 7px 0; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--btn-border); border-radius: var(--btn-radius); color: #b7cbd0;
+    background: linear-gradient(180deg,var(--btn-neutral-top),var(--btn-neutral-bottom)); }
+  .iv-dir span.on { border-color: var(--cyan); color: #eaf6fa; background: rgba(79,196,211,.15); }
+  .iv-job { font-size: 12px; }
+  .iv-job .wb-job-sub { color: var(--dim); }
+  .iv-pop { position: absolute; z-index: 10050; display: none; max-width: 260px; padding: 9px 11px;
+    border: 1px solid rgba(88,190,206,.5); border-radius: 9px; background: rgba(8,20,29,.97);
+    box-shadow: 0 10px 30px rgba(0,0,0,.6); font-size: 11.5px; color: #dcebef; line-height: 1.6;
+    white-space: pre-line; }
+  .iv-pop.show { display: block; }
+  .demo-narrow .demo-wrap { max-width: 390px; padding: 10px 8px 24px; }
+  .demo-narrow .wb-recipes { grid-template-columns: 1fr; }
+  .demo-narrow .iv-list { max-height: 190px; }
+  .demo-narrow .demo-bar { padding: 10px 12px; }
+  .demo-foot { margin-top: 14px; font-size: 11px; color: var(--dim); line-height: 1.7; text-align: center; }
+</style>
+</head>
+<body>
+<div class="demo-wrap">
+  <div class="demo-bar">
+    <h1>发明舱 · 效率研究 UI Demo <span class="iv-tag">演示态 · 不接引擎</span></h1>
+    <p>数据由真实 <code>window.BOOSTER_RECIPES</code>（63 张）与 <code>NSK.Data.Recipes.COMPONENT</code>（弹药 T1 三张）按定稿公式派生；
+      视觉复用 <code>main.css</code> 的 <code>.wb-*</code> 工作台样式。点击蓝图 / 切页签 / 筛选 / 加入队列均为本地演示交互。</p>
+    <div class="iv-tags">
+      <span class="iv-tag ok">① A 总额确定性分摊（经授权偏离 1 代）</span>
+      <span class="iv-tag">② 门槛 [1,20,40,60,80]</span>
+      <span class="iv-tag">③ 节点 xp 按 sec 分档</span>
+      <span class="iv-tag warn">当前科研 Lv25 → T4/T5 锁定</span>
+      <span class="iv-tag" id="srcTag">数据源：—</span>
+    </div>
+  </div>
+  <div class="demo-stage"><div class="wb-panel" id="panel"></div></div>
+  <div class="demo-foot">独立 demo 文件，不修改任何产品代码 · <code>?narrow=1</code> 切 390px 窄屏预览</div>
+</div>
+<div class="iv-pop" id="pop"></div>
+
+<script src="../js/lib/eveidle/data/boosters.js"></script>
+<script src="../js/data/recipes.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ===== 定稿常量（与设计稿 §2/§5 一致，禁自创） ===== */
+  var GATES = [1, 20, 40, 60, 80];
+  var MILESTONES = [10, 50, 250, 1250, 5000];
+  var REDUCTIONS = [0.05, 0.10, 0.15, 0.20, 0.25];
+  var DEMO_SKILL_LEVEL = 25;
+
+  function tierOf(E) { return Math.min(5, Math.floor(E / 20) + 1); }
+  function xpOf(E) { return Math.ceil(0.4 * Math.pow(1.1, E)); }
+  function milestoneLevel(n) {
+    var lv = -1;
+    for (var i = 0; i < MILESTONES.length; i++) if (n >= MILESTONES[i]) lv = i;
+    return lv;
+  }
+  function reductionOf(n) { var lv = milestoneLevel(n); return lv < 0 ? 0 : REDUCTIONS[lv]; }
+  function nextMilestone(n) {
+    for (var i = 0; i < MILESTONES.length; i++) if (n < MILESTONES[i]) return MILESTONES[i];
+    return null;
+  }
+  function gateOf(tier) { return GATES[tier - 1]; }
+  function fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  }); }
+
+  /* ===== 66 张蓝图：优先真实数据表；内置预览无外链时用「由真实表派生」的快照兜底 ===== */
+  var AMMO_NAMES = { ammo_laser: "激光晶体弹药", ammo_missile: "导弹", ammo_cannon: "炮台弹药" };
+  var FALLBACK_ROWS = [{"key":"booster:mining_lubricant_n","name":"纳米采掘润滑剂·普通","E":1,"cat":"增强剂","sub":"mining"},{"key":"booster:shield_recharge_n","name":"护盾回充液·普通","E":4,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:ore_resonance_n","name":"富矿共振催化剂·普通","E":7,"cat":"增强剂","sub":"mining"},{"key":"booster:laser_coolant_n","name":"激光炮冷却剂·普通","E":10,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:relic_solver_n","name":"遗迹解析液·普通","E":13,"cat":"增强剂","sub":"archaeology"},{"key":"booster:armor_nano_n","name":"装甲纳米修复剂·普通","E":16,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:missile_catalyst_n","name":"导弹燃烧催化剂·普通","E":20,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:artifact_tracer_n","name":"文物示踪剂·普通","E":24,"cat":"增强剂","sub":"archaeology"},{"key":"booster:cannon_booster_n","name":"火炮增压药·普通","E":28,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:structure_gel_n","name":"结构再生胶·普通","E":32,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:mining_lubricant_r","name":"纳米采掘润滑剂·精工","E":35,"cat":"增强剂","sub":"mining"},{"key":"booster:shield_recharge_r","name":"护盾回充液·精工","E":39,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:ore_resonance_r","name":"富矿共振催化剂·精工","E":43,"cat":"增强剂","sub":"mining"},{"key":"booster:laser_coolant_r","name":"激光炮冷却剂·精工","E":47,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:relic_solver_r","name":"遗迹解析液·精工","E":51,"cat":"增强剂","sub":"archaeology"},{"key":"booster:armor_nano_r","name":"装甲纳米修复剂·精工","E":55,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:missile_catalyst_r","name":"导弹燃烧催化剂·精工","E":59,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:artifact_tracer_r","name":"文物示踪剂·精工","E":63,"cat":"增强剂","sub":"archaeology"},{"key":"booster:cannon_booster_r","name":"火炮增压药·精工","E":67,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:structure_gel_r","name":"结构再生胶·精工","E":71,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:mining_lubricant_l","name":"纳米采掘润滑剂·传奇","E":60,"cat":"增强剂","sub":"mining"},{"key":"booster:shield_recharge_l","name":"护盾回充液·传奇","E":64,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:ore_resonance_l","name":"富矿共振催化剂·传奇","E":68,"cat":"增强剂","sub":"mining"},{"key":"booster:laser_coolant_l","name":"激光炮冷却剂·传奇","E":72,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:relic_solver_l","name":"遗迹解析液·传奇","E":76,"cat":"增强剂","sub":"archaeology"},{"key":"booster:armor_nano_l","name":"装甲纳米修复剂·传奇","E":80,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:missile_catalyst_l","name":"导弹燃烧催化剂·传奇","E":84,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:artifact_tracer_l","name":"文物示踪剂·传奇","E":88,"cat":"增强剂","sub":"archaeology"},{"key":"booster:cannon_booster_l","name":"火炮增压药·传奇","E":92,"cat":"增强剂","sub":"combatWeapon"},{"key":"booster:structure_gel_l","name":"结构再生胶·传奇","E":96,"cat":"增强剂","sub":"combatRepair"},{"key":"booster:gas_rheology_n","name":"气云流变剂·普通","E":33,"cat":"增强剂","sub":"gas"},{"key":"booster:gas_rheology_r","name":"气云流变剂·精工","E":73,"cat":"增强剂","sub":"gas"},{"key":"booster:gas_rheology_l","name":"气云流变剂·传奇","E":89,"cat":"增强剂","sub":"gas"},{"key":"booster:fullerene_nucleation_n","name":"富勒烯成核剂·普通","E":34,"cat":"增强剂","sub":"gas"},{"key":"booster:fullerene_nucleation_r","name":"富勒烯成核剂·精工","E":74,"cat":"增强剂","sub":"gas"},{"key":"booster:fullerene_nucleation_l","name":"富勒烯成核剂·传奇","E":90,"cat":"增强剂","sub":"gas"},{"key":"booster:high_temp_flux_n","name":"高温助熔剂·普通","E":35,"cat":"增强剂","sub":"refining"},{"key":"booster:high_temp_flux_r","name":"高温助熔剂·精工","E":75,"cat":"增强剂","sub":"refining"},{"key":"booster:high_temp_flux_l","name":"高温助熔剂·传奇","E":91,"cat":"增强剂","sub":"refining"},{"key":"booster:lattice_proliferation_n","name":"晶格增殖剂·普通","E":36,"cat":"增强剂","sub":"refining"},{"key":"booster:lattice_proliferation_r","name":"晶格增殖剂·精工","E":76,"cat":"增强剂","sub":"refining"},{"key":"booster:lattice_proliferation_l","name":"晶格增殖剂·传奇","E":92,"cat":"增强剂","sub":"refining"},{"key":"booster:assembly_coordinator_n","name":"装配协调剂·普通","E":37,"cat":"增强剂","sub":"ship"},{"key":"booster:assembly_coordinator_r","name":"装配协调剂·精工","E":77,"cat":"增强剂","sub":"ship"},{"key":"booster:assembly_coordinator_l","name":"装配协调剂·传奇","E":93,"cat":"增强剂","sub":"ship"},{"key":"booster:precision_rationing_n","name":"精密配给剂·普通","E":38,"cat":"增强剂","sub":["ship","equipment"]},{"key":"booster:precision_rationing_r","name":"精密配给剂·精工","E":78,"cat":"增强剂","sub":["ship","equipment"]},{"key":"booster:precision_rationing_l","name":"精密配给剂·传奇","E":94,"cat":"增强剂","sub":["ship","equipment"]},{"key":"booster:equipment_assembly_n","name":"装备总装协调剂·普通","E":38,"cat":"增强剂","sub":"equipment"},{"key":"booster:equipment_assembly_r","name":"装备总装协调剂·精工","E":78,"cat":"增强剂","sub":"equipment"},{"key":"booster:equipment_assembly_l","name":"装备总装协调剂·传奇","E":94,"cat":"增强剂","sub":"equipment"},{"key":"booster:reaction_accelerant_n","name":"反应加速介质·普通","E":39,"cat":"增强剂","sub":"booster"},{"key":"booster:reaction_accelerant_r","name":"反应加速介质·精工","E":79,"cat":"增强剂","sub":"booster"},{"key":"booster:reaction_accelerant_l","name":"反应加速介质·传奇","E":95,"cat":"增强剂","sub":"booster"},{"key":"booster:reaction_chain_proliferation_n","name":"反应链增殖剂·普通","E":40,"cat":"增强剂","sub":"booster"},{"key":"booster:reaction_chain_proliferation_r","name":"反应链增殖剂·精工","E":80,"cat":"增强剂","sub":"booster"},{"key":"booster:reaction_chain_proliferation_l","name":"反应链增殖剂·传奇","E":96,"cat":"增强剂","sub":"booster"},{"key":"booster:neural_booster_n","name":"神经训练催化器·普通","E":42,"cat":"增强剂","sub":"training"},{"key":"booster:neural_booster_r","name":"神经训练催化器·精工","E":82,"cat":"增强剂","sub":"training"},{"key":"booster:neural_booster_l","name":"神经训练催化器·传奇","E":98,"cat":"增强剂","sub":"training"},{"key":"booster:skill_overdrive_n","name":"技能超载催化器·普通","E":30,"cat":"增强剂","sub":"training"},{"key":"booster:skill_overdrive_r","name":"技能超载催化器·精工","E":70,"cat":"增强剂","sub":"training"},{"key":"booster:skill_overdrive_l","name":"技能超载催化器·传奇","E":92,"cat":"增强剂","sub":"training"},{"key":"ammo:ammo_laser","name":"激光晶体弹药","E":1,"cat":"弹药","sub":"ammunition"},{"key":"ammo:ammo_missile","name":"导弹","E":1,"cat":"弹药","sub":"ammunition"},{"key":"ammo:ammo_cannon","name":"炮台弹药","E":1,"cat":"弹药","sub":"ammunition"}];
+  var DATA_SOURCE = "real files";
+  function sourceRows() {
+    var recipes = window.BOOSTER_RECIPES || [];
+    var items = window.BOOSTER_ITEMS || {};
+    var comp = (window.NSK && window.NSK.Data && window.NSK.Data.Recipes &&
+      window.NSK.Data.Recipes.COMPONENT) || [];
+    if (!recipes.length || !comp.length) {
+      DATA_SOURCE = "derived snapshot";
+      return FALLBACK_ROWS.slice();
+    }
+    var out = [];
+    for (var i = 0; i < recipes.length; i++) {
+      var r = recipes[i];
+      var id = String(r.itemId || "").replace(/^booster:/, "") || r.id;
+      var it = items[id] || {};
+      out.push({
+        key: "booster:" + r.id, name: it.name || r.name || r.id,
+        E: Number(r.level) || 1, cat: "增强剂", sub: r.category || "", cost: r.cost || {}
+      });
+    }
+    for (var j = 0; j < comp.length; j++) {
+      var c = comp[j];
+      if (c.cat !== "ammo") continue;
+      out.push({
+        key: "ammo:" + String(c.out), name: AMMO_NAMES[c.out] || c.out,
+        E: 1, cat: "弹药", sub: "ammunition", cost: c.in || {}
+      });
+    }
+    return out;
+  }
+  function buildBlueprints() {
+    var out = sourceRows();
+    for (var k = 0; k < out.length; k++) {
+      var b = out[k];
+      b.tier = tierOf(b.E);
+      b.xp = xpOf(b.E);
+      b.cycle = 30 * b.tier;
+      b.isk = 2000 * b.tier;
+      b.core = b.tier;
+      b.gate = gateOf(b.tier);
+      b.locked = DEMO_SKILL_LEVEL < b.gate;
+    }
+    return out;
+  }
+  var BP = buildBlueprints();
+  var BP_BY_KEY = {};
+  for (var q = 0; q < BP.length; q++) BP_BY_KEY[BP[q].key] = BP[q];
+
+  /* ===== 演示态状态（标明：非引擎数据） ===== */
+  var S = {
+    tab: "study", tier: 1, query: "", sel: "booster:mining_lubricant_n", dir: "me", count: 1,
+    studied: {
+      "booster:mining_lubricant_n": { me: 12, te: 3 },
+      "booster:shield_recharge_n": { me: 50, te: 0 },
+      "booster:laser_coolant_n": { me: 0, te: 10 },
+      "booster:structure_gel_l": { me: 250, te: 50 }
+    },
+    queue: [
+      { key: "booster:mining_lubricant_n", dir: "me", done: 12, repeat: 50 },
+      { key: "booster:shield_recharge_n", dir: "te", done: 3, repeat: 10 }
+    ]
+  };
+  function studied(key) {
+    if (!S.studied[key]) S.studied[key] = { me: 0, te: 0 };
+    return S.studied[key];
+  }
+  function dirName(d) { return d === "te" ? "时间效率" : "材料效率"; }
+
+  /* ===== 卡片 / 详情 / 队列 ===== */
+  function titleOf(b) {
+    var st = studied(b.key);
+    return b.name + "\nE " + b.E + " · T" + b.tier + " · 科研 Lv" + b.gate + " 解锁"
+      + "\n研究周期 " + b.cycle + "s / 循环 · 经验 " + b.xp + " xp"
+      + "\n每循环扣费 星币 " + fmt(b.isk) + " + 改装图纸 ×" + b.core
+      + "\nME " + st.me + " 次 → 减免 " + Math.round(reductionOf(st.me) * 100) + "%"
+      + "\nTE " + st.te + " 次 → 减免 " + Math.round(reductionOf(st.te) * 100) + "%";
+  }
+  function bar(label, n, isTe) {
+    var next = nextMilestone(n);
+    var pct = next ? Math.min(100, Math.round(n / next * 100)) : 100;
+    var txt = next ? label + " " + n + "/" + next : label + " " + n + " · 满级";
+    return '<div class="iv-bar-row"><span>' + txt + '</span>'
+      + '<div class="iv-bar' + (isTe ? " te" : "") + '"><i style="width:' + pct + '%"></i></div></div>';
+  }
+  function cardHtml(b) {
+    var st = studied(b.key);
+    var cls = "wb-recipe iv-bp" + (S.sel === b.key ? " sel" : "") + (b.locked ? " locked" : "");
+    return '<button class="' + cls + '" data-act="sel:' + b.key + '" title="' + esc(titleOf(b)) + '">'
+      + '<div class="iv-bp-top"><span class="iv-bp-name">' + esc(b.name) + '</span>'
+      + '<span class="iv-tier t' + b.tier + '">T' + b.tier + '</span></div>'
+      + '<div class="iv-bp-sub">E ' + b.E + ' · ' + b.cat + ' · ' + esc(b.sub) + '</div>'
+      + '<div class="iv-bars">' + bar("ME", st.me, false) + bar("TE", st.te, true) + '</div>'
+      + (b.locked ? '<span class="iv-lockline">科研 Lv' + b.gate + ' 解锁</span>' : '')
+      + '<span class="hover-info-btn" data-act="info:' + b.key + '">ⓘ</span>'
+      + '</button>';
+  }
+  function visibleBlueprints() {
+    return BP.filter(function (b) {
+      if (S.tier !== 0 && b.tier !== S.tier) return false;
+      if (S.query && b.name.toLowerCase().indexOf(S.query.toLowerCase()) < 0 &&
+          b.key.toLowerCase().indexOf(S.query.toLowerCase()) < 0) return false;
+      return true;
+    });
+  }
+  function filterHtml() {
+    var counts = [0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < BP.length; i++) counts[BP[i].tier]++;
+    var h = '<span class="iv-filter' + (S.tier === 0 ? " sel" : "") + '" data-act="tier:0">全部<small>' + BP.length + '</small></span>';
+    for (var t = 1; t <= 5; t++) {
+      h += '<span class="iv-filter' + (S.tier === t ? " sel" : "") + '" data-act="tier:' + t + '">T' + t
+        + '<small>' + counts[t] + '</small></span>';
+    }
+    return h;
+  }
+  function detailHtml() {
+    var b = BP_BY_KEY[S.sel];
+    if (!b) return '<div class="wb-empty">请选择一张蓝图。</div>';
+    var st = studied(b.key);
+    var meNext = nextMilestone(st.me), teNext = nextMilestone(st.te);
+    return '<div class="wb-detail base-focus-panel iv-detail">'
+      + '<h3>' + esc(b.name) + '</h3>'
+      + '<div class="iv-sub">' + esc(b.key) + ' · ' + b.cat + ' · T' + b.tier
+      + (b.locked ? ' · <span style="color:#f0b48a">科研 Lv' + b.gate + ' 解锁</span>' : '') + '</div>'
+      + '<div class="iv-grid">'
+      + '<div class="iv-cell"><em>效率等级 E / 档位</em><b>E ' + b.E + ' · T' + b.tier + '</b></div>'
+      + '<div class="iv-cell"><em>研究周期 / 经验</em><b>' + b.cycle + 's · ' + b.xp + ' xp</b></div>'
+      + '<div class="iv-cell"><em>每循环扣费</em><b>星币 ' + fmt(b.isk) + ' + 图纸 ×' + b.core + '</b></div>'
+      + '<div class="iv-cell"><em>当前减免 ME / TE</em><b>' + Math.round(reductionOf(st.me) * 100) + '% / '
+      + Math.round(reductionOf(st.te) * 100) + '%</b></div>'
+      + '<div class="iv-cell"><em>ME 累计 / 距下一里程碑</em><b>' + st.me + ' / ' + (meNext === null ? "已满" : meNext - st.me) + ' 次</b></div>'
+      + '<div class="iv-cell"><em>TE 累计 / 距下一里程碑</em><b>' + st.te + ' / ' + (teNext === null ? "已满" : teNext - st.te) + ' 次</b></div>'
+      + '</div>'
+      + '<div class="iv-note">ME 口径：总额确定性分摊（① 已拍板，用户明确批准的唯一 1 代偏离）。'
+      + 'TE 口径：耗时 /(1−r)；ME 在 discountedCost 之后叠。研究队列自身不吃 TE。</div>'
+      + '<div class="iv-dir">'
+      + '<span class="' + (S.dir === "me" ? "on" : "") + '" data-act="dir:me">研究 ME · 材料效率</span>'
+      + '<span class="' + (S.dir === "te" ? "on" : "") + '" data-act="dir:te">研究 TE · 时间效率</span>'
+      + '</div></div>';
+  }
+  function queueHtml() {
+    if (!S.queue.length) return '<div class="wb-empty">队列为空。选择蓝图后点「加入队列」。</div>';
+    return S.queue.map(function (it, i) {
+      var b = BP_BY_KEY[it.key] || { name: it.key };
+      var p = Math.round(it.done / it.repeat * 100);
+      return '<div class="wb-job iv-job">'
+        + '<div class="wb-job-top"><span>' + esc(dirName(it.dir)) + ' · ' + esc(b.name)
+        + ' ' + it.done + '/' + it.repeat + '</span>'
+        + '<span class="wb-x" data-act="cancel:' + i + '">×</span></div>'
+        + '<div class="wb-bar"><i style="width:' + p + '%"></i></div>'
+        + '<div class="wb-job-sub">研发中 · ' + esc(it.key) + '</div></div>';
+    }).join("");
+  }
+  function synthHtml() {
+    return '<div class="wb-note" style="font-size:12px;color:var(--dim);margin:10px 0 4px">'
+      + '原发明舱单配方保持不变：结构件 ×4 + 标准钛材 ×10 → 改装图纸 ×1（40s / 张，bodyLevel ≥ 2）。'
+      + '此页产出 <b>bp</b>，正是「效率研究」每次循环的耗材。</div>'
+      + '<div class="wb-recipes"><button class="wb-recipe sel">'
+      + '<div class="wb-r1">结构件 ×4 + 标准钛材 ×10 → 改装图纸 ×1</div>'
+      + '<div class="wb-r2">40s / 张 · 需舰基 Lv3</div></button></div>'
+      + '<div class="wb-sec">连续生产数量</div>'
+      + '<div class="wb-stepper"><button class="wb-step">−</button><div class="wb-count">1</div>'
+      + '<button class="wb-step">+</button><span class="wb-chips">'
+      + '<span class="wb-chip">×1</span><span class="wb-chip">×10</span>'
+      + '<span class="wb-chip">×100</span><span class="wb-chip cont">连续</span></span></div>'
+      + '<button class="wb-add" style="margin-top:12px">加入队列 · 改装图纸</button>';
+  }
+  function render() {
+    var srcTag = document.getElementById("srcTag");
+    if (srcTag) srcTag.textContent = "数据源：" + DATA_SOURCE + " · 样式：" + (window.__DEMO_CSS_SOURCE || "—");
+    var list = visibleBlueprints();
+    var b = BP_BY_KEY[S.sel];
+    var canAdd = !!b && !b.locked;
+    var body = '<div class="wb-head"><div><b>发明舱 · 工作台</b>'
+      + '<span class="wb-sub">槽位 ' + S.queue.length + ' / 3 · 科研 Lv' + DEMO_SKILL_LEVEL + ' · 耗时 −0%</span></div>'
+      + '<span class="wb-close">×</span></div>'
+      + '<div class="wb-tabs">'
+      + '<span class="wb-tab' + (S.tab === "study" ? " on" : "") + '" data-act="tab:study">效率研究</span>'
+      + '<span class="wb-tab' + (S.tab === "synth" ? " on" : "") + '" data-act="tab:synth">图纸合成</span>'
+      + '</div>';
+    if (S.tab === "synth") {
+      body += synthHtml() + '<div class="wb-sec wb-queue-sec">队列 · ' + S.queue.length + ' / 3</div>'
+        + '<div class="wb-queue">' + queueHtml() + '</div>';
+    } else {
+      body += detailHtml()
+        + '<div class="iv-search"><input id="ivq" type="text" placeholder="搜索蓝图名称 / key" value="' + esc(S.query) + '"></div>'
+        + '<div class="iv-filters">' + filterHtml() + '</div>'
+        + '<div class="wb-sec">选择蓝图<span class="wb-catcount">共 ' + BP.length + ' 张 · 当前 ' + list.length + ' 张</span></div>'
+        + '<div class="wb-recipes iv-list">' + (list.length ? list.map(cardHtml).join("") : '<div class="wb-empty">没有匹配的蓝图。</div>') + '</div>'
+        + '<div class="wb-sec">连续研究次数</div>'
+        + '<div class="wb-stepper">'
+        + '<button class="wb-step" data-act="count:-1">−</button>'
+        + '<div class="wb-count">' + fmt(S.count) + '</div>'
+        + '<button class="wb-step" data-act="count:1">+</button>'
+        + '<span class="wb-chips">'
+        + '<span class="wb-chip" data-act="chip:1">×1</span>'
+        + '<span class="wb-chip" data-act="chip:10">×10</span>'
+        + '<span class="wb-chip" data-act="chip:100">×100</span>'
+        + '<span class="wb-chip cont" data-act="chip:9999">连续</span></span></div>'
+        + '<div class="wb-cap">单次循环 ' + (b ? b.cycle + 's，星币 ' + fmt(b.isk) + ' + 图纸 ×' + b.core : "—")
+        + ' · <b>' + fmt(S.count) + '</b> 次 ≈ ' + (b ? fmt(b.cycle * S.count) + "s" : "—") + '</div>'
+        + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="add"' + (canAdd ? "" : " disabled") + '>'
+        + '加入队列 · ' + esc(dirName(S.dir)) + ' · ' + esc(b ? b.name : "未选择") + '</button>'
+        + '<div class="wb-note" style="font-size:11px;color:var(--dim);margin-top:8px">'
+        + 'T4 / T5 蓝图按 ② 拍板结果保留 1 代门槛，科研 Lv25 演示态下灰显。队列项走既有 inventQueue，'
+        + '实装时沿用 workbench.js「每秒只就地更新动态片段」纪律，不整面板重建。</div>'
+        + '<div class="wb-sec wb-queue-sec">队列 · ' + S.queue.length + ' / 3</div>'
+        + '<div class="wb-queue">' + queueHtml() + '</div>';
+    }
+    document.getElementById("panel").innerHTML = body;
+    var input = document.getElementById("ivq");
+    if (input) input.addEventListener("input", function (e) {
+      S.query = e.target.value;
+      var pos = e.target.selectionStart;
+      render();
+      var again = document.getElementById("ivq");
+      if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (err) {} }
+    });
+  }
+
+  /* ===== 事件委托（与产品 workbench.js 同风格） ===== */
+  document.addEventListener("click", function (e) {
+    var info = e.target.closest && e.target.closest('[data-act^="info:"]');
+    if (info) {
+      e.stopPropagation();
+      var key = info.getAttribute("data-act").slice(5);
+      var card = info.closest(".iv-bp");
+      var pop = document.getElementById("pop");
+      pop.textContent = card ? card.getAttribute("title") : (BP_BY_KEY[key] ? titleOf(BP_BY_KEY[key]) : "");
+      var r = info.getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(window.innerWidth - 276, r.left - 240)) + "px";
+      pop.style.top = (r.bottom + window.scrollY + 6) + "px";
+      pop.classList.add("show");
+      return;
+    }
+    document.getElementById("pop").classList.remove("show");
+    var el = e.target.closest && e.target.closest("[data-act]");
+    if (!el) return;
+    var act = el.getAttribute("data-act"), a = act.split(":"), op = a[0], v = a.slice(1).join(":");
+    if (op === "tab") S.tab = v;
+    else if (op === "tier") S.tier = Number(v);
+    else if (op === "sel") {
+      if (BP_BY_KEY[v] && BP_BY_KEY[v].locked) return;
+      S.sel = v;
+    }
+    else if (op === "dir") S.dir = v;
+    else if (op === "count") S.count = Math.max(1, Math.min(9999, S.count + Number(v)));
+    else if (op === "chip") S.count = Number(v);
+    else if (op === "cancel") S.queue.splice(Number(v), 1);
+    else if (op === "add") {
+      var b = BP_BY_KEY[S.sel];
+      if (!b || b.locked) return;
+      S.queue.push({ key: b.key, dir: S.dir, done: 0, repeat: S.count });
+      var st = studied(b.key);
+      st[S.dir] += S.count;
+    }
+    render();
+  });
+
+  if (/[?&]narrow=1/.test(location.search)) document.body.classList.add("demo-narrow");
+  var tm = /[?&]tier=(\d)/.exec(location.search);
+  if (tm) S.tier = Math.max(0, Math.min(5, Number(tm[1])));
+  render();
+  window.__DEMO_BP_COUNT = BP.length;
+
+  /* ===== ?selftest=1：真实 DOM 交互断言（只在自检模式跑，不影响演示视图） ===== */
+  if (/[?&]selftest=1/.test(location.search)) {
+    var R = [];
+    function chk(name, cond, extra) { R.push((cond ? "PASS " : "FAIL ") + name + (extra ? " :: " + extra : "")); }
+    function q(sel) { return document.querySelector(sel); }
+    function n(sel) { return document.querySelectorAll(sel).length; }
+    function click(sel) { var e = q(sel); if (e) e.click(); return !!e; }
+    var html = function () { return q("#panel").innerHTML; };
+    chk("蓝图总数 = 66", BP.length === 66, "实得 " + BP.length);
+    /* 样式源回归：外链 404 时兜底必须保持启用，主题变量必须非空 */
+    var linkEl = document.getElementById("real-css");
+    var sheetOk = (function () {
+      try { var sh = linkEl && linkEl.sheet; return !!(sh && sh.cssRules && sh.cssRules.length > 0); }
+      catch (e) { return false; }
+    })();
+    var fbEl = document.getElementById("fallback-css");
+    var panelVar = getComputedStyle(document.documentElement).getPropertyValue("--panel").trim();
+    chk("样式源判定与外链一致",
+      window.__DEMO_CSS_SOURCE === (sheetOk ? "real main.css" : "inline fallback") &&
+      (!!fbEl.disabled === sheetOk) && (window.__DEMO_SHEET_LOADED === sheetOk),
+      "sheet=" + sheetOk + " src=" + window.__DEMO_CSS_SOURCE + " fbDisabled=" + fbEl.disabled);
+    chk("主题变量在两种环境均生效", !!panelVar, "--panel=" + panelVar);
+    chk("切页签 → 图纸合成", click('[data-act="tab:synth"]') && /结构件 ×4/.test(html()));
+    chk("切回 → 效率研究", click('[data-act="tab:study"]') && /搜索蓝图名称/.test(html()));
+    click('[data-act="tier:4"]');
+    chk("T4 筛选 17 张且全锁定", n(".iv-bp") === 17 && n(".iv-bp.locked") === 17,
+      "卡片 " + n(".iv-bp") + " / 锁定 " + n(".iv-bp.locked"));
+    chk("T4 显示 Lv60 解锁文案", /科研 Lv60 解锁/.test(html()));
+    click('[data-act="tier:5"]');
+    chk("T5 筛选 18 张且全锁定", n(".iv-bp") === 18 && n(".iv-bp.locked") === 18);
+    chk("T5 显示 Lv80 解锁文案", /科研 Lv80 解锁/.test(html()));
+    click('[data-act="tier:1"]');
+    chk("T1 筛选 9 张且零锁定", n(".iv-bp") === 9 && n(".iv-bp.locked") === 0);
+    click('[data-act="chip:100"]');
+    chk("×100 chip 生效", q(".wb-count") && q(".wb-count").textContent === "100");
+    click('[data-act="dir:te"]');
+    chk("TE 方向选中", q('[data-act="dir:te"]').classList.contains("on"));
+    var before = n(".iv-job");
+    click('[data-act="add"]');
+    chk("加入队列 → 3 条且 study 文案正确", n(".iv-job") === before + 1 && /时间效率 · 纳米采掘润滑剂·普通 0\/100/.test(html()),
+      "队列 " + before + " → " + n(".iv-job"));
+    click('[data-act="cancel:0"]');
+    chk("取消队列项 → 回到 2 条", n(".iv-job") === before);
+    click('[data-act^="info:"]');
+    chk("ⓘ 浮层显示且内容来自 title", q("#pop").classList.contains("show") && /纳米采掘润滑剂/.test(q("#pop").textContent));
+    chk("无 undefined / NaN 渲染", !/undefined|NaN/.test(html()));
+    var pre = document.createElement("pre");
+    pre.id = "selftest-out";
+    pre.textContent = R.join("\n");
+    document.body.appendChild(pre);
+  }
+})();
+</script>
+</body>
+</html>

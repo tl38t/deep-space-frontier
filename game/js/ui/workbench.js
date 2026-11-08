@@ -40,6 +40,8 @@
   // 与配方卡的写法（CTX.resName(r.out)）保持同口径。
   function outName(resId) { return CTX.resName(resId); }
   function clampN(n) { return Math.max(1, Math.min(MAX_CONTINUOUS, n | 0 || 1)); }
+  function I() { return window.NSK.Engine && window.NSK.Engine.Invention; }
+  function isStudy() { return !!cur && cur.type === "invent" && cur.tab === "study"; }
 
   function isOpen() { return !!cur; }
 
@@ -66,9 +68,13 @@
     if (cur && cur.overlay) close();
     cur = {
       slotId: slotId, type: slot.type,
-      tab: slot.type === "manufacture" ? "component" : null,
+      // 发明舱双子页签：效率研究（默认）/ 图纸合成。总装船坞沿用 component/ship。
+      tab: slot.type === "manufacture" ? "component" : slot.type === "invent" ? "study" : null,
       boosterCat: null,       // 反应实验室当前分类（null = 取第一个有配方的分类）
       equipCat: null,         // 制造车间当前分类（高槽/中槽/低槽/改装件）
+      studyTier: 0,            // 0 = 全部；1..5 = 按蓝图档位筛选
+      studyQuery: "",          // 蓝图名 / key 搜索
+      studyDir: "me",          // me | te
       recipeId: null, count: 1, overlay: null,
       detailBuilder: typeof detailBuilder === "function" ? detailBuilder : null,
     };
@@ -88,6 +94,18 @@
     ov.className = "wb-overlay";
     ov.setAttribute("data-wb-overlay", "1");
     ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    // 蓝图搜索：只重建网格，绝不整面板 render —— 否则输入框失焦、光标归零，无法连续输入。
+    // 与 refresh() 的「每秒只就地更新动态片段」纪律一致。
+    ov.addEventListener("input", function (e) {
+      if (!e.target || e.target.id !== "ivq" || !isStudy()) return;
+      cur.studyQuery = e.target.value;
+      const box = ov.querySelector(".wb-recipes");
+      if (box) box.innerHTML = studyCards();
+      const cnt = ov.querySelector(".iv-catcount");
+      if (cnt) cnt.textContent = "共 " + studyList().length + " 张 · 当前 " + studyVisible().length + " 张";
+      const panel = ov.querySelector(".wb-panel");
+      if (panel) updateRecipeAffordability(panel);
+    });
     document.body.appendChild(ov);
     cur.overlay = ov;
   }
@@ -97,6 +115,7 @@
   // ---------- 数据 ----------
   function recipeTable() {
     const R = Data().Recipes;
+    if (isStudy()) return [];                 // 效率研究页不消费 Recipes 表，走 studyCards()
     if (cur.type === "smelt") return R.SMELT;
     if (cur.type === "invent") return R.INVENT;
     if (cur.type === "booster") return (window.BOOSTER_RECIPES || []);
@@ -141,7 +160,11 @@
     if (cur.type === "smelt")
       return (ind.smeltQueue || []).map((j, i) => ({ qk: "smeltQueue", i: i, it: j, out: outName(j.out) }));
     if (cur.type === "invent")
-      return (ind.inventQueue || []).map((j, i) => ({ qk: "inventQueue", i: i, it: j, out: outName(j.out) }));
+      return (ind.inventQueue || []).map((j, i) => ({
+        qk: "inventQueue", i: i, it: j,
+        // study 项的 out 是 ASCII 标记 "study"，显示名由数据表实时派生（不写进存档、不露裸 key）
+        out: (j.outType === "study" && I()) ? I().labelFor(j.studyKey, j.studyDir) : outName(j.out),
+      }));
     if (cur.type === "booster")
       return (ind.boosterQueue || []).map((j, i) => ({ qk: "boosterQueue", i: i, it: j, out: boosterName(j.out) }));
     if (cur.type === "equip")
@@ -156,6 +179,10 @@
   }
 
   function recipeOutName(recipeId) {
+    if (isStudy()) {
+      const M = I(), b = M && M.blueprintByKey(recipeId);
+      return (cur.studyDir === "te" ? "时间效率" : "材料效率") + " · " + (b ? b.name : recipeId);
+    }
     if (cur.type === "manufacture" && cur.tab === "ship") {
       const s = Data().Ships.shipById(recipeId); return s ? s.name : recipeId;
     }
@@ -181,6 +208,10 @@
   //  · 装备               → Booster.discountedCost(..., "equip")：buildEquipment 就是按折扣后扣料的
   function unitCost(recipeId) {
     if (!recipeId) return null;
+    if (isStudy()) {
+      const M = I(), b = M && M.blueprintByKey(recipeId);
+      return b ? b.costCycle : null;   // 每循环 2000×tier 星币 + tier 张改装图纸
+    }
     const st = state();
     if (cur.type === "booster") {
       const B = BEngine();
@@ -219,12 +250,105 @@
   // 「连续」的语义是「一直排到材料耗尽」（引擎 processQueue 逐批 canAfford + spend，料不够自动停队），
   // 若把 count 钳到可产批数，连续就退化成「一次性 ×N」，玩家补料后还得再点一次。
   function capText() {
-    if (!cur.recipeId) return "选择配方后显示可产批数";
+    const noun = isStudy() ? "次研究" : "批";
+    if (!cur.recipeId) return "选择" + (isStudy() ? "蓝图" : "配方") + "后显示可产" + noun;
     const mx = maxBatches(unitCost(cur.recipeId));
-    return mx > 0 ? "按当前材料 · 最多 <b>" + mx + "</b> 批" : "材料不足，无法排产";
+    return mx > 0 ? "按当前材料 · 最多 <b>" + mx + "</b> " + noun : "材料不足，无法排产";
+  }
+
+  // ---------- 发明舱 · 效率研究（66 张蓝图，由真实配方派生） ----------
+  // 桌面用原生 title hover；手机端按跨项目方案 C 用 ⓘ 提供点按等价物。
+  // ⚠️ esc() 不转义双引号，属性内文本一律走 attrEsc（并把换行编成 &#10;，供 #nsk-pop 的 pre-line 渲染）。
+  function attrEsc(s) { return CTX.esc(s).replace(/"/g, "&quot;").replace(/\n/g, "&#10;"); }
+  function studyList() { const M = I(); return M ? M.list() : []; }
+  function studyVisible() {
+    const q = (cur.studyQuery || "").toLowerCase();
+    return studyList().filter(b => {
+      if (cur.studyTier && b.tier !== cur.studyTier) return false;
+      if (q && b.name.toLowerCase().indexOf(q) < 0 && b.key.toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+  function studyTierList() {
+    const all = studyList(), d = {};
+    for (const b of all) d[b.tier] = (d[b.tier] || 0) + 1;
+    return [{ id: 0, name: "全部", n: all.length }].concat(
+      [1, 2, 3, 4, 5].map(t => ({ id: t, name: "T" + t, n: d[t] || 0 })));
+  }
+  function pct(n, next) { return next == null ? 100 : Math.min(100, Math.round(n / next * 100)); }
+  function studyInfo(b) {
+    const M = I(), st = state();
+    const me = M.countOf(st, b.key, "me"), te = M.countOf(st, b.key, "te");
+    return [
+      b.name + " · T" + b.tier,
+      "制造需求等级 E " + b.E + " · 科研 Lv" + b.gate + " 解锁",
+      "每循环 " + b.cycle + "s · 星币 " + b.costCycle.credits + " + 改装图纸 " + b.costCycle.bp,
+      "ME " + me + "/" + (M.nextMilestone(me) || "满档") + " → " + Math.round(M.meReduction(st, b.key) * 100) + "%",
+      "TE " + te + "/" + (M.nextMilestone(te) || "满档") + " → " + Math.round(M.teReduction(st, b.key) * 100) + "%",
+      "研究经验 " + b.xp + " / 循环",
+    ].join("\n");
+  }
+  function studyCards() {
+    const M = I(), st = state();
+    if (!M) return '<div class="wb-empty">蓝图研究系统未就绪。</div>';
+    const rows = studyVisible();
+    if (!rows.length) return '<div class="wb-empty">没有匹配的蓝图。</div>';
+    return rows.map(b => {
+      const me = M.countOf(st, b.key, "me"), te = M.countOf(st, b.key, "te");
+      const meN = M.nextMilestone(me), teN = M.nextMilestone(te);
+      const locked = !M.isUnlocked(st, b);
+      const sel = cur.recipeId === b.key ? " sel" : "";
+      const info = attrEsc(studyInfo(b));
+      return '<button class="wb-recipe iv-bp' + sel + (locked ? " dis locked" : "") + '"'
+        + ' data-act="workbench:sel:' + b.key + '" title="' + info + '">'
+        + '<span class="hover-info-btn" data-info="' + info + '">ⓘ</span>'
+        + '<div class="iv-bp-top"><span class="iv-bp-name">' + CTX.esc(b.name) + '</span>'
+        + '<span class="iv-tier t' + b.tier + '">T' + b.tier + '</span></div>'
+        + '<div class="iv-bp-sub">E ' + b.E + ' · ' + b.cycle + 's / 循环</div>'
+        + '<div class="iv-bars">'
+        + '<div class="iv-bar-row"><span>ME ' + me + (meN ? "/" + meN : " 满档") + '</span>'
+        + '<div class="iv-bar"><i style="width:' + pct(me, meN) + '%"></i></div></div>'
+        + '<div class="iv-bar-row"><span>TE ' + te + (teN ? "/" + teN : " 满档") + '</span>'
+        + '<div class="iv-bar te"><i style="width:' + pct(te, teN) + '%"></i></div></div>'
+        + '</div>'
+        + (locked ? '<span class="iv-lockline">科研 Lv' + b.gate + ' 解锁</span>' : '')
+        + '</button>';
+    }).join("");
+  }
+  function studyFiltersHtml() {
+    return '<div class="iv-filters">' + studyTierList().map(c =>
+      '<span class="iv-filter' + (c.id === cur.studyTier ? " sel" : "") + '"'
+      + ' data-act="workbench:stier:' + c.id + '">' + CTX.esc(c.name) + '<small>' + c.n + '</small></span>').join("") + '</div>';
+  }
+  function studyDetailHtml() {
+    const M = I(), st = state();
+    const b = M && M.blueprintByKey(cur.recipeId);
+    if (!b) return '<div class="wb-empty">选择一张蓝图查看研究详情。</div>';
+    const me = M.countOf(st, b.key, "me"), te = M.countOf(st, b.key, "te");
+    const meN = M.nextMilestone(me), teN = M.nextMilestone(te);
+    return '<div class="iv-detail"><h3>' + CTX.esc(b.name) + '</h3>'
+      + '<div class="iv-sub">T' + b.tier + ' · E ' + b.E + ' · 科研 Lv' + M.researchLevel(st)
+      + ' / 需 Lv' + b.gate + '</div>'
+      + '<div class="iv-grid">'
+      + '<div class="iv-cell"><em>研究周期</em><b>' + b.cycle + ' s</b></div>'
+      + '<div class="iv-cell"><em>研究经验</em><b>' + b.xp + ' xp</b></div>'
+      + '<div class="iv-cell"><em>星币 / 循环</em><b>' + CTX.fmt(b.costCycle.credits) + '</b></div>'
+      + '<div class="iv-cell"><em>改装图纸 / 循环</em><b>' + b.costCycle.bp + '</b></div>'
+      + '<div class="iv-cell"><em>ME 减免</em><b>' + Math.round(M.meReduction(st, b.key) * 100) + '%</b>'
+      + '<em>累计 ' + me + ' 次' + (meN ? ' · 距下一档 ' + (meN - me) + ' 次' : ' · 已满档') + '</em></div>'
+      + '<div class="iv-cell"><em>TE 减免</em><b>' + Math.round(M.teReduction(st, b.key) * 100) + '%</b>'
+      + '<em>累计 ' + te + ' 次' + (teN ? ' · 距下一档 ' + (teN - te) + ' 次' : ' · 已满档') + '</em></div>'
+      + '</div>'
+      + '<div class="iv-note">ME 降低该蓝图对应配方的材料消耗；TE 缩短其制造耗时（/(1−减免)），研究自身耗时不受影响。'
+      + '累计 10 / 50 / 250 / 1250 / 5000 次依次解锁 5% / 10% / 15% / 20% / 25%，两条线各自独立累计。</div>'
+      + '<div class="iv-dir">'
+      + '<span class="' + (cur.studyDir === "me" ? "on" : "") + '" data-act="workbench:sdir:me">材料效率 ME</span>'
+      + '<span class="' + (cur.studyDir === "te" ? "on" : "") + '" data-act="workbench:sdir:te">时间效率 TE</span>'
+      + '</div></div>';
   }
 
   function recipeCards() {
+    if (isStudy()) return studyCards();
     if (cur.type === "booster") return boosterCards();
     if (cur.type === "equip") return equipCards();
     if (cur.type === "manufacture" && cur.tab === "ship") return shipCards();
@@ -342,7 +466,8 @@
       const remainTxt = remain > 60 ? Math.floor(remain / 60) + 'm ' + Math.round(remain % 60) + 's' : Math.round(remain) + 's';
       // 进度中的状态词按队列区分，避免增强剂显示成「冶炼中」
       const QK_LABEL = { buildQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中' };
-      const status = it.done >= it.repeat ? '完成' : (QK_LABEL[job.qk] || '生产中');
+      const status = it.done >= it.repeat ? '完成'
+        : it.outType === "study" ? '研究中' : (QK_LABEL[job.qk] || '生产中');
       return '<div class="wb-job">'
         + '<div class="wb-job-top"><span>' + CTX.esc(job.out) + ' · 批 ' + it.done + '/' + it.repeat + '</span>'
         + '<span class="wb-x" data-act="workbench:cancel:' + job.qk + ':' + job.i + '">×</span></div>'
@@ -362,6 +487,12 @@
         + '<span class="wb-tab' + (cur.tab === "component" ? " on" : "") + '" data-act="workbench:tab:component">部件 / 弹药</span>'
         + '<span class="wb-tab' + (cur.tab === "ship" ? " on" : "") + '" data-act="workbench:tab:ship">造船</span>'
         + '</div>';
+    } else if (cur.type === "invent") {
+      // 双子页签：效率研究（66 张蓝图）/ 图纸合成（原 inv_bp 单配方）
+      tabs = '<div class="wb-tabs">'
+        + '<span class="wb-tab' + (cur.tab === "study" ? " on" : "") + '" data-act="workbench:tab:study">效率研究</span>'
+        + '<span class="wb-tab' + (cur.tab === "synth" ? " on" : "") + '" data-act="workbench:tab:synth">图纸合成</span>'
+        + '</div>';
     }
     // 反应实验室：1 代式分类标签（采矿 / 考古 / 采气 / 冶炼 / 舰船工程 / 装备制造 /
     // 增幅剂制造 / 战斗武器 / 战斗维修 / 技能训练），标签上带该类配方条数。
@@ -379,8 +510,20 @@
       }
     }
     const selName = cur.recipeId ? recipeOutName(cur.recipeId) : "未选择";
-    const canAdd = !!cur.recipeId && !full;
-    const hint = (cur.type === "manufacture" && cur.tab === "component")
+    let canAdd = !!cur.recipeId && !full;
+    if (isStudy() && cur.recipeId) {
+      const M = I(), b = M && M.blueprintByKey(cur.recipeId);
+      if (!b || !M.isUnlocked(st, b)) canAdd = false;   // 门槛未达：卡片灰显且不可入队
+    }
+    const studyHead = isStudy()
+      ? '<div class="iv-search"><input id="ivq" type="text" placeholder="搜索蓝图名称 / key" value="'
+        + attrEsc(cur.studyQuery) + '"></div>'
+        + studyFiltersHtml() + studyDetailHtml()
+      : "";
+    const hint = isStudy()
+      ? '<div class="wb-note">研究消耗星币与改装图纸（图纸合成页产出，考古亦有掉落）。ME 减免在制造报价生效，'
+        + 'TE 缩短该配方制造耗时；研究本身不产资源、不吃 TE。T4 / T5 保留 1 代门槛科研 Lv60 / Lv80，定位长线。</div>'
+      : (cur.type === "manufacture" && cur.tab === "component")
       ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船共用。</div>'
       : (cur.type === "booster")
       ? '<div class="wb-note">瓶身入库后，到舰基页下方「增强剂」面板装入 16 个全局槽位，效果整军团共享、自动续瓶。</div>'
@@ -399,11 +542,13 @@
       + detail
       + tabs
       + catBar
-      + '<div class="wb-sec">选择配方'
-      + (hasCats && catName ? '<span class="wb-catcount">' + CTX.esc(catName) + ' · ' + catN + (cur.type === "equip" ? ' 件' : ' 个配方') + '</span>' : '')
+      + studyHead
+      + '<div class="wb-sec">' + (isStudy() ? "选择蓝图" : "选择配方")
+      + (isStudy() ? '<span class="iv-catcount">共 ' + studyList().length + ' 张 · 当前 ' + studyVisible().length + ' 张</span>'
+          : (hasCats && catName ? '<span class="wb-catcount">' + CTX.esc(catName) + ' · ' + catN + (cur.type === "equip" ? ' 件' : ' 个配方') + '</span>' : ''))
       + '</div>'
-      + '<div class="wb-recipes">' + recipeCards() + '</div>'
-      + '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : "连续生产数量") + '</div>'
+      + '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + recipeCards() + '</div>'
+      + '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
       + '<div class="wb-stepper">'
       + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
       + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
@@ -415,7 +560,8 @@
       + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
       + '</span></div>'
       + '<div class="wb-cap">' + capText() + '</div>'
-      + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>加入队列 · ' + CTX.esc(selName) + '</button>'
+      + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
+      + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>'
       + hint
       + '<div class="wb-sec wb-queue-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
       + '<div class="wb-queue">' + queueRows() + '</div>'
@@ -457,13 +603,18 @@
       if (cap.innerHTML !== capHtml) cap.innerHTML = capHtml;
     }
 
-    const canAdd = !!cur.recipeId && !full;
+    let canAdd = !!cur.recipeId && !full;
+    if (isStudy() && cur.recipeId) {
+      const M = I(), b = M && M.blueprintByKey(cur.recipeId);
+      if (!b || !M.isUnlocked(state(), b)) canAdd = false;
+    }
     const add = panel.querySelector(".wb-add");
     if (add) {
       if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
       if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
       else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
-      const addTxt = "加入队列 · " + (cur.recipeId ? recipeOutName(cur.recipeId) : "未选择");
+      const addTxt = (isStudy() ? "加入研究队列 · " : "加入队列 · ")
+        + (cur.recipeId ? recipeOutName(cur.recipeId) : "未选择");
       if (add.textContent !== addTxt) add.textContent = addTxt;
     }
 
@@ -488,10 +639,15 @@
     const st = state();
     panel.querySelectorAll(".wb-recipe").forEach(function (node) {
       const act = node.getAttribute("data-act") || "";
-      const id = act.split(":")[2];
+      // ⚠️ 蓝图 key 自带冒号（"booster:xxx" / "ammo:xxx"），必须 join 回去，
+      //    否则 split(":")[2] 只拿到 "booster"，查表必然落空、卡片被误标成不可负担。
+      const id = act.split(":").slice(2).join(":");
       if (!id) return;
       let can;
-      if (cur.type === "manufacture" && cur.tab === "ship") {
+      if (isStudy()) {
+        const M = I(), bp = M && M.blueprintByKey(id);
+        can = !!(bp && M.isUnlocked(st, bp) && Prod().canAfford(st.res, bp.costCycle));
+      } else if (cur.type === "manufacture" && cur.tab === "ship") {
         const s = Data().Ships.shipById(id);
         can = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel) && Prod().canAfford(st.res, s.cost));
       } else if (cur.type === "equip") {
@@ -523,6 +679,7 @@
     const st = state();
     let r;
     if (cur.type === "smelt") r = Prod().enqueue(st, "smelt", cur.recipeId, cur.count);
+    else if (isStudy()) r = Prod().enqueueStudy(st, cur.recipeId, cur.studyDir, cur.count);
     else if (cur.type === "invent") r = Prod().enqueue(st, "invent", cur.recipeId, cur.count);
     else if (cur.type === "booster") r = Prod().enqueue(st, "booster", cur.recipeId, cur.count);
     else if (cur.type === "equip") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
@@ -537,10 +694,16 @@
     if (!cur) return;
     const p = act.split(":");
     const sub = p[1];
-    if (sub === "sel") cur.recipeId = p[2];
+    // ⚠️ 蓝图 key 自带冒号（"booster:xxx"），sel 的参数要 join 回去。
+    if (sub === "sel") cur.recipeId = p.slice(2).join(":");
+    else if (sub === "stier") {
+      cur.studyTier = Math.max(0, Math.min(5, parseInt(p[2], 10) || 0));
+      cur.recipeId = null;
+    }
+    else if (sub === "sdir") cur.studyDir = p[2] === "te" ? "te" : "me";
     else if (sub === "count") cur.count = clampN(cur.count + (parseInt(p[2], 10) || 0));
     else if (sub === "chip") cur.count = clampN(parseInt(p[2], 10) || 1);
-    else if (sub === "tab") { cur.tab = p[2]; cur.recipeId = null; }
+    else if (sub === "tab") { cur.tab = p[2]; cur.recipeId = null; cur.studyQuery = ""; cur.studyTier = 0; }
     // 切分类（反应实验室 / 制造车间共用）：清空已选配方，避免「加入队列」仍指向看不见的另一分类配方
     else if (sub === "cat") {
       if (cur.type === "equip") cur.equipCat = p[2]; else cur.boosterCat = p[2];

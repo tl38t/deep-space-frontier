@@ -60,8 +60,10 @@
   ];
 
   // 发明：部件 + 矿材 → 改装图纸（bodyLevel>=2 开放）
+  // xp:12 = 2026-11-08 定稿值：把 recipeBatchXp 原先的占位回退（XP_RATE.research 0.6 × 40s × 0.5）
+  // 转成显式配方真值，手感不变；四路科研经验至此全部取显式 xp，回退分支命中 0 次。
   const INVENT = [
-    { id: "inv_bp", in: { struct: 4, fe_alloy: 10 }, out: "bp", qty: 1, dur: 40 },
+    { id: "inv_bp", in: { struct: 4, fe_alloy: 10 }, out: "bp", qty: 1, dur: 40, xp: 12 },
   ];
 
   // 按 id 查

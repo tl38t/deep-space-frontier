@@ -157,11 +157,21 @@
     if (r.requiresBlueprint && !hasBlueprint(state, r.id)) return { ok: false, err: "需要蓝图（考古/货柜掉落）" };
     return { ok: true, recipe: r };
   }
-  // 制造队列项用的「已重映射成本」预览（UI 显示用）
+  // 制造队列项用的「已重映射成本」预览（UI 显示用）+ ME 减免（引擎入队扣料同口径）。
+  // ⚠️ 顺序固定：remapCost → discountedCost（将来若接精密配给剂）→ ME。
+  //    ME 必须最后叠，否则会重蹈 1 代 station.js:1074 的重复叠折扣 bug。
+  //    ME 取整是经用户明确授权的 1 代偏离（总额确定性分摊），见 Engine.Invention。
   function craftCost(state, recipeId) {
     const r = getRecipe(recipeId);
     if (!r) return null;
-    return remapCost(r.cost);
+    let cost = remapCost(r.cost);
+    const I = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+      ? window.NSK.Engine.Invention : null;
+    if (I) {
+      const meR = I.meReduction(state, "booster:" + String(recipeId).replace(/^booster:/, ""));
+      if (meR) cost = I.applyMeReduction(cost, meR);
+    }
+    return cost;
   }
 
   // ===== 兼容判定（isCompatible）=====

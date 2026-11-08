@@ -46,6 +46,8 @@
   // 采集（采矿/采气）经验已改为按节点富裕度查表（见 MINING_XP_RATE / GAS_XP_RATE），
   // 考古经验改为按遗址档位查表（见 ARCH_XP_BY_BAND），均不再连续 ×dt；
   // 故此处移除 mining/gas/archaeology 三项，避免双源；其余 10 项仍用于批量经验白名单与训练。
+  // ⚠️ 2026-11-08：本表**不是当前产率表** —— 战斗按齐射、工业按逐配方 xp、采集按富裕度查表。
+  //    这里的值只作 grantBatchXp 的技能白名单 + 异形队列项兜底，改它不会改变正常经验速率。
   const XP_RATE = { refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, logistics: 0.7, train: 1.4 };
 
   // 采集经验对回 1 代（2026-11-03）：1 代每秒 = area.baseXP / area.baseTime（eff=1）。
@@ -534,6 +536,9 @@
   // 批次经验（production.js 在「一批真的产出」时调用）——这才是 1 代「真正使用才涨」的工业侧口径。
   // 入参 xpAmount 已是「每批完整经验」（配方/舰船/装备自带的 xp，或旧逻辑 速率×时长×BATCH_XP_RATIO 的回退值），
   // 这里只叠加激情(passion)/词条(xpMult)乘区，不再内部乘 XP_RATE —— 配方 xp 本身就是 1 代移植真值（终值）。
+  // 2026-11-08 科研经验四路全部定稿后，本常量**不再被任何正常队列使用**：
+  // 精炼/制造/装备/整船/增强剂/发明(含 inv_bp) 均逐配方显式配 xp。
+  // 保留仅为旧档里缺字段的异形队列项不至于拿 0 经验；探针 G 组断言正常路径命中 0 次。
   const BATCH_XP_RATIO = 0.5;
   function grantBatchXp(state, m, key, xpAmount) {
     if (!m || !key || key === "train" || !XP_RATE[key]) return 0;
@@ -543,8 +548,8 @@
     return gain;
   }
 
-  // 解析某队列项每批应得经验：优先用配方/舰船/装备自带的 xp（1 代移植真值，已是「每批完整经验」），
-  // 缺省（精炼/发明/增强剂目前无 xp 字段）回退旧逻辑 速率×时长×BATCH_XP_RATIO，保留既有手感。
+  // 解析某队列项每批应得经验：优先用配方/舰船/装备自带的 xp（1 代移植真值，已是「每批完整经验」）。
+  // 2026-11-08：精炼/发明/增强剂/整船亦已全部补齐显式 xp，回退分支仅为兼容兜底。
   function recipeBatchXp(state, queueType, it) {
     const Data = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data : null;
     const Base = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
@@ -566,8 +571,24 @@
         // 与制造/装备同口径「逐配方定值」，不再用 XP_RATE.research×dur×0.5 占位公式。
         const BR = (typeof window !== "undefined" && window.BOOSTER_RECIPES) ? window.BOOSTER_RECIPES : null;
         const r = BR ? BR.find(x => x.id === it.recipeId) : null; rxp = r ? r.xp : null;
+      } else if (queueType === "invent") {
+        // 发明舱两路（2026-11-08 定稿）：
+        //  ① 蓝图效率研究 → 1 代 xpForBlueprint = ceil(0.4×1.1^E)，逐循环定值；
+        //  ② inv_bp 图纸合成 → 配方显式 xp:12（原占位回退 0.6×40×0.5 转正，手感不变）。
+        const I = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+          ? window.NSK.Engine.Invention : null;
+        if (it && it.outType === "study") {
+          const bp = I && I.blueprintByKey(it.studyKey);
+          rxp = bp ? I.xpForBlueprint(bp) : null;
+        } else {
+          const r = (Data.Recipes && Data.Recipes.INVENT)
+            ? Data.Recipes.INVENT.find(x => x.id === (it && it.recipeId)) : null;
+          rxp = r ? r.xp : null;
+        }
       }
     }
+    // 兼容兜底：四路科研经验 + 精炼/制造/装备/整船均已逐配方显式配 xp，
+    // 正常路径**永不走这里**；保留仅为旧档异形队列项不会直接拿 0 经验。
     if (rxp == null) {
       const rate = (skill && XP_RATE[skill]) ? XP_RATE[skill] : 0.7;
       return rate * (it.dur || 0) * BATCH_XP_RATIO;

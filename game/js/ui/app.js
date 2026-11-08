@@ -994,6 +994,11 @@
     if (type === "equip") {
       const E = Data.Equipment, eq = E && E.byId ? E.byId(it.recipeId) : null;
       label = eq ? eq.name : it.recipeId;
+    } else if (it.outType === "study") {
+      // 蓝图效率研究：队列项不存中文名（内部键全 ASCII），显示名由数据表实时派生，
+      // 改名后旧档队列项自动跟随，且不会露出 "study:booster:xxx:me" 这种裸 key。
+      const I = Engine.Invention;
+      label = I ? I.labelFor(it.studyKey, it.studyDir) : "蓝图研究";
     } else label = recipe ? resName(recipe.out) : it.recipeId;
     return { count: q.length, label: label, progress: p, detail: "批次 " + (it.done + 1) + "/" + it.repeat };
   }
@@ -3632,10 +3637,12 @@
       // 它不在 starmap-wrap 之内，反而会一路走到 hideNodeMenu() 把刚打开的菜单秒关。
       // 故改为「窗口内且目标不在菜单内则抑制」，菜单按钮（在 $nodePop 内）不受影响。
       if (Date.now() < suppressClickUntil && !$nodePop.contains(e.target)) return;
-      const el = e.target.closest("[data-act]");
-      if (el) { onAction(el.getAttribute("data-act"), e); return; }
+      // ⓘ（方案 C）必须先于 [data-act] 判定：蓝图卡等容器自身带 data-act，
+      // 嵌在里面的 ⓘ 若走 closest("[data-act]") 会命中父卡片，误触发选卡而不是弹浮层。
       const info = e.target.closest(".hover-info-btn");
       if (info) { showPop(info); return; }
+      const el = e.target.closest("[data-act]");
+      if (el) { onAction(el.getAttribute("data-act"), e); return; }
       if (!$pop.contains(e.target)) hidePop();
       if (!$nodePop.contains(e.target)) hideNodeMenu();
       if ($actDrawer.classList.contains("show") && !$actDrawer.contains(e.target) && !e.target.closest('[data-act="toggleActivity"]')) hideActivityDrawer();

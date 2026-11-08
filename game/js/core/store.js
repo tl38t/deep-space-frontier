@@ -87,6 +87,23 @@
       ? window.NSK.Data.Equipment : null;
     if (EqData && EqData.grantAllBlueprints) EqData.grantAllBlueprints(s);
 
+    // 蓝图效率研究状态（2026-11-08）：旧档无 state.invention 时幂等补齐，
+    // **不升 STATE_VERSION**（沿用 ensure*() 既有模式）。放在 members 校验之前，
+    // 避免成员异常时整段规范化被提前 return 掉。
+    // store 层先于 engine 层加载，故惰性取 Engine.Invention；未就绪时用同形兜底，
+    // 运行期 Invention.ensure 会再次清洗（幂等，脏计数归 0）。
+    try {
+      const IE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+        ? window.NSK.Engine.Invention : null;
+      if (IE && IE.ensure) IE.ensure(s);
+      else {
+        if (!s.invention || typeof s.invention !== "object") s.invention = { schemaVersion: 1, blueprints: {} };
+        if (s.invention.schemaVersion !== 1) s.invention.schemaVersion = 1;
+        if (!s.invention.blueprints || typeof s.invention.blueprints !== "object" || Array.isArray(s.invention.blueprints))
+          s.invention.blueprints = {};
+      }
+    } catch (e) { /* 发明状态迁移失败不阻断读档 */ }
+
     // —— 2026-11-01：战斗小队改为「具名据点 + 科技编制」，旧档迁移 ——
     // ① 星图补据点（幂等重算，覆盖旧值）：raid 挂在 node.raid 上，见 data/raids.js
     const RaidsData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
