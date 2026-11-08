@@ -89,7 +89,7 @@ function tick(st, from, sec) {
 }
 
 // ── 0. 键表一致性 ───────────────────────────────────────────────
-const EXPECT = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "logistics"];
+const EXPECT = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "piloting"];
 ok("键表:12 项且与设计稿一致", JSON.stringify(St.SKILL_KEYS) === JSON.stringify(EXPECT), St.SKILL_KEYS.join(","));
 ok("键表:无人机不进表（避免死技能）", St.SKILL_KEYS.indexOf("drones") < 0);
 ok("键表:旧键已除名", ["scanning", "command", "invent"].every(k => St.SKILL_KEYS.indexOf(k) < 0));
@@ -229,7 +229,7 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
     id: "c1", name: "探针", status: "dispatched", destroyed: false, shipId: shipId || "frigate",
     skills: { mining: 0, gas: 0, archaeology: 0, refine: 0, manufacture: 0, research: 0,
       combatLaser: St.xpAtLevel(lvL), combatTurret: St.xpAtLevel(lvT), missile: St.xpAtLevel(lvM),
-      defense: St.xpAtLevel(lvD), capacitor: 0, logistics: 0 },
+      defense: St.xpAtLevel(lvD), capacitor: 0, piloting: 0 },
     passion: {}, mods: { creditMult: {}, yieldMult: {}, xpMult: {}, learnMult: 1 },
     hp: { shield: 1e9, armor: 1e9, structure: 1e9 },
     fitted: { high: [weaponId], mid: [], low: [], rig: [] },
@@ -244,14 +244,30 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
   m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 };
   m.status = "dispatched";
   m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;  // 放大 hp 排除阵亡干扰，专测经验机制
-  const x0 = { L: m.skills.combatLaser, T: m.skills.combatTurret, M: m.skills.missile, D: m.skills.defense, C: m.skills.capacitor };
+  const x0 = { L: m.skills.combatLaser, T: m.skills.combatTurret, M: m.skills.missile, D: m.skills.defense, C: m.skills.capacitor, P: m.skills.piloting };
   tick(st, now, 30);
-  const dL = m.skills.combatLaser - x0.L, dT = m.skills.combatTurret - x0.T, dM = m.skills.missile - x0.M, dD = m.skills.defense - x0.D, dC = m.skills.capacitor - x0.C;
+  const dL = m.skills.combatLaser - x0.L, dT = m.skills.combatTurret - x0.T, dM = m.skills.missile - x0.M, dD = m.skills.defense - x0.D, dC = m.skills.capacitor - x0.C, dP = m.skills.piloting - x0.P;
   ok("激光:剿匪(装激光) 30s 后 xp 增长", dL > 0, "+" + dL.toFixed(1));
   ok("炮台:未装炮台 → 零增长", Math.abs(dT) < 1e-9, "+" + dT.toFixed(1));
   ok("导弹:未装导弹 → 零增长（且不写进 command）", Math.abs(dM) < 1e-9 && m.skills.command === undefined, "+" + dM.toFixed(1));
   ok("防御:受创 → 增长（与武器归属独立）", dD > 0, "+" + dD.toFixed(1));
   ok("电容管理:剿匪 30s 后 xp 增长（对回 1 代 combat 系）", dC > 0, "+" + dC.toFixed(1));
+  ok("驾驶:剿匪(装武器) 30s 后 xp 增长（对回 1 代 combat 系）", dP > 0, "+" + dP.toFixed(1));
+}
+{
+  // 驾驶(piloting) 每级 +1 闪避（对回 1 代 selectors.js:2619）：prepareNode 返回的 playerDodge 随之提升
+  function dodgeOf(lv) {
+    const st = fresh(); const n = raidNodeOf(st); const m = solo(st);
+    m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
+    m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 }; m.status = "dispatched";
+    m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;
+    setLv(m, "piloting", lv);
+    const P = Combat.prepareNode(st, n.id);
+    return P ? P.playerDodge : NaN;
+  }
+  const dLv1 = dodgeOf(1), dLv10 = dodgeOf(10);
+  ok("驾驶: Lv10 闪避 > Lv1 闪避（每级 +1 闪避）", dLv10 > dLv1 && Math.abs(dLv10 - dLv1 - 9) < 1e-9,
+    "Lv1=" + dLv1.toFixed(1) + " Lv10=" + dLv10.toFixed(1));
 }
 {
   // 炮台 / 导弹 各自能涨（按舰归驾驶成员，装配对应武器才涨）
@@ -408,18 +424,19 @@ function smeltRun({ occupy, lv, sec }) {
 function logisticsRun(lv, sec) {
   const st = fresh();
   const m = solo(st);
-  if (lv) setLv(m, "logistics", lv);
-  const l0 = m.skills.logistics || 0, c0 = m.skills.capacitor || 0;
+  if (lv) setLv(m, "piloting", lv);
+  const l0 = m.skills.piloting || 0, c0 = m.skills.capacitor || 0;
   m.assignment = { type: "logistics", nodeId: st.base.nodeId, startedAt: now, eventRoll: 0 };
   m.status = "dispatched";
   tick(st, now, sec);
-  return { st, m, comp: st.logistics.compensation || 0, xp: (m.skills.logistics || 0) - l0, capXp: (m.skills.capacitor || 0) - c0 };
+  return { st, m, comp: st.logistics.compensation || 0, xp: (m.skills.piloting || 0) - l0, capXp: (m.skills.capacitor || 0) - c0 };
 }
 {
   const r = logisticsRun(0, 30);
-  ok("物流:物流岗 30s 后 xp 增长", r.xp > 0, "xp=" + r.xp.toFixed(1));
-  ok("电容管理:物流岗不再顺带涨（已挪至战斗）", Math.abs(r.capXp) < 1e-9, "cap=" + r.capXp.toFixed(1));  const lo = logisticsRun(1, 30), hi = logisticsRun(44, 30);
-  ok("物流:技能提升 → 补偿累积更快", hi.comp > lo.comp * 1.05,
+  ok("驾驶:物流岗 30s 后 xp 增长（双路涨经验·本岗）", r.xp > 0, "xp=" + r.xp.toFixed(1));
+  ok("电容管理:物流岗不再顺带涨（已挪至战斗）", Math.abs(r.capXp) < 1e-9, "cap=" + r.capXp.toFixed(1));
+  const lo = logisticsRun(1, 30), hi = logisticsRun(44, 30);
+  ok("驾驶:技能提升 → 补偿累积更快", hi.comp > lo.comp * 1.05,
     "Lv1=" + lo.comp.toFixed(2) + " Lv10=" + hi.comp.toFixed(2) + " (" + pct(hi.comp, lo.comp) + ")");
 }
 {

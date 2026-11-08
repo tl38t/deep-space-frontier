@@ -152,7 +152,7 @@
   // 指挥塔全局战斗加成（2026-11-01 用户定）。
   // 指挥值 cmdLv = 驻塔者三项战斗技能的算术平均；命中 +cmdLv×2、伤害 ×(1+cmdLv×1%)。
   // 两个系数都是 1 代单兵（+4 命中 / 2% 伤害）的一半 —— 受益的是全队 5 人而不是自己一人。
-  // ⚠️ 明确不碰：减伤归 defense 技能、闪避归舰船 dodge。碰了就是双源。
+  // ⚠️ 闪避唯一技能来源 = 驾驶（piloting，1 代同：每级 +1 闪避）；defense 归减伤、其余技能不碰闪避，避免双源。
   function stationCommandBuff(state) {
     const B = _Base(), S = _Settle();
     if (!B || !B.stationedOfType || !S || !state) return { hitAdd: 0, dmgMult: 1 };
@@ -328,11 +328,14 @@
     for (const t of AMMO_TYPES) weaponDps += dpsByType[t];
     const squadDps = weaponDps;
 
-    // 我方闪避（1 代 getCombatPlayerDodgeFromState：ship.dodge）：取参战成员舰船闪避均值
+    // 我方闪避（对回 1 代 getCombatPlayerDodgeFromState：ship.dodge + piloting 等级）：
+    // 取参战成员「舰船闪避 + 驾驶等级」均值（1 代 piloting 每级 +1 闪避，selectors.js:2619）。
     let dodgeSum = 0;
     for (const m of members) {
       const shp = (Data.Ships && Data.Ships.shipById) ? Data.Ships.shipById(m.shipId) : null;
-      dodgeSum += (shp && typeof shp.dodge === "number") ? shp.dodge : 20;
+      const shipDodge = (shp && typeof shp.dodge === "number") ? shp.dodge : 20;
+      const pilotLv = Settle.levelOf((m.skills || {}).piloting || 0);   // 驾驶：每级 +1 闪避
+      dodgeSum += shipDodge + pilotLv;
     }
     const playerDodge = cnt > 0 ? dodgeSum / cnt : 20;
 

@@ -48,7 +48,7 @@
   // 故此处移除 mining/gas/archaeology 三项，避免双源；其余 10 项仍用于批量经验白名单与训练。
   // ⚠️ 2026-11-08：本表**不是当前产率表** —— 战斗按齐射、工业按逐配方 xp、采集按富裕度查表。
   //    这里的值只作 grantBatchXp 的技能白名单 + 异形队列项兜底，改它不会改变正常经验速率。
-  const XP_RATE = { refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, logistics: 0.7, train: 1.4 };
+  const XP_RATE = { refine: 0.9, manufacture: 0.7, research: 0.6, combatLaser: 0.8, combatTurret: 0.8, missile: 0.8, defense: 0.6, capacitor: 0.5, piloting: 0.7, train: 1.4 };
 
   // 采集经验对回 1 代（2026-11-03）：1 代每秒 = area.baseXP / area.baseTime（eff=1）。
   // 用户定调：baseTime 砍到 1/3 → 每秒 ×3，即下方数值已含 ×3。
@@ -319,9 +319,10 @@
             if (!m || m.destroyed) continue;
             for (const key of c.keys) grantBatchXp(state, m, key, COMBAT_VOLLEY_XP * volleys * inten);
             if (r.damage > 0) grantBatchXp(state, m, "defense", COMBAT_DEF_XP * volleys * inten);
-            // 电容管理（对回 1 代 combat 系技能）：战斗涨经验，量级与武器技能同锚（volleys×inten）。
+            // 电容管理 / 驾驶（均对回 1 代 combat 系技能）：战斗涨经验，量级与武器技能同锚（volleys×inten）。
             // 1 代真值 volleyFuel×0.3 依赖 volleyFuel 追踪，本作战斗不扣燃料，故用同口径 volleys×inten 等价表达（待标定）。
             grantBatchXp(state, m, "capacitor", COMBAT_VOLLEY_XP * volleys * inten);
+            grantBatchXp(state, m, "piloting", COMBAT_VOLLEY_XP * volleys * inten);
           }
         }
         // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
@@ -488,10 +489,9 @@
         const sk = (a.trainSkill && m.skills && m.skills[a.trainSkill] !== undefined) ? a.trainSkill : "combatLaser";
         m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
       } else if (a.type === "logistics") {
-        // 物流岗（2026-11-01）：物流补偿与航线调度是 logistics 的真实使用场景。
-        // 电容管理已对回 1 代口径：战斗涨经验（见战斗块）、效果降战斗/考古燃料消耗（见 Combat.advance / archaeologyFuelCost），
-        // 不再在物流岗顺带涨（1 代电容管理为 combat 系，与跃迁 warpFuel 分离）。
-        m.skills.logistics = (m.skills.logistics || 0) + XP_RATE.logistics * dt * passionMult(m, "logistics") * xpMultOf(state, m, "logistics");
+        // 物流岗：原地累积物流补偿（见 Logistics.accumulate），并训练「驾驶」技能——
+        // 1 代 piloting 既降战斗受伤（闪避 +1/级）又统管物流效率，故双路涨经验（战斗块 + 本岗）。
+        m.skills.piloting = (m.skills.piloting || 0) + XP_RATE.piloting * dt * passionMult(m, "piloting") * xpMultOf(state, m, "piloting");
       } else if (a.type === "station") {
         // 驻舱（2026-11-01，用户定「驻舱不涨技能」）：**只有演训舱按时间涨经验** ——
         // 全游戏唯一「不产出也涨」的通道，玩家付的是一个人力。

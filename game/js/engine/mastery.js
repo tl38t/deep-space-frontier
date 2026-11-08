@@ -13,7 +13,7 @@
 // 3 个全局强化节点（每级 1/2/3 点，最高 3 级）：
 //   · industry  工业调度：工业队列耗时 ×0.95^lv（−5%/级，乘区）
 //   · combat    战术协同：作战声望/赏金 ×(1+0.08·lv)
-//   · logistics 航线优化：每跳距离惩罚 −3pp/级（20% → 最低 5%）
+//   · piloting 航线优化：每跳距离惩罚 −3pp/级（20% → 最低 5%）
 // 无 DOM 依赖，Node 探针可 require。
 // ================================================================
 (function (root, factory) {
@@ -35,7 +35,7 @@
   const NODES = [
     { id: "industry", name: "工业调度", icon: "⚙", desc: "工业队列耗时每级 −5%", effect: "time", perLevel: 0.05, cost: [1, 2, 3] },
     { id: "combat", name: "战术协同", icon: "⚔", desc: "作战声望与赏金每级 +8%", effect: "yield", perLevel: 0.08, cost: [1, 2, 3] },
-    { id: "logistics", name: "航线优化", icon: "🛰", desc: "每跳距离惩罚每级 −3pp", effect: "hop", perLevel: 0.03, cost: [1, 2, 3] },
+    { id: "piloting", name: "航线优化", icon: "🛰", desc: "每跳距离惩罚每级 −3pp", effect: "hop", perLevel: 0.03, cost: [1, 2, 3] },
   ];
   const NODE_BY_ID = {};
   for (const n of NODES) NODE_BY_ID[n.id] = n;
@@ -50,6 +50,11 @@
     if (typeof M.earned !== "number" || !isFinite(M.earned)) M.earned = 0;
     if (typeof M.spent !== "number" || !isFinite(M.spent)) M.spent = 0;
     if (!M.nodes || typeof M.nodes !== "object") M.nodes = {};
+    // 2026-11-08：精通点「航线优化」由原 logistics 节点改名 piloting（驾驶统管物流）。旧档迁移。
+    if (M.nodes && typeof M.nodes.logistics === "number" && M.nodes.piloting === undefined) {
+      M.nodes.piloting = M.nodes.logistics;
+      delete M.nodes.logistics;
+    }
     for (const n of NODES) {
       const v = M.nodes[n.id];
       M.nodes[n.id] = (typeof v === "number" && isFinite(v)) ? Math.max(0, Math.min(MAX_LEVEL, Math.floor(v))) : 0;
@@ -109,9 +114,9 @@
   function combatYieldMult(state) {
     return 1 + 0.08 * levelOf(state, "combat");
   }
-  // 距离惩罚（与 Logistics.HOP_PENALTY 同基准 0.20，最低 0.05）
+  // 距离惩罚（与 Logistics.HOP_PENALTY 同基准 0.20，最低 0.05；由「驾驶」精通点·航线优化下调）
   function hopPenalty(state) {
-    return Math.max(0.05, 0.20 - 0.03 * levelOf(state, "logistics"));
+    return Math.max(0.05, 0.20 - 0.03 * levelOf(state, "piloting"));
   }
 
   function summary(state) {

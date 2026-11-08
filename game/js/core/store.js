@@ -50,10 +50,10 @@
   }
 
   // 12 技能键（与 state.js SKILL_KEYS 对齐）。2026-11-01 技能体系重构，旧键迁移见 SKILL_MIGRATE。
-  const SKILL_KEYS = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "logistics"];
-  // 旧键 → 新键：scanning 并入采气、command 由导弹取代、invent 改名科研。
+  const SKILL_KEYS = ["mining", "gas", "archaeology", "combatLaser", "combatTurret", "missile", "defense", "refine", "manufacture", "research", "capacitor", "piloting"];
+  // 旧键 → 新键：scanning 并入采气、command 由导弹取代、invent 改名科研、logistics 改名驾驶(1代 piloting)。
   // ⚠️ 迁移必须删除旧键：否则每次 load 都会把同一个 xp 再加一遍（存档越读越强）。
-  const SKILL_MIGRATE = { scanning: "gas", command: "missile", invent: "research" };
+  const SKILL_MIGRATE = { scanning: "gas", command: "missile", invent: "research", logistics: "piloting" };
   function migrateSkillKeys(m) {
     if (!m) return;
     if (m.skills && typeof m.skills === "object") {

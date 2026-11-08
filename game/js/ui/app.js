@@ -31,7 +31,7 @@
   ];
 
   // 12 项（2026-11-01 定案）。无人机暂缓，不进表；顺序即名册里的显示顺序。
-  const SKILL_CN = { mining: "采矿", gas: "采气", archaeology: "考古", combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", refine: "冶炼", manufacture: "制造", research: "科研", capacitor: "电容管理", logistics: "物流" };
+  const SKILL_CN = { mining: "采矿", gas: "采气", archaeology: "考古", combatLaser: "激光", combatTurret: "炮台", missile: "导弹", defense: "防御", refine: "冶炼", manufacture: "制造", research: "科研", capacitor: "电容管理", piloting: "驾驶" };
   const SKILL_KEYS = Object.keys(SKILL_CN);
 
   // （增强剂旧「逐舱段激活」经济参数已废弃；新系统见 engine/booster.js，瓶身由反应实验室制造。）
@@ -1210,7 +1210,7 @@
     invent: QSKILL.invent || "research",
     booster: QSKILL.booster || "research",
     equip: QSKILL.equip || "manufacture",
-    cargo: "logistics", energy: "capacitor", dock: "manufacture",
+    cargo: "piloting", energy: "capacitor", dock: "manufacture",
   };
   let habitatSkill = "combatLaser";   // 演训舱当前选中的技能（UI 态，不入存档）
 

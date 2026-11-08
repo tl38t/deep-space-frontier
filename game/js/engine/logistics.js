@@ -47,15 +47,21 @@
   }
 
   // 物流补偿累积：统计 logistics 岗成员，线性累积并软顶至 COMP_CAP。
+  // 补偿速率由「驾驶」(piloting) 等级驱动（对回 1 代：驾驶统管物流），并叠加仓储舱车厢成员的驾驶等级加成。
   // 与燃料/产出同 dt，置于 settle 主循环前，保证当次结算即用最新补偿。
   function accumulate(state, dt) {
     ensure(state);
-    // 2026-11-01 技能体系：每人补偿速率 ×(1+物流 lv×2%) —— 与采集/战斗同比例，
-    // 这样「物流」不再只是名册里一个没人读的数字。
+    // 仓储舱（cargo）车厢成员的驾驶等级 → 额外 ×(1+pilotingLv×2%)（设计稿：仓储补偿率加成）。
+    let cargoMult = 1;
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+    if (B && B.stationedOfType) {
+      const w = B.stationedOfType(state, "cargo");
+      if (w && w.skills) cargoMult = 1 + skillLvOf(w, "piloting") * 0.02;
+    }
     let rate = 0;
     for (const m of state.members) {
       if (m.destroyed || !m.assignment || m.assignment.type !== "logistics") continue;
-      rate += COMP_RATE * (1 + skillLvOf(m, "logistics") * 0.02);
+      rate += COMP_RATE * (1 + skillLvOf(m, "piloting") * 0.02) * cargoMult;
     }
     if (rate > 0) state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + rate * dt);
   }
