@@ -319,6 +319,13 @@
             state.res[k] = Math.max(0, (state.res[k] || 0) - r.ammoUsed[k]);
           }
         }
+        // 战术材料掉落（band N → tactic:tN）：这是 tactic 唯一获取途径，喂给对应 tier 增强剂配方。
+        // 直接累加进 state.res（tactic:t1..t5 已在 Resources.ALL 注册，读档安全）。
+        if (r.drops) {
+          for (const k in r.drops) {
+            state.res[k] = (state.res[k] || 0) + r.drops[k];
+          }
+        }
         // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
         if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
         // 战斗经验对回 1 代（按「齐射=ROUND_SEC 战斗秒」发，O(1)；复用 grantBatchXp 接 passionMult×xpMultOf）：

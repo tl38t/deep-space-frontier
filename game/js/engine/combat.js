@@ -42,6 +42,10 @@
   //   故掉落沿用本作口径，不搬 1 代 iskDrop 绝对值；敌舰 iskDrop 仅作 UI 展示参考。
   const DROP_CREDIT_BASE = 6;    // 每波每参战成员的基础星币掉落
   const DROP_REP_BASE = 1;       // 每波每参战成员的基础声望掉落
+  // 战术材料掉落：band N 的据点掉落 tactic:tN（1 代 special:战术残液 等 5 档 → 本作 tactic:t1..t5）。
+  // 这是 tactic 的唯一获取途径，喂给对应 tier 的增强剂配方。与 credits/rep 同口径按 waves 缩放。
+  // ⚠️ 量级待标定：1 代每条增强剂配方消耗 special:xx:2，本作 0.08/波 → 低安战斗约每小时数十个，量级匹配「数小时攒一波高阶制造」。
+  const DROP_TACTIC_BASE = 0.08;
   // 以下四项为 1 代原式（见文件头），不是标定值：
   const COUNTER_MULT = 1.25;     // 1 代 calcWeaponCounterMultiplier：克制层 ×1.25
   const HIT_EXP = 1.4;           // 1 代 calcCombatDamage：hit^1.4 / (hit^1.4 + dodge^1.4)
@@ -648,6 +652,7 @@
         squadDps: 0, weaponDps: 0, fleetDps: 0, incomingDps: 0,
         repairPerSec: 0, dmgReduction: 0, band: 1,
         combatants: [],
+        drops: null,
       };
     }
 
@@ -720,6 +725,10 @@
     const damage = P.incomingDps * fireSec;
     const progress = P.fleetHp > 0 ? Math.max(0, Math.min(1, wHp / P.fleetHp)) : 1;
 
+    // 战术材料掉落（band N → tactic:tN）：与 credits/rep 同口径按 waves 缩放；这是 tactic 唯一获取途径。
+    const tacticDrops = {};
+    if (waves > 0) tacticDrops["tactic:t" + P.band] = DROP_TACTIC_BASE * waves;
+
     return {
       waves: waves,
       credits: P.dropCredits * waves,
@@ -747,6 +756,7 @@
       dmgReduction: P.dmgReduction,
       band: P.band,
       combatants: P.combatants,
+      drops: tacticDrops,
     };
   }
 
