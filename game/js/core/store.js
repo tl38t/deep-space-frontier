@@ -145,7 +145,7 @@
       for (const k of SKILL_KEYS) if (m.passion[k] === undefined) m.passion[k] = "none";
       if (!m.skills) m.skills = {};
       for (const k of SKILL_KEYS) if (typeof m.skills[k] !== "number") m.skills[k] = 0;
-      if (!m.shipId) m.shipId = "frigate";
+      if (!m.shipId) m.shipId = "rookie_corvette";
       if (m.wage === undefined) m.wage = 0;
       if (m.merit === undefined) m.merit = 0;
       if (!m.hp) {

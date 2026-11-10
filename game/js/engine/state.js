@@ -304,7 +304,8 @@
     const Npc = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Npc) || null;
     const goals = Npc ? Npc.rollGoals(rng) : [];
     // 初始舰船：多数启程级，约 1/3 星矛级（绑定舰船 → hp 上限来自舰船）
-    const shipId = rng() < 0.34 ? "destroyer" : "frigate";
+    // 替换 7 抽象桩为具名舰后，默认落到 rookie_corvette(启程级)/raylight(雷光级 T1 驱逐)
+    const shipId = rng() < 0.34 ? "raylight" : "rifter";
     const hp = Data.Ships.maxHp(shipId);
     return {
       id: "m_" + Date.now().toString(36) + "_" + Math.floor(rng() * 1e6).toString(36),

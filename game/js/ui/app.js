@@ -1004,7 +1004,7 @@
   }
 
   function baseInventoryStrip() {
-    const ids = ["credits", "fuel", "fe_alloy", "ni_alloy", "struct", "prop", "weapon"];
+    const ids = ["credits", "fuel", "fe_alloy", "ni_alloy", "integrated_hull", "power_core", "functional_system"];
     return '<div class="base-inventory-strip">' + ids.map(k => '<span class="base-stock">' + resIcon(k) + '<b>' + fmt(state.res[k] || 0) + '</b><em>' + esc(resName(k)) + '</em></span>').join("") + '</div>';
   }
 

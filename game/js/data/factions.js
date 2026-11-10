@@ -93,7 +93,7 @@
   const TEMPLATES = [
     { kind: "ore",      items: ["fe_ore", "ni_ore", "bo_ore", "mx_ore", "no_ore", "zr_ore", "px_ore"], baseQty: 40 },
     { kind: "mineral",  items: ["fe_alloy", "ni_alloy", "bo_alloy", "mx_alloy", "no_alloy", "zr_alloy", "px_alloy", "morph_alloy"], baseQty: 20 },
-    { kind: "component",items: ["struct", "prop", "weapon"],         baseQty: 8 },
+    { kind: "component",items: ["integrated_hull", "power_core", "functional_system"], baseQty: 8 },
     { kind: "blueprint",items: ["bp"],                              baseQty: 1 },
     { kind: "gas",      items: ["crude_fullerene", "he_gas", "stable_fullerene", "hy_gas", "high_purity_fullerene", "poly_gas", "ultra_pure_poly_gas"], baseQty: 30 },
   ];

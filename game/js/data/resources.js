@@ -96,11 +96,29 @@
 
   // 部件（矿材制造产出）
   // 显示名与图标复用 EVE-IDLE 基础版三件套（综合舰体组件 / 动力控制核心 / 舰船功能组件），
-  // 内部键保持 ASCII（struct/prop/weapon，符合 IP 解耦铁律），机制不变。
+  // 内部键保持 ASCII（部件键 integrated_hull / power_core / functional_system 等 class 部件，符合 IP 解耦铁律），机制不变。
+  // 2026-11-09 忠实移植 1 代 SHIP_COMPONENT_RECIPES 全 18 件产出键（6 舰种 × 3 部件）。
+  // 原 3 通用件 struct/prop/weapon 弃用（由 frigate 级三件套 integrated_hull/power_core/functional_system 取代），
+  // 避免与 1 代部件体系重复。icon/img 按三类部件功能复用原通用件图标。
   const COMPONENT = {
-    struct: { id: "struct", name: "综合舰体组件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "综合舰体组件，由标准钛材制造，舰船总装的结构主体。" },
-    prop:   { id: "prop",   name: "动力控制核心", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "动力控制核心，由银镍合金制造，为舰船提供推进与能源。" },
-    weapon: { id: "weapon", name: "舰船功能组件", icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "舰船功能组件，由同位复材制造，承载武器与作战系统。" },
+    integrated_hull:              { id: "integrated_hull",              name: "综合舰体组件",      icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "frigate 级综合舰体组件：舰船总装的结构主体。" },
+    power_core:                   { id: "power_core",                   name: "动力控制核心",      icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "frigate 级动力控制核心：提供推进与能源。" },
+    functional_system:            { id: "functional_system",            name: "舰船功能组件",      icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "frigate 级舰船功能组件：承载武器与作战系统。" },
+    destroyer_integrated_hull:    { id: "destroyer_integrated_hull",    name: "驱逐舰综合舰体组件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "驱逐舰综合舰体组件：舰船总装的结构主体。" },
+    destroyer_power_core:         { id: "destroyer_power_core",         name: "驱逐舰动力控制核心", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "驱逐舰动力控制核心：提供推进与能源。" },
+    destroyer_functional_system:  { id: "destroyer_functional_system",  name: "驱逐舰舰船功能组件", icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "驱逐舰舰船功能组件：承载武器与作战系统。" },
+    cruiser_integrated_hull:      { id: "cruiser_integrated_hull",      name: "巡洋舰综合舰体组件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "巡洋舰综合舰体组件：舰船总装的结构主体。" },
+    cruiser_power_core:           { id: "cruiser_power_core",           name: "巡洋舰动力控制核心", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "巡洋舰动力控制核心：提供推进与能源。" },
+    cruiser_functional_system:    { id: "cruiser_functional_system",    name: "巡洋舰舰船功能组件", icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "巡洋舰舰船功能组件：承载武器与作战系统。" },
+    battleship_integrated_hull:   { id: "battleship_integrated_hull",   name: "战列舰综合舰体组件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "战列舰综合舰体组件：舰船总装的结构主体。" },
+    battleship_power_core:        { id: "battleship_power_core",        name: "战列舰动力控制核心", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "战列舰动力控制核心：提供推进与能源。" },
+    battleship_functional_system: { id: "battleship_functional_system", name: "战列舰舰船功能组件", icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "战列舰舰船功能组件：承载武器与作战系统。" },
+    capital_integrated_hull:      { id: "capital_integrated_hull",      name: "旗舰综合舰体组件",   icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "旗舰综合舰体组件：舰船总装的结构主体。" },
+    capital_power_core:           { id: "capital_power_core",           name: "旗舰动力控制核心",   icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "旗舰动力控制核心：提供推进与能源。" },
+    capital_functional_system:    { id: "capital_functional_system",    name: "旗舰舰船功能组件",   icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "旗舰舰船功能组件：承载武器与作战系统。" },
+    supercapital_integrated_hull: { id: "supercapital_integrated_hull", name: "超级旗舰综合舰体组件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp",      cat: "component", desc: "超级旗舰综合舰体组件：舰船总装的结构主体。" },
+    supercapital_power_core:      { id: "supercapital_power_core",      name: "超级旗舰动力控制核心", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "component", desc: "超级旗舰动力控制核心：提供推进与能源。" },
+    supercapital_functional_system:{ id: "supercapital_functional_system",name:"超级旗舰舰船功能组件",icon: "🔧", img: "assets/icons/ship-components/base_func.webp",      cat: "component", desc: "超级旗舰舰船功能组件：承载武器与作战系统。" },
   };
 
   // 图纸（发明产出，可自用或交付势力）
@@ -150,7 +168,7 @@
       fe_ore: 200, ni_ore: 120, bo_ore: 0, mx_ore: 0, no_ore: 0, zr_ore: 0, px_ore: 0,
       hy_gas: 0, he_gas: 0, crude_fullerene: 0, stable_fullerene: 0, high_purity_fullerene: 0, poly_gas: 0, ultra_pure_poly_gas: 0,
       fe_alloy: 60, ni_alloy: 40, bo_alloy: 0, mx_alloy: 0, no_alloy: 0, zr_alloy: 0, px_alloy: 0, morph_alloy: 0,
-      struct: 10, prop: 6, weapon: 4,
+      integrated_hull: 10, power_core: 6, functional_system: 4,
       bp: 0,
       ammo_laser: 300, ammo_missile: 300, ammo_cannon: 300,
       planet_lava: 0, planet_gas: 0, planet_ice: 0, planet_plasma: 0, planet_bio: 0, planet_mag: 0,
@@ -163,7 +181,13 @@
     "fe_ore", "ni_ore", "bo_ore", "mx_ore", "no_ore", "zr_ore", "px_ore",
     "crude_fullerene", "he_gas", "stable_fullerene", "hy_gas", "high_purity_fullerene", "poly_gas", "ultra_pure_poly_gas",
     "fe_alloy", "ni_alloy", "bo_alloy", "mx_alloy", "no_alloy", "zr_alloy", "px_alloy", "morph_alloy",
-    "struct", "prop", "weapon", "bp",
+    "integrated_hull", "power_core", "functional_system",
+    "destroyer_integrated_hull", "destroyer_power_core", "destroyer_functional_system",
+    "cruiser_integrated_hull", "cruiser_power_core", "cruiser_functional_system",
+    "battleship_integrated_hull", "battleship_power_core", "battleship_functional_system",
+    "capital_integrated_hull", "capital_power_core", "capital_functional_system",
+    "supercapital_integrated_hull", "supercapital_power_core", "supercapital_functional_system",
+    "bp",
     "ammo_laser", "ammo_missile", "ammo_cannon",
     "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag",
     "ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];

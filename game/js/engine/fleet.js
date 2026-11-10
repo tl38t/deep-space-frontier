@@ -78,7 +78,7 @@
     for (const s of state.ships) if (s && s.id) byId[s.id] = s;
 
     for (const m of members) {
-      if (!m.shipId) m.shipId = "frigate";
+      if (!m.shipId) m.shipId = "rookie_corvette";
       // 1) 成员的 shipUid 是否有效（船存在、且主人是自己）
       let ship = m.shipUid ? byId[m.shipUid] : null;
       if (ship && ship.memberId !== m.id) ship = null;

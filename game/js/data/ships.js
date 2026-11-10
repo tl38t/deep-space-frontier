@@ -24,27 +24,79 @@
   // 舰种门禁：bodyLevelReq 采用 0-based，与 BODY_LEVELS 下标、state.base.bodyLevel 起始值 0 对齐（2026-10-27 修 off-by-one）。
   //   frigate/destroyer 可在起始本体（空间站 Lv1，bodyLevel=0）直接建造；
   //   cruiser/battlecruiser 需升级核心一次（星堡 Lv2）；battleship/capital 需 Lv3；supercapital 需 Lv4。
-  const SHIPS = {
-    frigate:      { id: "frigate",      name: "启程级", classTier: 1, bodyLevelReq: 0, cost: { struct: 2, prop: 2, weapon: 2 },          buildTime: 30,  xp: 15,  slots: 2, dodge: 22, hp: { shield: 240,  armor: 320,  structure: 460 },  archaeologyScanStrength: 5,  fuelEfficiency: 0.85 }, // 燃料效率：小型探索舰更省（提议值，待标定）
-    destroyer:     { id: "destroyer",     name: "星矛级", classTier: 1, bodyLevelReq: 0, cost: { struct: 3, prop: 3, weapon: 4 },           buildTime: 45, xp: 23, slots: 3, dodge: 18, hp: { shield: 360,  armor: 520,  structure: 680 },  archaeologyScanStrength: 8,  fuelEfficiency: 0.90 },
-    cruiser:       { id: "cruiser",       name: "铁卫级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 5, weapon: 4 },           buildTime: 70, xp: 39, slots: 4, dodge: 12, hp: { shield: 700,  armor: 980,  structure: 1300 }, archaeologyScanStrength: 12, fuelEfficiency: 0.95 },
-    battlecruiser: { id: "battlecruiser", name: "闪刃级", classTier: 2, bodyLevelReq: 1, cost: { struct: 4, prop: 4, weapon: 4 },           buildTime: 90, xp: 50, slots: 5, dodge: 10, hp: { shield: 1000, armor: 1400, structure: 1900 }, archaeologyScanStrength: 14, fuelEfficiency: 1.00 },
-    battleship:    { id: "battleship",    name: "岩脊级", classTier: 3, bodyLevelReq: 2, cost: { struct: 6, prop: 5, weapon: 5 },           buildTime: 100, xp: 62, slots: 6, dodge: 8, hp: { shield: 1800, armor: 2600, structure: 3400 }, archaeologyScanStrength: 18, fuelEfficiency: 1.10 },
-    capital:       { id: "capital",       name: "山海级", classTier: 3, bodyLevelReq: 2, cost: { struct: 10, prop: 8, weapon: 8 },           buildTime: 300, xp: 186, slots: 8, dodge: 5, hp: { shield: 3000, armor: 4200, structure: 5600 }, archaeologyScanStrength: 24, fuelEfficiency: 1.25 },
-    supercapital:  { id: "supercapital",  name: "星渊泰坦", classTier: 4, bodyLevelReq: 3, cost: { struct: 18, prop: 16, weapon: 18 },        buildTime: 600, xp: 408, slots: 10, dodge: 3, hp: { shield: 6000, armor: 9000, structure: 12000 }, archaeologyScanStrength: 32, fuelEfficiency: 1.40 },
-  };
+    const SHIPS = {
+      rookie_corvette: { id:"rookie_corvette", name:"启程级", classTier:1, bodyLevelReq:0, cost:{"integrated_hull":1,"power_core":1,"functional_system":1}, buildTime:30, xp:30, slots:4, dodge:22, hp:{shield:240,armor:80,structure:80}, archaeologyScanStrength:0, fuelEfficiency:1 },
+      rifter: { id:"rifter", name:"星矛级", classTier:1, bodyLevelReq:0, cost:{"integrated_hull":2,"power_core":2,"functional_system":2}, buildTime:30, xp:30, slots:6, dodge:25, hp:{shield:300,armor:100,structure:100}, archaeologyScanStrength:0, fuelEfficiency:1 },
+      kestrel: { id:"kestrel", name:"铁卫级", classTier:1, bodyLevelReq:0, cost:{"integrated_hull":2,"power_core":2,"functional_system":2}, buildTime:30, xp:30, slots:6, dodge:22, hp:{shield:100,armor:300,structure:100}, archaeologyScanStrength:0, fuelEfficiency:0.9 },
+      atron: { id:"atron", name:"闪刃级", classTier:1, bodyLevelReq:0, cost:{"integrated_hull":2,"power_core":2,"functional_system":2}, buildTime:30, xp:30, slots:6, dodge:30, hp:{shield:100,armor:100,structure:300}, archaeologyScanStrength:0, fuelEfficiency:0.95 },
+      raylight: { id:"raylight", name:"雷光级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":3,"destroyer_power_core":3,"destroyer_functional_system":4}, buildTime:45, xp:60, slots:8, dodge:18, hp:{shield:600,armor:150,structure:150}, archaeologyScanStrength:0, fuelEfficiency:0.95 },
+      spearfalcon: { id:"spearfalcon", name:"矛隼级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":3,"destroyer_power_core":3,"destroyer_functional_system":4}, buildTime:45, xp:60, slots:8, dodge:16, hp:{shield:150,armor:600,structure:150}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      swiftblade: { id:"swiftblade", name:"疾锋级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":3,"destroyer_power_core":3,"destroyer_functional_system":4}, buildTime:45, xp:60, slots:8, dodge:22, hp:{shield:150,armor:150,structure:600}, archaeologyScanStrength:0, fuelEfficiency:0.9 },
+      gale: { id:"gale", name:"疾风级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":4,"destroyer_power_core":4,"destroyer_functional_system":5}, buildTime:60, xp:90, slots:8, dodge:26, hp:{shield:660,armor:165,structure:165}, archaeologyScanStrength:0, fuelEfficiency:0.95 },
+      bloodthorn: { id:"bloodthorn", name:"血刺级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":4,"destroyer_power_core":4,"destroyer_functional_system":5}, buildTime:60, xp:90, slots:8, dodge:12, hp:{shield:165,armor:660,structure:165}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      umbra: { id:"umbra", name:"暗影级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":4,"destroyer_power_core":4,"destroyer_functional_system":5}, buildTime:60, xp:90, slots:8, dodge:24, hp:{shield:165,armor:165,structure:660}, archaeologyScanStrength:0, fuelEfficiency:0.9 },
+      dawnlight: { id:"dawnlight", name:"曙光级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":4,"cruiser_power_core":5,"cruiser_functional_system":4}, buildTime:70, xp:100, slots:12, dodge:12, hp:{shield:1300,armor:250,structure:250}, archaeologyScanStrength:0, fuelEfficiency:0.9 },
+      warfalcon: { id:"warfalcon", name:"战隼级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":4,"cruiser_power_core":5,"cruiser_functional_system":4}, buildTime:70, xp:100, slots:12, dodge:10, hp:{shield:300,armor:1200,structure:300}, archaeologyScanStrength:0, fuelEfficiency:0.8 },
+      stormblade: { id:"stormblade", name:"烈锋级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":4,"cruiser_power_core":5,"cruiser_functional_system":4}, buildTime:70, xp:100, slots:12, dodge:15, hp:{shield:200,armor:200,structure:1400}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      thunder: { id:"thunder", name:"雷霆级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":5,"cruiser_power_core":5,"cruiser_functional_system":6}, buildTime:90, xp:140, slots:12, dodge:17, hp:{shield:1380,armor:345,structure:345}, archaeologyScanStrength:0, fuelEfficiency:0.9 },
+      crimson: { id:"crimson", name:"猩红级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":5,"cruiser_power_core":5,"cruiser_functional_system":6}, buildTime:90, xp:140, slots:12, dodge:14, hp:{shield:375,armor:1320,structure:375}, archaeologyScanStrength:0, fuelEfficiency:0.8 },
+      nether: { id:"nether", name:"幽冥级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":5,"cruiser_power_core":5,"cruiser_functional_system":6}, buildTime:90, xp:140, slots:12, dodge:18, hp:{shield:285,armor:285,structure:1500}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      sunlance: { id:"sunlance", name:"曜光级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:100, xp:160, slots:15, dodge:8, hp:{shield:2600,armor:500,structure:500}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      fortfalcon: { id:"fortfalcon", name:"堡隼级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:100, xp:160, slots:15, dodge:6, hp:{shield:550,armor:2500,structure:550}, archaeologyScanStrength:0, fuelEfficiency:0.75 },
+      thunderblade: { id:"thunderblade", name:"震锋级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:100, xp:160, slots:15, dodge:10, hp:{shield:400,armor:400,structure:2800}, archaeologyScanStrength:0, fuelEfficiency:0.8 },
+      dawnbreaker: { id:"dawnbreaker", name:"破晓级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:120, xp:200, slots:15, dodge:13, hp:{shield:3300,armor:510,structure:510}, archaeologyScanStrength:0, fuelEfficiency:0.85 },
+      crimson_bastion: { id:"crimson_bastion", name:"赤垒级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:120, xp:200, slots:15, dodge:8, hp:{shield:660,armor:3000,structure:660}, archaeologyScanStrength:0, fuelEfficiency:0.75 },
+      spectre_frame: { id:"spectre_frame", name:"幽构级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:120, xp:200, slots:15, dodge:5, hp:{shield:460,armor:460,structure:3400}, archaeologyScanStrength:0, fuelEfficiency:0.8 },
+      firmament: { id:"firmament", name:"天穹级", classTier:3, bodyLevelReq:2, cost:{"capital_integrated_hull":10,"capital_power_core":8,"capital_functional_system":8}, buildTime:300, xp:450, slots:18, dodge:5, hp:{shield:4400,armor:800,structure:800}, archaeologyScanStrength:0, fuelEfficiency:0.78 },
+      heavy_bastion: { id:"heavy_bastion", name:"重垒级", classTier:3, bodyLevelReq:2, cost:{"capital_integrated_hull":10,"capital_power_core":8,"capital_functional_system":8}, buildTime:300, xp:450, slots:18, dodge:3, hp:{shield:900,armor:4200,structure:900}, archaeologyScanStrength:0, fuelEfficiency:0.68 },
+      riftbreaker: { id:"riftbreaker", name:"裂界级", classTier:3, bodyLevelReq:2, cost:{"capital_integrated_hull":10,"capital_power_core":8,"capital_functional_system":8}, buildTime:300, xp:450, slots:18, dodge:7, hp:{shield:700,armor:700,structure:4600}, archaeologyScanStrength:0, fuelEfficiency:0.73 },
+      starcrown: { id:"starcrown", name:"星冕级", classTier:4, bodyLevelReq:3, cost:{"supercapital_integrated_hull":18,"supercapital_power_core":16,"supercapital_functional_system":18}, buildTime:600, xp:800, slots:22, dodge:3, hp:{shield:6200,armor:1100,structure:1100}, archaeologyScanStrength:0, fuelEfficiency:0.72 },
+      eternal_fortress: { id:"eternal_fortress", name:"恒城级", classTier:4, bodyLevelReq:3, cost:{"supercapital_integrated_hull":18,"supercapital_power_core":16,"supercapital_functional_system":18}, buildTime:600, xp:800, slots:22, dodge:2, hp:{shield:1250,armor:5900,structure:1250}, archaeologyScanStrength:0, fuelEfficiency:0.62 },
+      arbiter: { id:"arbiter", name:"裁决级", classTier:4, bodyLevelReq:3, cost:{"supercapital_integrated_hull":18,"supercapital_power_core":16,"supercapital_functional_system":18}, buildTime:600, xp:800, slots:22, dodge:5, hp:{shield:950,armor:950,structure:6500}, archaeologyScanStrength:0, fuelEfficiency:0.67 },
+      heron: { id:"heron", name:"觅迹级", classTier:1, bodyLevelReq:0, cost:{"integrated_hull":2,"power_core":2,"functional_system":2}, buildTime:30, xp:30, slots:6, dodge:22, hp:{shield:260,armor:80,structure:60}, archaeologyScanStrength:10, fuelEfficiency:1 },
+      tracer: { id:"tracer", name:"追迹级", classTier:1, bodyLevelReq:0, cost:{"destroyer_integrated_hull":3,"destroyer_power_core":3,"destroyer_functional_system":4}, buildTime:45, xp:60, slots:7, dodge:18, hp:{shield:430,armor:150,structure:120}, archaeologyScanStrength:25, fuelEfficiency:0.95 },
+      starmap: { id:"starmap", name:"星图级", classTier:2, bodyLevelReq:1, cost:{"cruiser_integrated_hull":4,"cruiser_power_core":5,"cruiser_functional_system":4}, buildTime:70, xp:100, slots:10, dodge:14, hp:{shield:780,armor:300,structure:220}, archaeologyScanStrength:50, fuelEfficiency:0.9 },
+      farscope: { id:"farscope", name:"远镜级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:100, xp:160, slots:13, dodge:9, hp:{shield:1400,armor:600,structure:400}, archaeologyScanStrength:80, fuelEfficiency:0.85 },
+      illuminator: { id:"illuminator", name:"启明级", classTier:3, bodyLevelReq:2, cost:{"capital_integrated_hull":10,"capital_power_core":8,"capital_functional_system":10}, buildTime:320, xp:500, slots:16, dodge:6, hp:{shield:2900,armor:1100,structure:800}, archaeologyScanStrength:120, fuelEfficiency:0.8 },
+    };
 
   // 舰船装配槽位布局（2026-10-31 舰船装配系统）：把原有扁平 slots 拆成 high/mid/low/rig 四槽，总数与 slots 对齐。
   // 深空星疆成员以单舰执行全部活动，故每艘舰都给到考古/战斗/工业可共用的槽位；装配加成由 Engine.Archaeology / Combat / Production 读取。
-  const SLOT_LAYOUT = {
-    frigate:      { high: 1, mid: 1, low: 0, rig: 0 },
-    destroyer:     { high: 1, mid: 1, low: 1, rig: 0 },
-    cruiser:       { high: 2, mid: 1, low: 1, rig: 0 },
-    battlecruiser: { high: 2, mid: 1, low: 1, rig: 1 },
-    battleship:    { high: 2, mid: 2, low: 1, rig: 1 },
-    capital:       { high: 3, mid: 2, low: 2, rig: 1 },
-    supercapital:  { high: 3, mid: 3, low: 3, rig: 1 },
-  };
+    const SLOT_LAYOUT = {
+      rookie_corvette: { high:2, mid:1, low:1, rig:0 },
+      rifter: { high:2, mid:2, low:1, rig:1 },
+      kestrel: { high:2, mid:1, low:2, rig:1 },
+      atron: { high:2, mid:1, low:2, rig:1 },
+      raylight: { high:3, mid:3, low:1, rig:1 },
+      spearfalcon: { high:3, mid:1, low:3, rig:1 },
+      swiftblade: { high:3, mid:1, low:3, rig:1 },
+      gale: { high:3, mid:3, low:1, rig:1 },
+      bloodthorn: { high:3, mid:1, low:3, rig:1 },
+      umbra: { high:3, mid:1, low:3, rig:1 },
+      dawnlight: { high:4, mid:4, low:2, rig:2 },
+      warfalcon: { high:4, mid:2, low:4, rig:2 },
+      stormblade: { high:4, mid:2, low:4, rig:2 },
+      thunder: { high:4, mid:4, low:2, rig:2 },
+      crimson: { high:4, mid:2, low:4, rig:2 },
+      nether: { high:4, mid:2, low:4, rig:2 },
+      sunlance: { high:5, mid:5, low:2, rig:3 },
+      fortfalcon: { high:5, mid:2, low:5, rig:3 },
+      thunderblade: { high:5, mid:2, low:5, rig:3 },
+      dawnbreaker: { high:5, mid:5, low:2, rig:3 },
+      crimson_bastion: { high:5, mid:2, low:5, rig:3 },
+      spectre_frame: { high:5, mid:2, low:5, rig:3 },
+      firmament: { high:6, mid:6, low:2, rig:4 },
+      heavy_bastion: { high:6, mid:2, low:6, rig:4 },
+      riftbreaker: { high:6, mid:2, low:6, rig:4 },
+      starcrown: { high:7, mid:7, low:3, rig:5 },
+      eternal_fortress: { high:7, mid:3, low:7, rig:5 },
+      arbiter: { high:7, mid:3, low:7, rig:5 },
+      heron: { high:2, mid:2, low:1, rig:1 },
+      tracer: { high:3, mid:2, low:1, rig:1 },
+      starmap: { high:3, mid:3, low:2, rig:2 },
+      farscope: { high:4, mid:4, low:2, rig:3 },
+      illuminator: { high:4, mid:5, low:3, rig:4 },
+    };
   function slotLayout(shipId) {
     const base = SLOT_LAYOUT[shipId] || { high: 1, mid: 1, low: 0, rig: 0 };
     return { high: base.high, mid: base.mid, low: base.low, rig: base.rig };

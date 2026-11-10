@@ -23,17 +23,21 @@
 
   const REPAIR_TIME_BASE = 180; // 驱逐级基准 180s（3min）
 
-  // 各舰级修复时长倍率（按舰级放大；与 BODY_LEVELS 门禁档位一致）
-  const CLASS_MULT = {
-    frigate: 1.0, destroyer: 1.0, cruiser: 1.5, battlecruiser: 1.5,
-    battleship: 2.5, capital: 3.5, supercapital: 5.0,
-  };
+  // 各舰级修复时长倍率：按舰种层级(classTier 1-4)派生，覆盖全部具名舰
+  // （原按 7 个抽象 id 字面量查表，替换 44 舰后失效）。映射：
+  //   T1(护卫/驱逐)=1.0 / T2(巡洋)=1.5 / T3(战列/旗舰)=3.0 / T4(超级旗舰)=5.0
+  //   注：原战列2.5/旗舰3.5 在 4 级 classTier 下合并为 T3=3.0，属待标定微调。
+  function classMultOf(shipId) {
+    const s = (Data && Data.Ships) ? Data.Ships.shipById(shipId) : null;
+    const ct = s ? s.classTier : 1;
+    return ({ 1: 1.0, 2: 1.5, 3: 3.0, 4: 5.0 })[ct] || 1.0;
+  }
 
   // 修复时长。第二参 state 用于「泊位驻舱」加速（2026-11-01 技能体系）：
   // 维修是工程活，取驻泊位者的 manufacture 技能；**只缩短时长，不动 repairBays**
   // —— 并发格数已由 bodyLevel 产出（repairBays），再给一份就是双源。
   function repairDuration(shipId, state) {
-    const m = CLASS_MULT[shipId] || 1.0;
+    const m = classMultOf(shipId);
     const base = REPAIR_TIME_BASE * m;
     const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
     const B = E ? E.Base : null;
