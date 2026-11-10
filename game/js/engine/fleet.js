@@ -43,7 +43,7 @@
   const BUSY_STATUS = { dispatched: 1, traveling: 1, repairing: 1 };
 
   function shipsOf(state) { return (state && Array.isArray(state.ships)) ? state.ships : []; }
-  function maxHp(shipId) { return Data.Ships.maxHp(shipId); }
+  function maxHp(shipId, enhLvl) { return Data.Ships.maxHp(shipId, enhLvl); }
 
   // 舰船显示编号：s_<时间戳36>_<随机36> → S-XXXX
   // ⚠️ 必须取**尾部随机段**而不是头部：id 头部是 Date.now().toString(36)，
@@ -111,8 +111,8 @@
 
   // ---- 三防按损伤比例迁移到新船上限 ----
   function carryHp(m, oldShipId) {
-    const from = maxHp(oldShipId);
-    const to = maxHp(m.shipId);
+    const from = maxHp(oldShipId, m.enhancementLevel);
+    const to = maxHp(m.shipId, m.enhancementLevel);
     const ratio = (k) => (from[k] > 0 ? Math.max(0, Math.min(1, (m.hp[k] || 0) / from[k])) : 1);
     const r = { shield: ratio("shield"), armor: ratio("armor"), structure: ratio("structure") };
     m.hp = {
@@ -199,7 +199,7 @@
     }
     for (const m of (state.members || [])) {
       if (m.destroyed || !m.hp) continue;
-      const mx = maxHp(m.shipId);
+      const mx = maxHp(m.shipId, m.enhancementLevel);
       if (m.hp.shield < mx.shield || m.hp.armor < mx.armor || m.hp.structure < mx.structure) damaged++;
     }
     return { total: list.length, crewed: crewed, stock: stock, lost: lost, damaged: damaged };
@@ -212,7 +212,7 @@
     for (const s of shipsOf(state)) {
       const def = Data.Ships.shipById(s.shipId) || null;
       const owner = s.memberId ? ((state.members || []).find(x => x.id === s.memberId) || null) : null;
-      const mx = def ? maxHp(s.shipId) : null;
+      const mx = def ? maxHp(s.shipId, owner ? owner.enhancementLevel : 0) : null;
       const layout = Data.Ships.slotLayout(s.shipId);
       const fitted = owner && owner.fitted ? owner.fitted : null;
       const used = {};

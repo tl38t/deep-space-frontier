@@ -41,12 +41,14 @@
       for (const m of state.members) if (!Array.isArray(m.milestones)) m.milestones = [];
     }
     // 向后兼容：旧档（version<8）缺工业 buildQueue / boosterQueue 字段时兜底（MVP 周五新增）
-    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [] };
+    if (!base.industry) base.industry = { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [], enhanceQueue: [] };
     else if (!Array.isArray(base.industry.buildQueue)) base.industry.buildQueue = [];
     if (!Array.isArray(base.industry.boosterQueue)) base.industry.boosterQueue = [];
     // 2026-11-03：装备制造独立成「制造车间」队列。旧档只补空队列（不升版本、不迁移在制任务 ——
     // 旧档 manufactureQueue 里已在造的装备任务 outType="equipment"，会照旧在总装坞跑完）。
     if (!Array.isArray(base.industry.equipQueue)) base.industry.equipQueue = [];
+    // ② 舰船强化队列（总装船坞共享槽位）：旧档补空队列（不升版本、不迁移在制任务）
+    if (!Array.isArray(base.industry.enhanceQueue)) base.industry.enhanceQueue = [];
     // 增强剂状态迁移到 state.boosters（全局 16 槽 + 库存=state.res["booster:<id>"]），见 engine/booster.js。
     // 旧档残留的 base.boosters（整舱生效简化版数组）在此清掉，避免与新模型混淆。
     if (Array.isArray(base.boosters)) delete base.boosters;

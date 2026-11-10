@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>titan-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// ④ 泰坦子系统 · 自测（2026-11-10）
+// 纪律（沿用 invention/dismantle selftest）：
+//  1. iframe 加载真实 index.html，取真实 NSK.*；结算跑在 LIVE() 深拷贝上，真档一次不动；
+//  2. 反 mock：配方/科技/舰船全从真实 Data.* 派生；
+//  3. 未捕获异常计入 ERR。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [], ran = false;
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  window.addEventListener("error", function (e) { ERR.push(String(e.message)); });
+  function W() { return document.getElementById("f").contentWindow; }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function clone() { return JSON.parse(JSON.stringify(LIVE())); }
+
+  function mkState(opt) {
+    opt = opt || {};
+    var st = clone();
+    st.base.bodyLevel = 4;                       // 泰坦需 Lv4 深空要塞
+    var ALL = W().NSK.Data.Resources.ALL;
+    for (var k in ALL) st.res[k] = 1e9;          // 任意资源充足，隔离门禁与材料
+    st.res.credits = 1e9; st.res.bp = 1e6;
+    st.tech = st.tech || { levels: {}, prog: {}, active: null };
+    if (opt.tech) for (var t in opt.tech) st.tech.levels[t] = opt.tech[t];
+    if (opt.legion !== undefined) { st.legion = st.legion || {}; st.legion.formed = !!opt.legion; }
+    if (opt.starMap !== undefined) st.starMapDone = !!opt.starMap;
+    return st;
+  }
+
+  function run() {
+    if (ran) return; ran = true;
+    try { runAll(); } catch (e) { ERR.push("EXCEPTION " + (e && e.stack || e)); }
+    dump();
+  }
+
+  function runAll() {
+    var NSK = W().NSK, D = NSK.Data, E = NSK.Engine, P = E.Production;
+    var T = D.Tech, R = D.Recipes, SH = D.Ships;
+
+    // ---- A. 数据存在性 ----
+    var titanNodes = ["titan_materials","titan_metallurgy","titan_structures","titan_propulsion",
+                      "titan_assembly","titan_weapons","titan_shielding","titan_command"];
+    var nodeCount = 0;
+    titanNodes.forEach(function (id) { if (T.byId(id)) nodeCount++; });
+    ok("A1 8 个泰坦研究节点存在", nodeCount === 8, "found=" + nodeCount);
+
+    var hasCol = (T.COLS || []).some(function (c) { return c.cat === "titan"; });
+    ok("A2 科技树含泰坦列", hasCol);
+
+    // requiresTech 链：command 需 weapons+shielding；assembly 需 structures+propulsion
+    var cmd = T.byId("titan_command"), asm = T.byId("titan_assembly");
+    var cmdReq = cmd && cmd.requires.map(function (r) { return r.id; }).sort().join(",");
+    var asmReq = asm && asm.requires.map(function (r) { return r.id; }).sort().join(",");
+    ok("A3 titan_command 前置 = weapons+shielding", cmdReq === "titan_shielding,titan_weapons", cmdReq);
+    ok("A4 titan_assembly 前置 = structures+propulsion", asmReq === "titan_propulsion,titan_structures", asmReq);
+
+    var compIds = ["mk_titan_hull_plate","mk_titan_hull_frame","mk_titan_hull_reinforcement",
+                   "mk_titan_weapon_barrel","mk_titan_weapon_core","mk_titan_weapon_mount",
+                   "mk_titan_core_reactor","mk_titan_core_computer","mk_titan_core_shield"];
+    var compOk = compIds.every(function (id) {
+      var r = R.COMPONENT.find(function (x) { return x.id === id; });
+      return r && r.requiresTech === "titan_materials";
+    });
+    ok("A5 9 部件配方存在且 requiresTech=titan_materials", compOk);
+
+    var asmIds = ["mk_titan_hull_assembly","mk_titan_weapon_assembly","mk_titan_core_assembly"];
+    var asmOk = asmIds.every(function (id) {
+      var r = R.COMPONENT.find(function (x) { return x.id === id; });
+      return r && r.requiresTech === "titan_assembly";
+    });
+    ok("A6 3 子总成配方存在且 requiresTech=titan_assembly", asmOk);
+
+    var smeltIds = ["smelt_titan_struct","smelt_titan_phase","smelt_titan_comp"];
+    var smeltOk = smeltIds.every(function (id) {
+      var r = R.SMELT.find(function (x) { return x.id === id; });
+      return r && r.requiresTech === "titan_metallurgy";
+    });
+    ok("A7 3 合金 SMELT 配方存在且 requiresTech=titan_metallurgy", smeltOk);
+
+    var titan = SH.shipById("titan");
+    ok("A8 titan 舰存在且 cost=3 子总成", !!titan &&
+       titan.cost.titan_hull_assembly === 1 && titan.cost.titan_weapon_assembly === 1 &&
+       titan.cost.titan_core_assembly === 1, titan ? JSON.stringify(titan.cost) : "null");
+    ok("A9 titan 门禁字段齐", !!titan && titan.bodyLevelReq === 4 &&
+       titan.requiresTech === "titan_command" && titan.requiresAlliance === true && titan.requiresStarMap === true);
+
+    // ---- B. 4 层门禁链（enqueue）----
+    var r1 = P.enqueue(mkState({}), "smelt", "smelt_titan_struct", 1);
+    ok("B1 无科技·合金SMELT 被拒", r1.ok === false, JSON.stringify(r1.err));
+    var r2 = P.enqueue(mkState({ tech: { titan_metallurgy: 1 } }), "smelt", "smelt_titan_struct", 1);
+    ok("B2 有 titan_metallurgy·合金SMELT 入队", r2.ok === true, JSON.stringify(r2.err));
+
+    var r3 = P.enqueue(mkState({}), "manufacture", "mk_titan_hull_plate", 1);
+    ok("B3 无科技·部件制造 被拒", r3.ok === false, JSON.stringify(r3.err));
+    var r4 = P.enqueue(mkState({ tech: { titan_materials: 1 } }), "manufacture", "mk_titan_hull_plate", 1);
+    ok("B4 有 titan_materials·部件制造 入队", r4.ok === true, JSON.stringify(r4.err));
+
+    var r5 = P.enqueue(mkState({}), "manufacture", "mk_titan_hull_assembly", 1);
+    ok("B5 无科技·子总成制造 被拒", r5.ok === false, JSON.stringify(r5.err));
+    var r6 = P.enqueue(mkState({ tech: { titan_assembly: 1 } }), "manufacture", "mk_titan_hull_assembly", 1);
+    ok("B6 有 titan_assembly·子总成制造 入队", r6.ok === true, JSON.stringify(r6.err));
+
+    // ---- C. buildShip 三道门禁 ----
+    var allTech = { titan_materials:1, titan_metallurgy:1, titan_structures:1, titan_propulsion:1,
+                    titan_assembly:1, titan_weapons:1, titan_shielding:1, titan_command:1 };
+    var c1 = P.buildShip(mkState({ tech: allTech }), "titan", 1);
+    ok("C1 仅科技·buildShip 被军团门禁拒", c1.ok === false && /军团/.test(c1.err || ""), JSON.stringify(c1.err));
+    var c2 = P.buildShip(mkState({ tech: allTech, legion: true }), "titan", 1);
+    ok("C2 科技+军团·被星图门禁拒", c2.ok === false && /星图/.test(c2.err || ""), JSON.stringify(c2.err));
+    var c3 = P.buildShip(mkState({ tech: allTech, legion: true, starMap: true }), "titan", 1);
+    ok("C3 全满足·buildShip 成功", c3.ok === true, JSON.stringify(c3.err));
+
+    // ---- D. maxHp 容量放大 ----
+    var mh = SH.maxHp("titan");
+    ok("D1 titan maxHp：仅 shield 受 shieldCapacity 0.5 放大（75000），armor/structure 保持本体 50000",
+       Math.abs(mh.shield - 75000) < 1e-6 && Math.abs(mh.armor - 50000) < 1e-6 && Math.abs(mh.structure - 50000) < 1e-6,
+       JSON.stringify(mh));
+
+    // ---- E. 战斗引擎接入（scanFit 读 titan bonuses，零改动 combat.js）----
+    var Eq = D.Equipment, weaponId = null, ctrlId = null;
+    var allEq = (Eq.all ? Eq.all() : (Eq.ALL ? Object.keys(Eq.ALL).map(function (k) { return Eq.ALL[k]; }) : []));
+    for (var i = 0; i < allEq.length; i++) {
+      var e = allEq[i];
+      if (e.combat && e.combat.kind === "weapon" && !weaponId) weaponId = e.id;
+    }
+    // 控制舰：bonuses 无 laserDamage 且无 hitBonus
+    var SHIPS = SH.SHIPS;
+    for (var sid in SHIPS) {
+      var b = SHIPS[sid].bonuses || {};
+      if (sid !== "titan" && b.laserDamage == null && b.hitBonus == null && !ctrlId) { ctrlId = sid; break; }
+    }
+    var Combat = E.Combat;
+    if (weaponId && ctrlId && Combat && Combat.scanFit) {
+      var wt = Eq.byId(weaponId).combat.weaponType;
+      var expMult = 1 + ((titan.bonuses[wt + "Damage"]) || 0);
+      var mT = { shipId: "titan", skills: {}, fitted: { high: [weaponId], mid: [], low: [], rig: [] } };
+      var mC = { shipId: ctrlId, skills: {}, fitted: { high: [weaponId], mid: [], low: [], rig: [] } };
+      var sfT = Combat.scanFit(mT, 100, false, null, mkState({ tech: allTech }));
+      var sfC = Combat.scanFit(mC, 100, false, null, mkState({ tech: allTech }));
+      ok("E1 titan 武器伤害含 " + wt + "Damage 乘区（≈" + expMult.toFixed(2) + "×控制）",
+         sfT.weapons.length === 1 && sfC.weapons.length === 1 &&
+         Math.abs(sfT.weapons[0].dmg / sfC.weapons[0].dmg - expMult) < 0.01,
+         "T=" + (sfT.weapons[0] && sfT.weapons[0].dmg.toFixed(2)) + " C=" + (sfC.weapons[0] && sfC.weapons[0].dmg.toFixed(2)));
+      ok("E2 titan 命中含 hitBonus 50（高于控制）",
+         sfT.weapons[0].hitChance > sfC.weapons[0].hitChance,
+         "T=" + sfT.weapons[0].hitChance.toFixed(4) + " C=" + sfC.weapons[0].hitChance.toFixed(4));
+    } else {
+      ok("E1 战斗集成（装备/控制舰/scanFit 缺失，跳过）", false, "weaponId=" + weaponId + " ctrlId=" + ctrlId + " hasScanFit=" + !!(Combat && Combat.scanFit));
+    }
+  }
+
+  if (document.readyState === "complete") setTimeout(run, 400);
+  else window.addEventListener("load", function () { setTimeout(run, 400); });
+})();
+</script>
+</body>
+</html>

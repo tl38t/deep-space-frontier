@@ -30,7 +30,7 @@
   function classMultOf(shipId) {
     const s = (Data && Data.Ships) ? Data.Ships.shipById(shipId) : null;
     const ct = s ? s.classTier : 1;
-    return ({ 1: 1.0, 2: 1.5, 3: 3.0, 4: 5.0 })[ct] || 1.0;
+    return ({ 1: 1.0, 2: 1.5, 3: 3.0, 4: 5.0, 5: 8.0 })[ct] || 1.0;
   }
 
   // 修复时长。第二参 state 用于「泊位驻舱」加速（2026-11-01 技能体系）：
@@ -57,13 +57,13 @@
   function needsRepair(m) {
     if (!m || m.destroyed) return false;
     if (m.status === "dispatched" || m.status === "traveling") return false;
-    const max = Data.Ships.maxHp(m.shipId);
+    const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     return m.hp.shield < max.shield || m.hp.armor < max.armor || m.hp.structure < max.structure;
   }
 
   // 当前三防已损比例（0–1），用于排队优先级（越残越优先）
   function damageRatio(m) {
-    const max = Data.Ships.maxHp(m.shipId);
+    const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     const total = max.shield + max.armor + max.structure;
     const lost = (max.shield - m.hp.shield) + (max.armor - m.hp.armor) + (max.structure - m.hp.structure);
     return total > 0 ? lost / total : 0;
@@ -72,7 +72,7 @@
   // 预估剩余修复秒数（基于已损总量 / 修复速率）。state 用于泊位加速，四处调用必须一起传。
   function repairETA(m, state) {
     if (!needsRepair(m)) return 0;
-    const max = Data.Ships.maxHp(m.shipId);
+    const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     const totalMax = max.shield + max.armor + max.structure;
     const lost = (max.shield - m.hp.shield) + (max.armor - m.hp.armor) + (max.structure - m.hp.structure);
     return repairDuration(m.shipId, state) * (lost / totalMax);
@@ -86,7 +86,7 @@
     for (const m of state.members) {
       if (m.status !== "repairing" || m.destroyed) continue;
       active++;
-      const max = Data.Ships.maxHp(m.shipId);
+      const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
       const rate = totalMaxHp(m) / repairDuration(m.shipId, state); // 每秒回血量（按总三防均摊）
       let heal = rate * dt;
       for (const key of ["shield", "armor", "structure"]) {
@@ -113,7 +113,7 @@
   }
 
   function totalMaxHp(m) {
-    const max = Data.Ships.maxHp(m.shipId);
+    const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     return max.shield + max.armor + max.structure;
   }
 

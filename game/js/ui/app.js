@@ -751,7 +751,7 @@
     // 左：我方参战舰船
     html += '<div class="battle-side"><div class="battle-kicker">我方参战 · ' + fighters.length + ' 艘</div>';
     for (const m of fighters) {
-      const max = Data.Ships.maxHp(m.shipId);
+      const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
       const ship = Data.Ships.shipById(m.shipId);
       html += '<div class="battle-unit">'
         + '<div class="battle-unit-head"><b>' + esc((ship && ship.name) || "舰船") + '</b>'
@@ -1769,7 +1769,7 @@
         return '<div class="sk-cell"><span class="sk-n">' + (SKILL_CN[k] || k) + '</span>'
           + '<span class="sk-l">L' + lv + '</span>' + pfMark + '</div>';
       }).join("");
-      const hpMax = Data.Ships.maxHp(m.shipId);
+      const hpMax = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
       const hpRow = hpBar("shield", m.hp.shield, hpMax.shield, "护盾")
         + hpBar("armor", m.hp.armor, hpMax.armor, "装甲")
         + hpBar("struct", m.hp.structure, hpMax.structure, "结构");
@@ -2844,7 +2844,7 @@
       const isRep = info.repairing.indexOf(e) >= 0;
       const badge = isRep ? '<span class="tag warn">修复中</span>' : '<span class="tag">排队中</span>';
       const eta = isRep ? ("预计 " + fmtDur(e.eta) + " 回满") : ("约 " + fmtDur(e.startEta || 0) + " 后开始");
-      const hpMax = Data.Ships.maxHp(e.shipId);
+      const hpMax = Data.Ships.maxHp(e.shipId, m ? m.enhancementLevel : 0);
       const hp = (m && m.hp) || { shield: 0, armor: 0, structure: 0 };
       const bars = [["shield", "护盾"], ["armor", "装甲"], ["struct", "结构"]].map(([k, lab]) => {
         const max = (hpMax && hpMax[k === "struct" ? "structure" : k]) || 0;
@@ -2868,7 +2868,7 @@
     const shipName = ship ? ship.name : "—";
     const statusLabel = m.destroyed ? "阵亡" : m.assignment ? jobName(m.assignment.type) : "待命";
     const statusClass = m.destroyed ? "bad" : m.assignment ? "good" : "idle";
-    const hpMax = Data.Ships.maxHp(m.shipId);
+    const hpMax = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     const bs = m.backstory || {};
     const goalXp = (m.mods && m.mods.goalXp) || 1;
     // 里程碑（称号/勋章）：已得 + 未达成一览
@@ -2951,7 +2951,7 @@
             + '</div>'
           : (m.destroyed ? '' :
               m.assignment ? '<button class="sm ghost" data-act="recall:' + m.id + '">召回</button>'
-              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="station:train:' + m.id + '">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button>')
+              : '<button class="sm" data-act="dispatch:' + m.id + ':mine">采矿</button><button class="sm" data-act="dispatch:' + m.id + ':combat">战斗</button><button class="sm" data-act="station:train:' + m.id + '">演训</button><button class="sm" data-act="dispatch:' + m.id + ':logistics">物流</button><button class="sm" data-act="enhance_open:' + m.id + '">强化舰船</button>')
             + '<button class="sm danger" data-act="fire:' + m.id + '">解雇</button>')
       + '<span class="npc-footer-note">深空星疆 · 人员档案系统</span></div>'
       + '</div>';
@@ -3152,6 +3152,7 @@
     const [cmd, a, b] = act.split(":");
     if (cmd === "factionView") { factionSubtab = a === "missions" ? "missions" : "factions"; renderView(); return; }
     if (cmd === "workbench") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.handle) Wb.handle(act); return; }
+    if (cmd === "enhance_open") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.openEnhance) { closeNpcDetail(); Wb.openEnhance(a); } else toast("工作台未加载（js/ui/workbench.js 缺失）"); return; }
     if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); const Bi2 = window.NSK.UI && NSK.UI.BaseInfo; if (Bi2) Bi2.close(); tab = a; renderTabs(); renderView(); return; }
     if (cmd === "booster") {
       const parts = act.split(":");

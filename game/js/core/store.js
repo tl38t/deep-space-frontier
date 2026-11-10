@@ -104,6 +104,11 @@
       }
     } catch (e) { /* 发明状态迁移失败不阻断读档 */ }
 
+    // 泰坦门禁状态（④ 泰坦子系统，2026-11-10）：旧档补 legion.formed / starMapDone
+    if (!s.legion || typeof s.legion !== "object") s.legion = { formed: false };
+    if (typeof s.legion.formed !== "boolean") s.legion.formed = false;
+    if (typeof s.starMapDone !== "boolean") s.starMapDone = false;
+
     // —— 2026-11-01：战斗小队改为「具名据点 + 科技编制」，旧档迁移 ——
     // ① 星图补据点（幂等重算，覆盖旧值）：raid 挂在 node.raid 上，见 data/raids.js
     const RaidsData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)

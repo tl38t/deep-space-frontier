@@ -262,7 +262,7 @@ body.shot.narrow iframe { width: 390px; height: 1100px; }
     ok("G1 增强剂逐配方 xp", gxBooster === (BR.find(function(r){return r.id==="mining_lubricant_n";}) || {}).xp, "xp=" + gxBooster);
     ok("G2 发明研究 xp = ceil(0.4×1.1^E)", gxStudy === 4556, "xp=" + gxStudy);
     ok("G3 inv_bp 显式 xp:12", gxInvBp === 12, "xp=" + gxInvBp);
-    ok("G4 科技节点全树 900 xp（bounty_1 40→60）", totalTech === 900 && techOk, "总=" + totalTech);
+    ok("G4 科技节点全树 1620 xp（900 原树 + 泰坦 8 节点 720）", totalTech === 1620 && techOk, "总=" + totalTech);
     var allExplicit = [
       S.recipeBatchXp(stG, "smelt", { recipeId: "smelt_fe_alloy", dur: 10 }),
       S.recipeBatchXp(stG, "manufacture", { recipeId: "mk_power_core", dur: 42 }),

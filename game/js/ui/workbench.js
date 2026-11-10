@@ -56,6 +56,26 @@
 
   // detailBuilder：可选，() => html 字符串。由 app.js 传入「舱段明细」HTML，
   // 渲染在工作台弹窗顶部，使工业舱段被点开时原右侧明细也一并呈现（移除右侧常驻面板后的补偿）。
+  // 从成员面板「强化舰船」按钮跳转：打开总装船坞并预选增强子页签 + 成员
+  function openEnhance(memberId) {
+    const st = state();
+    if (!st) return;
+    const B = Base();
+    if (!B) return;
+    const insts = (st.base.modules && st.base.modules.installed) || [];
+    let slotId = null;
+    for (const inst of insts) {
+      const slot = B.slotById(st, inst.slotId);
+      if (slot && slot.type === "manufacture" && B.moduleAt(st, slot.id)) { slotId = slot.id; break; }
+    }
+    if (!slotId) { CTX.toast("总装船坞未安装，无法强化"); return; }
+    open(slotId);
+    cur.tab = "enhance";
+    cur.enhMember = memberId || null;
+    cur.recipeId = null;
+    render();
+  }
+
   function open(slotId, detailBuilder) {
     const st = state();
     const slot = slotIfIndustrial(st, slotId);
@@ -76,7 +96,7 @@
       studyTier: 0,            // 0 = 全部；1..5 = 按蓝图档位筛选
       studyQuery: "",          // 蓝图名 / key 搜索
       studyDir: "me",          // me | te
-      recipeId: null, count: 1, overlay: null,
+      recipeId: null, count: 1, overlay: null, enhMember: null,   // enhMember: 强化子页签预选成员 id
       detailBuilder: typeof detailBuilder === "function" ? detailBuilder : null,
     };
     ensureOverlay();
@@ -175,6 +195,11 @@
     (ind.buildQueue || []).forEach((j, i) => {
       const s = Data().Ships.shipById(j.shipId);
       list.push({ qk: "buildQueue", i: i, it: j, out: s ? s.name : j.shipId });
+    });
+    (ind.enhanceQueue || []).forEach((j, i) => {
+      const m = (state() && state().members) ? state().members.find(x => x.id === j.memberId) : null;
+      const s = Data().Ships.shipById(j.shipId);
+      list.push({ qk: "enhanceQueue", i: i, it: j, out: (m ? m.name : "?") + " 的" + (s ? s.name : "?") + " 强化 Lv" + j.fromLevel + "→" + j.toLevel });
     });
     return list;
   }
@@ -371,6 +396,61 @@
     }).join("");
   }
 
+  // ---- 强化子页签：选成员 → 显示下一级成本/成功率/自动×N → 强化 ----
+  function enhanceCards() {
+    const st = state();
+    const members = st.members || [];
+    if (!members.length) return '<div class="wb-empty">名册为空，先到「招募」征募成员。</div>';
+    let h = '<div class="wb-sec">选择成员（在港待命方可强化）</div>';
+    h += '<div class="wb-enh-members">';
+    for (const m of members) {
+      const ship = Data().Ships.shipById(m.shipId);
+      const sel = cur.enhMember === m.id ? ' sel' : '';
+      const busy = (m.status === 'dispatched' || m.status === 'traveling' || m.status === 'repairing');
+      const dis = busy ? ' dis' : '';
+      h += '<button class="wb-recipe' + sel + dis + '" data-act="workbench:enhsel:' + m.id + '">'
+        + '<div class="wb-r1">' + CTX.esc(m.name) + ' · ' + (ship ? CTX.esc(ship.name) : '?')
+        + ' <span class="dim">强化 Lv' + (m.enhancementLevel || 0) + '</span></div>'
+        + '<div class="wb-r2">' + (busy ? '出勤/维修中，不可强化' : '点击选择') + '</div>'
+        + '</button>';
+    }
+    h += '</div>';
+    const m = members.find(x => x.id === cur.enhMember);
+    if (m) {
+      const ES = (window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null;
+      const ship = Data().Ships.shipById(m.shipId);
+      const curL = m.enhancementLevel || 0;
+      const prev = ES ? ES.getPreview(st, m, m.shipId, curL) : null;
+      h += '<div class="wb-enh-detail">';
+      h += '<div class="wb-sec">强化 ' + CTX.esc(m.name) + ' 的 ' + (ship ? CTX.esc(ship.name) : '') + '：Lv' + curL + ' → Lv' + (curL + 1) + '</div>';
+      if (prev) {
+        const cost = prev.cost || {};
+        const costHtml = Object.keys(cost).map(k => CTX.resIcon(k) + CTX.resName(k) + ' ×' + cost[k]).join(' ');
+        h += '<div class="wb-r2">成功率 <b>' + (prev.chance * 100).toFixed(1) + '%</b>（manufacture Lv' + prev.eng + '，需求刻度 ' + prev.req + '）</div>';
+        h += '<div class="wb-r2">单次成本：' + costHtml + '</div>';
+        h += '<div class="wb-note">失败照扣（每次尝试都扣料/星币/泰坦料）。材料随等级指数递增 N(L)=2^floor(L/5)。'
+          + '强化成功提升 HP 上限与武器伤害（每 5 级一档）。</div>';
+      }
+      h += '<div class="wb-sec">连续强化次数（每次独立掷骰）</div>';
+      h += '<div class="wb-stepper">'
+        + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
+        + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
+        + '<button class="wb-step" data-act="workbench:count:1">+</button>'
+        + '<span class="wb-chips">'
+        + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
+        + '<span class="wb-chip" data-act="workbench:chip:5">×5</span>'
+        + '<span class="wb-chip" data-act="workbench:chip:20">×20</span>'
+        + '</span></div>';
+      const canAdd = prev ? Prod().canAfford(st.res, prev.cost) : false;
+      h += '<button class="wb-add' + (canAdd ? '' : ' off') + '" data-act="workbench:add"' + (canAdd ? '' : ' disabled') + '>'
+        + '强化 ' + CTX.fmt(cur.count) + ' 次 · ' + CTX.esc(m.name) + '</button>';
+      h += '</div>';
+    } else {
+      h += '<div class="wb-note">选择一个成员查看强化成本与成功率。</div>';
+    }
+    return h;
+  }
+
   function shipCards() {
     const st = state();
     const durMult = Base().queueDurationMultiplier(st, "manufacture");
@@ -492,7 +572,7 @@
       const remain = Math.max(0, (it.repeat - it.done - p) * it.dur);
       const remainTxt = remain > 60 ? Math.floor(remain / 60) + 'm ' + Math.round(remain % 60) + 's' : Math.round(remain) + 's';
       // 进度中的状态词按队列区分，避免增强剂显示成「冶炼中」
-      const QK_LABEL = { buildQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中' };
+      const QK_LABEL = { buildQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中', enhanceQueue: '强化中' };
       const status = it.done >= it.repeat ? '完成'
         : it.outType === "study" ? '研究中' : (QK_LABEL[job.qk] || '生产中');
       return '<div class="wb-job">'
@@ -506,6 +586,7 @@
 
   function buildBody() {
     const isDismantle = (cur.type === "equip" && cur.tab === "dismantle");
+    const isEnhance = (cur.type === "manufacture" && cur.tab === "enhance");
     const hs = headStats();
     const st = state();
     const full = hs.used >= hs.total;
@@ -514,6 +595,7 @@
       tabs = '<div class="wb-tabs">'
         + '<span class="wb-tab' + (cur.tab === "component" ? " on" : "") + '" data-act="workbench:tab:component">部件 / 弹药</span>'
         + '<span class="wb-tab' + (cur.tab === "ship" ? " on" : "") + '" data-act="workbench:tab:ship">造船</span>'
+        + '<span class="wb-tab' + (cur.tab === "enhance" ? " on" : "") + '" data-act="workbench:tab:enhance">强化舰船</span>'
         + '</div>';
     } else if (cur.type === "invent") {
       // 双子页签：效率研究（66 张蓝图）/ 图纸合成（原 inv_bp 单配方）
@@ -580,9 +662,9 @@
       + (isStudy() ? '<span class="iv-catcount">共 ' + studyList().length + ' 张 · 当前 ' + studyVisible().length + ' 张</span>'
           : (hasCats && catName ? '<span class="wb-catcount">' + CTX.esc(catName) + ' · ' + catN + (cur.type === "equip" ? ' 件' : ' 个配方') + '</span>' : ''))
       + '</div>'
-      + '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + recipeCards() + '</div>'
-      + (isDismantle ? '' : (
-          '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
+      + '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + (isEnhance ? enhanceCards() : recipeCards()) + '</div>'
+        + (isDismantle || isEnhance ? '' : (
+              '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
         + '<div class="wb-stepper">'
         + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
         + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
@@ -644,7 +726,7 @@
       if (!b || !M.isUnlocked(state(), b)) canAdd = false;
     }
     const add = panel.querySelector(".wb-add");
-    if (add && !(cur.type === "equip" && cur.tab === "dismantle")) {
+    if (add && !(cur.type === "equip" && cur.tab === "dismantle") && !(cur.type === "manufacture" && cur.tab === "enhance")) {
       if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
       if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
       else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
@@ -671,6 +753,8 @@
 
   // 仅微调配方卡片的「可负担」态（资源每秒结算会变化），不重建节点，保留 hover/选中高亮。
   function updateRecipeAffordability(panel) {
+    // 强化子页签用自定义成员卡片（enhsel），不走配方可负担逻辑，跳过避免误标 dis
+    if (cur.type === "manufacture" && cur.tab === "enhance") return;
     const st = state();
     panel.querySelectorAll(".wb-recipe").forEach(function (node) {
       const act = node.getAttribute("data-act") || "";
@@ -720,6 +804,10 @@
     else if (cur.type === "equip" && cur.tab !== "dismantle") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "component") r = Prod().enqueue(st, "manufacture", cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "ship") r = Prod().buildShip(st, cur.recipeId, cur.count);
+    else if (cur.type === "manufacture" && cur.tab === "enhance") {
+      if (!cur.enhMember) { CTX.toast("请先选择成员"); return; }
+      r = Prod().enhanceShip(st, cur.enhMember, cur.count);
+    }
     if (r && r.ok) CTX.toast("已加入队列 · " + recipeOutName(cur.recipeId) + " ×" + cur.count);
     else CTX.toast((r && r.err) || "无法加入队列");
     CTX.renderView();
@@ -739,6 +827,7 @@
     else if (sub === "count") cur.count = clampN(cur.count + (parseInt(p[2], 10) || 0));
     else if (sub === "chip") cur.count = clampN(parseInt(p[2], 10) || 1);
     else if (sub === "tab") { cur.tab = p[2]; cur.recipeId = null; cur.studyQuery = ""; cur.studyTier = 0; }
+    else if (sub === "enhsel") { cur.enhMember = p.slice(2).join(":"); render(); return; }
     // 切分类（反应实验室 / 制造车间共用）：清空已选配方，避免「加入队列」仍指向看不见的另一分类配方
     else if (sub === "cat") {
       if (cur.type === "equip") cur.equipCat = p[2]; else cur.boosterCat = p[2];
@@ -768,5 +857,5 @@
     render();
   }
 
-  return { init: init, open: open, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };
+  return { init: init, open: open, openEnhance: openEnhance, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };
 });

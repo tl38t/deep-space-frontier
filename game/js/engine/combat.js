@@ -196,6 +196,9 @@
     const shipB = (_D && _D.Ships && _D.Ships.shipById && m.shipId)
       ? ((_D.Ships.shipById(m.shipId) || {}).bonuses || {})
       : {};
+    // ② 强化系统：成员舰船强化等级的伤害倍率（damageMultiplier）。惰性取 ShipEnhancement（晚注册安全）。
+    const SE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null;
+    const enhDmg = (SE && m && m.enhancementLevel) ? SE.getBonuses(m.shipId, m.enhancementLevel).damageMultiplier : 1;
     const slots = ["high", "mid", "low", "rig"];
     for (const slot of slots) {
       const arr = fit[slot] || [];
@@ -211,7 +214,7 @@
           const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式 hit^1.4/(hit^1.4+dodge^1.4)
           // 增强剂武器伤害乘区（忠实 1 代 combat.js:1788-1792：按主武器 weaponType 查 weaponDamageMultiplier 表）
           const wbm = (eff && eff.weaponDamageMultiplier && eff.weaponDamageMultiplier[c.weaponType]) ? eff.weaponDamageMultiplier[c.weaponType] : 1;
-          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult * wbm * (1 + (shipB[c.weaponType + "Damage"] || 0)); // 1 代伤害乘区 × 指挥塔 × 增强剂 × 舰船武器伤害加成
+          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult * wbm * (1 + (shipB[c.weaponType + "Damage"] || 0)) * enhDmg; // 1 代伤害乘区 × 指挥塔 × 增强剂 × 舰船武器伤害加成 × 强化伤害倍率
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
           // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
           out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
@@ -830,6 +833,6 @@
     AMMO_TYPES, AMMO_OF, AMMO_CN, COUNTER_OF, LAYER_ORDER,
     SKILL_OF_WEAPON, weaponSkillOf,
     hitCoeff, counterMult, layerAt, layerDps, fullWaveSec,
-    prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp, fittedFuelCost,
+    prepareNode, advance, fleetSnapshot, fireSegments, simulateVolley, drainHp, fittedFuelCost, scanFit,
   };
 });

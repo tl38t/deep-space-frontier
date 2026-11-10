@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ship-enhancement-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// ③ 舰船强化系统 · 自测（2026-11-10）
+// 纪律（沿用 titan_selftest）：
+//  1. iframe 加载真实 index.html，取真实 NSK.*；结算跑在 LIVE() 深拷贝上，真档一次不动；
+//  2. 反 mock：舰船/装备/科技全从真实 Data.* 派生；
+//  3. 未捕获异常计入 ERR。
+// 覆盖：A 成功率公式（不封顶 / 高 L 硬墙 / 单调性）；B 成本指数 N(L) 与泰坦额外料；
+//      C 入队（扣料 / 槽位满拒绝 / 忙碌拒绝 / 料不足拒绝）；D 结算（强制成功升级+HP 放大 /
+//      强制失败等级不变料已扣 / 多 repeat）；E 战斗与 HP 接线（maxHp ×hpMultiplier、scanFit ×damageMultiplier）。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [], ran = false;
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function near(a, b, tol) { return Math.abs(a - b) <= (tol == null ? 1e-6 : tol); }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  window.addEventListener("error", function (e) { ERR.push(String(e.message)); });
+  function W() { return document.getElementById("f").contentWindow; }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function clone() { return JSON.parse(JSON.stringify(LIVE())); }
+
+  function richState() {
+    var st = clone();
+    var ALL = W().NSK.Data.Resources.ALL;
+    for (var k in ALL) st.res[k] = 1e9;            // 任意材料充足
+    st.res.credits = 1e9; st.res.bp = 1e6;
+    // 泰坦料（可能不在 ALL 内，显式补）
+    st.res.star_corpse_titanium = 1e9;
+    st.res.phase_iridium_core = 1e9;
+    st.tech = st.tech || { levels: {}, prog: {}, active: null };
+    st.members = (st.members || []).slice();
+    return st;
+  }
+
+  function pickShips(D) {
+    var SH = D.Ships, A = null, T = null;
+    for (var id in SH.SHIPS) {
+      var s = SH.SHIPS[id];
+      if (!A && (s.requiresTech == null) && (s.classTier >= 1 && s.classTier <= 4)) A = id;
+      if (!T && (s.classTier >= 5)) T = id;
+    }
+    return { A: A, T: T };
+  }
+
+  function mkMember(id, shipId, enh) {
+    return {
+      id: id, shipId: shipId, status: "idle", enhancementLevel: enh || 0,
+      skills: {}, hp: { shield: 1000, armor: 1000, structure: 1000 },
+      fitted: { high: [], mid: [], low: [], rig: [] }
+    };
+  }
+
+  function run() {
+    if (ran) return; ran = true;
+    try { runAll(); } catch (e) { ERR.push("EXCEPTION " + (e && e.stack || e)); }
+    dump();
+  }
+
+  function runAll() {
+    var NSK = W().NSK, D = NSK.Data, E = NSK.Engine;
+    var SH = D.Ships, SE = E.ShipEnhancement, Ch = E.EnhancementChance,
+        P = E.Production, Combat = E.Combat;
+    if (!SE || !Ch || !P || !Combat) { ok("引擎模块就绪", false, "SE/Ch/P/Combat 任一缺失"); return; }
+    ok("引擎模块就绪", true);
+
+    var ships = pickShips(D);
+    ok("A 类(无门禁非泰坦)舰存在", !!ships.A, "id=" + ships.A);
+    ok("泰坦舰存在", !!ships.T, "id=" + ships.T);
+
+    // ============ A. 成功率公式 ============
+    // A1 不封顶：eng=300 vs 500 在 L∈{0,5,10,15,20} 全部不相等
+    var Ls = [0, 5, 10, 15, 20], allDiff = true, diffDetail = [];
+    Ls.forEach(function (L) {
+      var a = Ch.chance(300, 1, L), b = Ch.chance(500, 1, L);
+      if (near(a, b, 1e-9)) { allDiff = false; diffDetail.push("L" + L + " eq"); }
+    });
+    ok("A1 eng300≠eng500（全 L 档）", allDiff, diffDetail.join(",") || "300/500 各档均不等");
+
+    // A2 高 L 硬墙：L=20 → ≤0.12 且 >0.05
+    var c20_300 = Ch.chance(300, 1, 20), c20_500 = Ch.chance(500, 1, 20);
+    ok("A2 L20 成功率 ≤ 0.12（墙不被顶穿）", c20_300 <= 0.12 + 1e-9 && c20_500 <= 0.12 + 1e-9,
+       "300=" + c20_300.toFixed(4) + " 500=" + c20_500.toFixed(4));
+    ok("A2 L20 成功率 > 0.05（地板防死锁）", c20_300 > 0.05 && c20_500 > 0.05);
+
+    // A3 单调性：同 L，eng 增大 chance 不减（抽样 L=0,10,20）
+    var monoOK = true;
+    [0, 10, 20].forEach(function (L) {
+      var prev = -1;
+      [1, 50, 100, 300, 1000, 5000].forEach(function (e) {
+        var v = Ch.chance(e, 1, L);
+        if (v < prev - 1e-9) monoOK = false;
+        prev = v;
+      });
+    });
+    ok("A3 同 L 下 eng↑ 成功率单调不减", monoOK);
+
+    // A4 零溢出：eng=req（gap=0）→ 地板 0.05
+    ok("A4 gap=0 → 0.05 地板", near(Ch.chance(1, 1, 0), 0.05, 1e-9) && near(Ch.chance(6, 6, 10), 0.05, 1e-9));
+
+    // A5 L0 高成功率（cap=0.90，eng 溢出大）
+    var c0big = Ch.chance(1000, 1, 0);
+    ok("A5 L0 大 eng 接近上限 0.90", c0big > 0.85 && c0big <= 0.90 + 1e-9, "L0 eng1000=" + c0big.toFixed(4));
+
+    // ============ B. 成本指数 N(L) 与泰坦额外料 ============
+    // B1 N(L) 指数阶梯
+    var NOK = true, nDetail = [];
+    [[0,1],[4,1],[5,2],[9,2],[10,4],[14,4],[15,8],[19,8],[20,16]].forEach(function (pair) {
+      var got = SE.N(pair[0]);
+      if (got !== pair[1]) { NOK = false; nDetail.push("N(" + pair[0] + ")=" + got); }
+    });
+    ok("B1 N(L)=2^floor(L/5) 阶梯正确", NOK, nDetail.join(",") || "0-4:1,5-9:2,10-14:4,15-19:8,20:16");
+
+    // B2 非泰坦成本随 N 缩放：L0 vs L5 材料与星币 ×2
+    var stB = richState();
+    var mA = mkMember("mB", ships.A, 0); stB.members.push(mA);
+    var cost0 = SE.getCost(stB, mA, ships.A, 0);
+    var cost5 = SE.getCost(stB, mA, ships.A, 5);
+    ok("B2 非泰坦 L5 成本 = L0 ×2（N 阶梯）",
+       (function () {
+         if (!cost0 || !cost5) return false;
+         if (!near(cost5.credits, cost0.credits * 2)) return false;
+         for (var k in cost5) { if (k === "credits") continue;
+           if (!cost0[k] || !near(cost5[k], cost0[k] * 2)) return false; }
+         return true;
+       })(),
+       "credits L0=" + (cost0 && cost0.credits) + " L5=" + (cost5 && cost5.credits));
+
+    // B3 泰坦额外料：tier≥5 在成本中注入 星骸钛晶×2 / 相位铱核×1 ×N
+    if (ships.T) {
+      var stT = richState();
+      // 解除泰坦科技门禁（若有）
+      var ts = SH.shipById(ships.T);
+      if (ts && ts.requiresTech) stT.tech.levels[ts.requiresTech] = 1;
+      var mT = mkMember("mT", ships.T, 0); stT.members.push(mT);
+      var ct = SE.getCost(stT, mT, ships.T, 0);
+      ok("B3 泰坦成本含 星骸钛晶×2", ct && ct.star_corpse_titanium === 2, "got=" + (ct && ct.star_corpse_titanium));
+      ok("B3 泰坦成本含 相位铱核×1", ct && ct.phase_iridium_core === 1, "got=" + (ct && ct.phase_iridium_core));
+      var ct5 = SE.getCost(stT, mT, ships.T, 5);
+      ok("B3 泰坦 L5 额外料 ×2（N 阶梯）",
+         ct5.star_corpse_titanium === 4 && ct5.phase_iridium_core === 2,
+         "titanium=" + (ct5 && ct5.star_corpse_titanium) + " iridium=" + (ct5 && ct5.phase_iridium_core));
+    }
+
+    // ============ C. 入队 ============
+    var stC = richState();
+    if (ships.T) { var tsC = SH.shipById(ships.T); if (tsC && tsC.requiresTech) stC.tech.levels[tsC.requiresTech] = 1; }
+    var mC = mkMember("mC", ships.A, 0); stC.members.push(mC);
+    var usedBefore = P.manufactureUsed(stC);
+    var resBefore = JSON.stringify(stC.res);
+    var r1 = P.enhanceShip(stC, "mC", 1);
+    ok("C1 enhanceShip 成功入队", r1 && r1.ok, JSON.stringify(r1));
+    ok("C1 入队后 enhanceQueue 长度+1", stC.base.industry.enhanceQueue.length === 1);
+    ok("C1 占用总装船坞槽位（manufactureUsed+1）", P.manufactureUsed(stC) === usedBefore + 1);
+    ok("C1 入队即扣料（首级成本）", resBefore !== JSON.stringify(stC.res));
+
+    // C2 槽位满拒绝
+    var stC2 = richState();
+    if (ships.T) { var tsC2 = SH.shipById(ships.T); if (tsC2 && tsC2.requiresTech) stC2.tech.levels[tsC2.requiresTech] = 1; }
+    var mC2 = mkMember("mC2", ships.A, 0); stC2.members.push(mC2);
+    var plan = SH.bodyLevelPlan(stC2.base.bodyLevel);
+    stC2.base.industry.enhanceQueue = [];
+    for (var i = 0; i < plan.manufacture; i++) stC2.base.industry.enhanceQueue.push({ dummy: 1 });
+    var r2 = P.enhanceShip(stC2, "mC2", 1);
+    ok("C2 槽位满拒绝入队", r2 && !r2.ok && /槽位/.test(r2.err || ""), JSON.stringify(r2));
+    ok("C2 拒绝后未入队", stC2.base.industry.enhanceQueue.length === plan.manufacture);
+
+    // C3 忙碌成员拒绝
+    var stC3 = richState();
+    var mC3 = mkMember("mC3", ships.A, 0); mC3.status = "dispatched"; stC3.members.push(mC3);
+    var r3 = P.enhanceShip(stC3, "mC3", 1);
+    ok("C3 忙碌成员拒绝", r3 && !r3.ok, JSON.stringify(r3));
+
+    // C4 料不足拒绝
+    var stC4 = richState();
+    var mC4 = mkMember("mC4", ships.A, 0); stC4.members.push(mC4);
+    for (var rk in stC4.res) stC4.res[rk] = 0;            // 清空资源
+    stC4.res.credits = 0;
+    var r4 = P.enhanceShip(stC4, "mC4", 1);
+    ok("C4 材料不足拒绝", r4 && !r4.ok && /不足/.test(r4.err || ""), JSON.stringify(r4));
+
+    // ============ D. 结算（确定性掷骰，强制成功/失败）============
+    var origChance = Ch.chance;
+    try {
+      // D1 强制成功：单次 0→1，HP 三防按 getBonuses 比例放大
+      Ch.chance = function () { return 1; };
+      var stD1 = richState();
+      var mD1 = mkMember("mD1", ships.A, 0); stD1.members.push(mD1);
+      var hpBefore = JSON.stringify(mD1.hp);
+      P.enhanceShip(stD1, "mD1", 1);
+      var itD1 = stD1.base.industry.enhanceQueue[0];
+      P.processEnhanceQueue(stD1, itD1.startedAt + 1e9);
+      var ratio = SE.getBonuses(ships.A, 1).hpMultiplier / SE.getBonuses(ships.A, 0).hpMultiplier;
+      ok("D1 成功后 enhancementLevel=1", mD1.enhancementLevel === 1);
+      ok("D1 成功后 HP 三防按倍率放大",
+         near(mD1.hp.shield, 1000 * ratio) && near(mD1.hp.armor, 1000 * ratio) && near(mD1.hp.structure, 1000 * ratio),
+         "ratio=" + ratio.toFixed(4) + " shield=" + mD1.hp.shield);
+      ok("D1 结算后队列项移除", stD1.base.industry.enhanceQueue.length === 0);
+      ok("D1 原 HP 确被改变", hpBefore !== JSON.stringify(mD1.hp));
+
+      // D3 多 repeat=5 全部成功 → level 5，HP 累计 ×getBonuses(5).hpMultiplier，队列清空
+      var stD3 = richState();
+      var mD3 = mkMember("mD3", ships.A, 0); stD3.members.push(mD3);
+      P.enhanceShip(stD3, "mD3", 5);
+      var itD3 = stD3.base.industry.enhanceQueue[0];
+      P.processEnhanceQueue(stD3, itD3.startedAt + 1e9);
+      var expMult = SE.getBonuses(ships.A, 5).hpMultiplier;
+      ok("D3 repeat=5 全成功后 level=5", mD3.enhancementLevel === 5, "level=" + mD3.enhancementLevel);
+      ok("D3 HP 累计放大至 getBonuses(5).hpMultiplier",
+         near(mD3.hp.shield, 1000 * expMult), "exp=" + expMult.toFixed(4) + " got=" + mD3.hp.shield);
+      ok("D3 全部完成后队列清空", stD3.base.industry.enhanceQueue.length === 0);
+
+      // D2 强制失败：等级不变，料已在入队时扣（首级成本）
+      Ch.chance = function () { return 0; };
+      var stD2 = richState();
+      var mD2 = mkMember("mD2", ships.A, 0); stD2.members.push(mD2);
+      var cost0D2 = SE.getCost(stD2, mD2, ships.A, 0);
+      var resSnap = JSON.parse(JSON.stringify(stD2.res));
+      P.enhanceShip(stD2, "mD2", 1);
+      // 入队扣首级
+      var spentFirst = 0;
+      for (var k in cost0D2) spentFirst += (resSnap[k] || 0) - (stD2.res[k] || 0);
+      var itD2 = stD2.base.industry.enhanceQueue[0];
+      P.processEnhanceQueue(stD2, itD2.startedAt + 1e9);
+      ok("D2 失败后 level 不变（=0）", mD2.enhancementLevel === 0);
+      ok("D2 失败料已在入队时扣（首级）", spentFirst > 0, "spentFirst=" + spentFirst);
+      ok("D2 失败后队列移除", stD2.base.industry.enhanceQueue.length === 0);
+    } finally {
+      Ch.chance = origChance; // 还原，避免污染真实引擎
+    }
+
+    // ============ E. 战斗与 HP 接线 ============
+    // E1 maxHp(shipId, enhLvl) 随 enhLvl 放大 hpMultiplier
+    var h0 = SH.maxHp(ships.A, 0), h5 = SH.maxHp(ships.A, 5);
+    var hpRatio = SE.getBonuses(ships.A, 5).hpMultiplier / SE.getBonuses(ships.A, 0).hpMultiplier;
+    ok("E1 maxHp ×hpMultiplier（shield）",
+       near(h5.shield / h0.shield, hpRatio), "ratio=" + (h5.shield / h0.shield).toFixed(4) + " exp=" + hpRatio.toFixed(4));
+    ok("E1 maxHp ×hpMultiplier（armor/structure 同构）",
+       near(h5.armor / h0.armor, hpRatio) && near(h5.structure / h0.structure, hpRatio));
+
+    // E2 combat.scanFit 武器 dmg ×damageMultiplier
+    var Eq = D.Equipment, weaponId = null;
+    var eqList = (Eq && Eq.all) ? Eq.all() : [];
+    for (var ei = 0; ei < eqList.length; ei++) {
+      var eo = eqList[ei];
+      if (eo && eo.combat && eo.combat.kind === "weapon") { weaponId = eo.id; break; }
+    }
+    ok("E2 找到一件武器装备", !!weaponId, "id=" + weaponId);
+    if (weaponId) {
+      var stE = richState();
+      var mE = mkMember("mE", ships.A, 0);
+      mE.fitted.high = [weaponId];
+      stE.members.push(mE);
+      // enhLvl=0
+      mE.enhancementLevel = 0;
+      var d0 = Combat.scanFit(mE, 0, 1, null, stE).weapons[0].dmg;
+      // enhLvl=5
+      mE.enhancementLevel = 5;
+      var d5 = Combat.scanFit(mE, 0, 1, null, stE).weapons[0].dmg;
+      var dmgRatio = SE.getBonuses(ships.A, 5).damageMultiplier / SE.getBonuses(ships.A, 0).damageMultiplier;
+      ok("E2 scanFit dmg ×damageMultiplier", near(d5 / d0, dmgRatio, 1e-9),
+         "d0=" + d0.toFixed(3) + " d5=" + d5.toFixed(3) + " exp=" + dmgRatio.toFixed(4));
+    }
+  }
+
+  if (document.readyState === "complete") setTimeout(run, 400);
+  else window.addEventListener("load", function () { setTimeout(run, 400); });
+})();
+</script>
+</body>
+</html>

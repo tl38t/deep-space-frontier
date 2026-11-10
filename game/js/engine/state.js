@@ -51,6 +51,7 @@
       rngSeed: (Math.random() * 4294967296) >>> 0,
       archCounter: 0,        // 考古结算确定性计数器（每次遗址周期 +1，存档持久化）
       legionName: "深空星疆军团",
+      legion: { formed: false },   // ④ 泰坦子系统门禁：需成立军团（军团系统设置 formed=true）
       res: Data.Resources.startingResources(),
       equipment: {},            // 已制造的舰船装备库存：equipId -> 数量（§14 舰船装配，总装船坞制造）
       base: Object.assign(baseIdentity, {
@@ -61,6 +62,7 @@
         industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [] },
       }),
       starMap: map,
+      starMapDone: false,          // ④ 泰坦子系统门禁：需完成星图主线（星图进度系统设置 true）
       members: members,
       // 科技树研究（单线队列）：levels 已完成节点 / active 正在研究的 {id,startedAt,endsAt}
       // prog：取消研究后保留的半截进度（0~1），研究完成即清除

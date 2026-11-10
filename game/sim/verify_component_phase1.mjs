@@ -56,7 +56,7 @@ let shipOk = true, shipDetail = "";
 const shipIds = Object.keys(Data.Ships.SHIPS || {});
 for (const sid of shipIds) {
   const cost = (Data.Ships.shipById(sid) || {}).cost || {};
-  for (const k in cost) if (!PARTS.includes(k)) { shipOk = false; shipDetail += " " + sid + ":" + k; }
+  for (const k in cost) if (!Data.Resources.ALL[k]) { shipOk = false; shipDetail += " " + sid + ":" + k; }
 }
 ok("② " + shipIds.length + " 艘舰 cost 全为 class 部件键（无 struct/prop/weapon 残留）", shipOk, shipDetail || "all-good");
 

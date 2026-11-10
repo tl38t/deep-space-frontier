@@ -27,6 +27,18 @@
   function _Mastery() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Mastery : null; }
   // 蓝图效率研究（ME/TE）：同样惰性取用，避免与 UMD 注册顺序耦合
   function _Invention() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Invention : null; }
+  // 科技树（④ 泰坦子系统 requiresTech 门禁校验用）：惰性取用，避免 load-time 捕获为 null
+  function _Tech() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null; }
+  // 读取某科技节点已达等级（1 代同义：state.tech.levels[id]，未研究=0）
+  function techLevelOf(state, id) {
+    const lv = state && state.tech && state.tech.levels ? state.tech.levels[id] : 0;
+    return lv || 0;
+  }
+  function techNameOf(id) {
+    const T = _Tech();
+    const n = (T && T.byId) ? T.byId(id) : null;
+    return (n && n.name) || id;
+  }
 
   const MAX_BATCHES = 2000; // 单次 settle 安全上限，防离线巨量迭代冻结
 
@@ -36,10 +48,10 @@
   }
   function spend(res, cost) { for (const k in cost) res[k] = Math.max(0, (res[k] || 0) - cost[k]); }
   function gain(res, out, qty) { res[out] = (res[out] || 0) + qty; }
-  // 总装船坞（manufacture）槽位由「部件制造队列」+「造船队列」共享
+  // 总装船坞（manufacture）槽位由「部件制造队列」+「造船队列」+「强化队列」共享
   function manufactureUsed(state) {
     const ind = state.base.industry;
-    return (ind.manufactureQueue || []).length + (ind.buildQueue || []).length;
+    return (ind.manufactureQueue || []).length + (ind.buildQueue || []).length + (ind.enhanceQueue || []).length;
   }
 
   // 入队：检查槽位 + 原料，扣原料，写队列项
@@ -77,6 +89,9 @@
       : Data.Recipes.INVENT;
     const r = tbl.find(x => x.id === recipeId);
     if (!r) return { ok: false, err: "配方不存在" };
+    // ④ 泰坦子系统：配方级科技门禁（requiresTech）。未达等级拒绝入队。
+    if (r.requiresTech != null && techLevelOf(state, r.requiresTech) < 1)
+      return { ok: false, err: "需先完成科技「" + techNameOf(r.requiresTech) + "」" };
     // 精炼门禁（复用 1 代精炼等级语义，落到本作 bodyLevel 轴）：bodyLevelReq 未满足拒绝入队
     if (r.bodyLevelReq != null && state.base.bodyLevel < r.bodyLevelReq)
       return { ok: false, err: "舰基等级不足，无法精炼该矿材" };
@@ -270,6 +285,13 @@
     const ship = Ship.shipById(shipId);
     if (!ship) return { ok: false, err: "舰船不存在" };
     if (!Ship.canBuildAt(shipId, state.base.bodyLevel)) return { ok: false, err: "核心等级不足（需 Lv." + (ship.bodyLevelReq + 1) + "）" };
+    // ④ 泰坦子系统门禁：requiresTech（8 节点顶点 titan_command）+ 需成立军团 + 需完成星图主线
+    if (ship.requiresTech != null && techLevelOf(state, ship.requiresTech) < 1)
+      return { ok: false, err: "需先完成科技「" + techNameOf(ship.requiresTech) + "」" };
+    if (ship.requiresAlliance && !(state.legion && state.legion.formed))
+      return { ok: false, err: "需先成立军团（军团系统）" };
+    if (ship.requiresStarMap && !state.starMapDone)
+      return { ok: false, err: "需先完成星图主线" };
     const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
     if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
     // 精密配给剂舰船材料折扣（与 1 代 getShipBuildingQuote kind:"assembly" 同口径）
@@ -415,6 +437,103 @@
     return log;
   }
 
+  // ---- 舰船强化（总装船坞，共享 manufacture 槽位；短耗时到点掷骰）----
+  // ② 2 代重做：每次尝试 = 从当前等级升 1 级（失败照扣、材料随等级指数递增），由成功率公式决定是否升级。
+  // 入队即扣「本次（level=curL）」成本；结算逐次续扣（失败也扣，标准 genre）。
+  // 单队列项 repeat=N：占 1 个槽位连续尝试 N 次，每次独立掷骰、等级随成功推进。
+  function enhanceShip(state, memberId, repeat) {
+    const m = (state.members || []).find(x => x.id === memberId);
+    if (!m) return { ok: false, err: "成员不存在" };
+    if (m.status === "dispatched" || m.status === "traveling" || m.status === "repairing")
+      return { ok: false, err: "成员正在出勤/维修，回港后才能强化" };
+    const Ship = Data.Ships;
+    const ship = Ship.shipById(m.shipId);
+    if (!ship) return { ok: false, err: "舰船不存在" };
+    if (ship.requiresTech != null && techLevelOf(state, ship.requiresTech) < 1)
+      return { ok: false, err: "需先完成科技「" + techNameOf(ship.requiresTech) + "」" };
+    const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
+    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
+    const ES = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null;
+    if (!ES) return { ok: false, err: "强化系统未就绪" };
+    const curL = m.enhancementLevel || 0;
+    const cost = ES.getCost(state, m, m.shipId, curL); // 升到 curL+1 的成本
+    if (!canAfford(state.res, cost)) return { ok: false, err: "材料/星币/泰坦料不足" };
+    spend(state.res, cost);
+    const Base = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
+    const dur = 30 * durationMult; // 短耗时（提议 30s，待标定）：与造船同构但快得多
+    const q = state.base.industry.enhanceQueue || (state.base.industry.enhanceQueue = []);
+    q.push({ memberId: memberId, shipId: m.shipId, level: curL, fromLevel: curL, toLevel: curL + 1, repeat: repeat || 1, dur: dur, startedAt: Date.now(), done: 0 });
+    return { ok: true, fromLevel: curL, toLevel: curL + 1 };
+  }
+
+  // 结算强化队列：到点掷骰（确定性 rng，在线/离线一致），成功升级并放大 HP、给 manufacture 经验；失败等级不变（料已扣）。
+  function processEnhanceQueue(state, now) {
+    const pm = (Base && Base.powerMult) ? Base.powerMult(state) : 1;
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Booster : null;
+    const bm = (B && B.getEffectState) ? B.getEffectState(state).shipSpeedMultiplier : 1;
+    const M = _Mastery();
+    const mm = (M && M.industryTimeMult) ? M.industryTimeMult(state) : 1;
+    const effDur = (it) => it.dur / (pm * bm) * mm;
+    const q = state.base.industry.enhanceQueue || (state.base.industry.enhanceQueue = []);
+    const log = [];
+    let guard = 0;
+    const alive = [];
+    for (const it of q) {
+      let keep = true;
+      while (guard < MAX_BATCHES) {
+        const elapsed = (now - it.startedAt) / 1000;
+        if (elapsed < effDur(it)) break;
+        const m = (state.members || []).find(x => x.id === it.memberId);
+        const ship = Data.Ships.shipById(it.shipId);
+        if (!m || !ship) { keep = false; break; } // 成员/舰船丢失：丢弃该项（零副作用）
+        const ES = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null;
+        const Ch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.EnhancementChance : null;
+        if (!ES || !Ch) { keep = false; break; }
+        const curL = it.level;
+        const req = ES.reqOf(it.shipId);
+        const eng = ES.memberSkillLevel(m, "manufacture");
+        const pc = Ch.chance(eng, req, curL);
+        // 确定性掷骰：seed 由 rngSeed + startedAt + 已完成次数 派生（与 processQueue 双击骰同口径，在线离线一致）
+        const seed = ((state.rngSeed || 0) ^ Math.imul(it.startedAt >>> 0, 0x85EBCA77) ^ Math.imul(it.done + 1, 2654435761)) >>> 0;
+        const rng = Core.makeRng(seed);
+        const ok = rng() < pc;
+        if (ok) {
+          const oldMult = ES.getBonuses(it.shipId, curL).hpMultiplier;
+          const newMult = ES.getBonuses(it.shipId, curL + 1).hpMultiplier;
+          const ratio = oldMult > 0 ? newMult / oldMult : 1;
+          // HP 上限随强化放大（本作 m.hp 满血即上限，故直接按比例放大当前值）
+          m.hp.shield *= ratio; m.hp.armor *= ratio; m.hp.structure *= ratio;
+          m.enhancementLevel = curL + 1;
+          it.level = curL + 1;
+          // 总装坞制造经验（与 buildShip 同口径）：发给驻舱者，走 manufacture 技能
+          const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
+          if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
+            const w = Base.stationWorker(state, "build");
+            if (w) {
+              const xpAmt = (Sx.recipeBatchXp ? Sx.recipeBatchXp(state, "build", it) : (it.dur || 30) * 0.35);
+              Sx.grantBatchXp(state, w.member, w.skill, xpAmt);
+            }
+          }
+          log.push({ memberId: m.id, shipId: it.shipId, level: curL + 1, ok: true });
+        } else {
+          log.push({ memberId: m.id, shipId: it.shipId, level: curL, ok: false }); // 失败：等级不变、料已扣
+        }
+        it.done += 1;
+        if (it.done >= it.repeat) { keep = false; break; }
+        it.startedAt += effDur(it) * 1000;
+        // 续批扣下一级成本（失败照扣：同级也扣；成功则扣已晋级后的下一级）
+        const nextCost = ES.getCost(state, m, it.shipId, it.level);
+        if (!canAfford(state.res, nextCost)) { keep = false; break; }
+        spend(state.res, nextCost);
+      }
+      if (keep) alive.push(it);
+    }
+    // 原地重写队列（保持数组引用不变，外部捕获的引用不失效）
+    if (alive.length !== q.length) { q.length = 0; for (let k = 0; k < alive.length; k++) q.push(alive[k]); }
+    return log;
+  }
+
   // ---- 舰船装配（成员四槽；复用 1 代 fitted 数组模型）----
   // 装配：从 state.equipment 库存取一件装备，装入成员 m.fitted[slot]；卸下反向退回库存。
   const FIT_SLOTS = ["high", "mid", "low", "rig"];
@@ -467,6 +586,7 @@
     all.push(...processQueue(state, "invent", now, pm));
     all.push(...processQueue(state, "booster", now, pm));
     all.push(...processBuildQueue(state, now));
+    all.push(...processEnhanceQueue(state, now));
     return all;
   }
 
@@ -478,5 +598,5 @@
     });
   }
 
-  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
+  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processEnhanceQueue, buildShip, enhanceShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
 });

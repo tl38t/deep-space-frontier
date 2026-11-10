@@ -143,7 +143,7 @@
     if (!m) return null;
     const def = Data.Ships.shipById(m.shipId) || null;
     const layout = Data.Ships.slotLayout(m.shipId);
-    const maxHp = Data.Ships.maxHp(m.shipId);
+    const maxHp = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
     const orbitSlots = [];
     let index = 0;
     for (const type of SLOT_TYPES) {

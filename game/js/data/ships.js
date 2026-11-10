@@ -74,6 +74,17 @@
       gas_battleship: { id:"gas_battleship", name:"云海级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":6,"battleship_power_core":5,"battleship_functional_system":5}, buildTime:100, xp:160, slots:12, dodge:8, hp:{shield:1000,armor:500,structure:350}, archaeologyScanStrength:0, fuelEfficiency:0.85, bonuses:{gasLaserEfficiency:1.4} },
       yunjin: { id:"yunjin", name:"云津级", classTier:3, bodyLevelReq:2, cost:{"battleship_integrated_hull":7,"battleship_power_core":6,"battleship_functional_system":7}, buildTime:200, xp:280, slots:10, dodge:9, hp:{shield:1650,armor:850,structure:583}, archaeologyScanStrength:0, fuelEfficiency:0.83, bonuses:{smeltingSpeed:0.28} },
       orca: { id:"orca", name:"山海级", classTier:3, bodyLevelReq:2, cost:{"capital_integrated_hull":10,"capital_power_core":8,"capital_functional_system":10}, buildTime:320, xp:500, slots:13, dodge:8, hp:{shield:2200,armor:1100,structure:750}, archaeologyScanStrength:0, fuelEfficiency:0.80, bonuses:{miningLaserEfficiency:1.8,gasLaserEfficiency:1.8,smeltingSpeed:0.30} },
+      // ===== 泰坦（④ 泰坦子系统，2026-11-10）：Lv4 深空要塞门禁；cost=3 子总成（3×3×3 总装第三阶）=====
+      // 门禁：requiresTech=titan_command（8 研究节点顶点）+ 需成立军团 + 需完成星图主线（buildShip 内校验）。
+      // 末日武器仅占位（combat 引擎接线待 ③ 强化系统落地后接，非本专项范围）。
+      titan: { id:"titan", name:"渊灭级泰坦", classTier:5, bodyLevelReq:4,
+        cost:{ titan_hull_assembly:1, titan_weapon_assembly:1, titan_core_assembly:1 },
+        buildTime:3600, xp:5000, slots:60, dodge:1,
+        hp:{shield:50000,armor:50000,structure:50000},
+        archaeologyScanStrength:0, fuelEfficiency:0.5,
+        bonuses:{ shieldCapacity:0.5, laserDamage:0.5, missileDamage:0.5, cannonDamage:0.5, hitBonus:50, structureRepair:5, armorRepair:2, structureEmergencyRepair:3 },
+        requiresTech:"titan_command", requiresAlliance:true, requiresStarMap:true,
+        doomsday:{ name:"末日武器·湮灭脉冲", note:"占位槽，combat 引擎接线待 ③ 强化系统落地后接（非本专项范围）" } },
     };
 
   // 舰船装配槽位布局（2026-10-31 舰船装配系统）：把原有扁平 slots 拆成 high/mid/low/rig 四槽，总数与 slots 对齐。
@@ -123,6 +134,7 @@
       gas_battleship: { high:4, mid:3, low:2, rig:3 },
       yunjin: { high:3, mid:3, low:2, rig:2 },
       orca: { high:4, mid:4, low:2, rig:3 },
+      titan: { high:20, mid:20, low:10, rig:10 },
     };
   function slotLayout(shipId) {
     const base = SLOT_LAYOUT[shipId] || { high: 1, mid: 1, low: 0, rig: 0 };
@@ -249,16 +261,19 @@
       .sort((a, b) => a.classTier - b.classTier);
   }
   function shipById(id) { return SHIPS[id] || null; }
-  // 舰船三防满载（成员 hp 上限来源）
-  function maxHp(shipId) {
+  // 舰船三防满载（成员 hp 上限来源）。enhLvl=舰船强化等级，乘 hpMultiplier（惰性取 ShipEnh，enhLvl=0 时 enh=1 不依赖模块）。
+  function maxHp(shipId, enhLvl) {
     const s = SHIPS[shipId];
     if (!s) return { shield: 100, armor: 100, structure: 100 };
     // 舰船级 HP 容量加成（1 代 shield/armor/structureCapacity，全局生效 = 舰船本体属性，与 1 代一致）
     const b = s.bonuses || {};
+    const enh = (enhLvl && enhLvl > 0)
+      ? (function () { const SE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null; return SE ? SE.getBonuses(shipId, enhLvl).hpMultiplier : 1; })()
+      : 1;
     return {
-      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)),
-      armor: s.hp.armor * (1 + (b.armorCapacity || 0)),
-      structure: s.hp.structure * (1 + (b.structureCapacity || 0)),
+      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)) * enh,
+      armor: s.hp.armor * (1 + (b.armorCapacity || 0)) * enh,
+      structure: s.hp.structure * (1 + (b.structureCapacity || 0)) * enh,
     };
   }
   function upgradeCost(lv) {

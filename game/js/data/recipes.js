@@ -39,6 +39,10 @@
     { id: "smelt_zr_alloy",    in: { zr_ore: 1 }, out: "zr_alloy",    qty: 1, dur: 130, bodyLevelReq: 2, xp: 370 },
     { id: "smelt_px_alloy",    in: { px_ore: 1 }, out: "px_alloy",    qty: 1, dur: 190, bodyLevelReq: 3, xp: 580 },
     { id: "smelt_morph_alloy", in: { px_ore: 1 }, out: "morph_alloy", qty: 1, dur: 190, bodyLevelReq: 3, xp: 580 },
+    // 泰坦合金冶炼（④ 泰坦子系统）：虫洞原矿 → 合金。bodyLevelReq:3 = Lv4 深空要塞（泰坦为终局内容）
+    { id: "smelt_titan_struct", in: { star_corpse_titanium: 3 }, out: "titan_struct_alloy", qty: 1, dur: 300, bodyLevelReq: 3, requiresTech: "titan_metallurgy", xp: 300 },
+    { id: "smelt_titan_phase", in: { phase_iridium_core: 3 }, out: "titan_phase_alloy", qty: 1, dur: 300, bodyLevelReq: 3, requiresTech: "titan_metallurgy", xp: 300 },
+    { id: "smelt_titan_comp", in: { star_corpse_titanium: 1, phase_iridium_core: 1 }, out: "titan_composite_plate", qty: 1, dur: 400, bodyLevelReq: 3, requiresTech: "titan_metallurgy", xp: 400 },
   ];
 
   // 制造部件：矿材 → 部件（dur 秒/批）
@@ -79,6 +83,21 @@
     { id: "mk_ammo_laser",   in: { mx_alloy: 2 }, out: "ammo_laser",   qty: 200, dur: 15, xp: 8, cat: "ammo" },
     { id: "mk_ammo_missile", in: { ni_alloy: 2 }, out: "ammo_missile", qty: 200, dur: 15, xp: 8, cat: "ammo" },
     { id: "mk_ammo_cannon",  in: { fe_alloy: 2 }, out: "ammo_cannon",  qty: 200, dur: 15, xp: 8, cat: "ammo" },
+    // ===== 泰坦部件（④ 泰坦子系统，2026-11-10）：9 部件 + 3 子总成。tags: titan / asm / requiresTech =====
+    // 9 部件：in=泰坦合金，requiresTech="titan_materials"（由科技树节点解锁制造许可）
+    { id: "mk_titan_hull_plate", name:"泰坦舰体装甲板", titan:true, requiresTech:"titan_materials", in:{ titan_struct_alloy:20 }, out:"titan_hull_plate", qty:1, dur:600, xp:300 },
+    { id: "mk_titan_hull_frame", name:"泰坦舰体框架", titan:true, requiresTech:"titan_materials", in:{ titan_struct_alloy:15, titan_composite_plate:5 }, out:"titan_hull_frame", qty:1, dur:700, xp:350 },
+    { id: "mk_titan_hull_reinforcement", name:"泰坦舰体加固件", titan:true, requiresTech:"titan_materials", in:{ titan_struct_alloy:10, titan_composite_plate:10 }, out:"titan_hull_reinforcement", qty:1, dur:700, xp:350 },
+    { id: "mk_titan_weapon_barrel", name:"泰坦武器炮管", titan:true, requiresTech:"titan_materials", in:{ titan_phase_alloy:20 }, out:"titan_weapon_barrel", qty:1, dur:600, xp:300 },
+    { id: "mk_titan_weapon_core", name:"泰坦武器核心", titan:true, requiresTech:"titan_materials", in:{ titan_phase_alloy:15, titan_composite_plate:5 }, out:"titan_weapon_core", qty:1, dur:700, xp:350 },
+    { id: "mk_titan_weapon_mount", name:"泰坦武器基座", titan:true, requiresTech:"titan_materials", in:{ titan_phase_alloy:10, titan_composite_plate:10 }, out:"titan_weapon_mount", qty:1, dur:700, xp:350 },
+    { id: "mk_titan_core_reactor", name:"泰坦核心反应堆", titan:true, requiresTech:"titan_materials", in:{ titan_phase_alloy:25, titan_struct_alloy:5 }, out:"titan_core_reactor", qty:1, dur:800, xp:400 },
+    { id: "mk_titan_core_computer", name:"泰坦核心智脑", titan:true, requiresTech:"titan_materials", in:{ titan_composite_plate:12 }, out:"titan_core_computer", qty:1, dur:800, xp:400 },
+    { id: "mk_titan_core_shield", name:"泰坦核心护盾", titan:true, requiresTech:"titan_materials", in:{ titan_struct_alloy:20, titan_phase_alloy:5 }, out:"titan_core_shield", qty:1, dur:800, xp:400 },
+    // 3 子总成（3×3×3 总装第二阶）：各消耗 3 类部件，requiresTech="titan_assembly"
+    { id: "mk_titan_hull_assembly", name:"泰坦舰体总成", titan:true, asm:true, requiresTech:"titan_assembly", in:{ titan_hull_plate:3, titan_hull_frame:2, titan_hull_reinforcement:2 }, out:"titan_hull_assembly", qty:1, dur:1200, xp:800 },
+    { id: "mk_titan_weapon_assembly", name:"泰坦武器总成", titan:true, asm:true, requiresTech:"titan_assembly", in:{ titan_weapon_barrel:3, titan_weapon_core:2, titan_weapon_mount:2 }, out:"titan_weapon_assembly", qty:1, dur:1200, xp:800 },
+    { id: "mk_titan_core_assembly", name:"泰坦核心总成", titan:true, asm:true, requiresTech:"titan_assembly", in:{ titan_core_reactor:3, titan_core_computer:2, titan_core_shield:2 }, out:"titan_core_assembly", qty:1, dur:1200, xp:800 },
   ];
 
   // 发明：部件 + 矿材 → 改装图纸（bodyLevel>=2 开放）

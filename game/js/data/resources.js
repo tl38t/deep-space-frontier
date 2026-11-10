@@ -144,7 +144,29 @@
     "tactic:t5": { id: "tactic:t5", name: "深层适应性样本", icon: "🧬", cat: "tactic", desc: "高频战斗掉落材料（T5），高阶增强剂配方消耗。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC);
+  // 泰坦材料（④ 泰坦子系统，2026-11-10 新接入）：虫洞原矿 → 精炼合金 → 9 部件 → 3 子总成 → 泰坦。
+  // 虫洞采集闭环产星骸钛晶/相位铱核；其余为制造中间产物。cat:"titan" 独立类目，不进 HUD 常驻条。
+  const TITAN = {
+    star_corpse_titanium: { id: "star_corpse_titanium", name: "星骸钛晶", icon: "💎", img: "assets/icons/titan-materials/starward_titanium.webp", cat: "titan", from: "wormhole", desc: "虫洞采集产出的泰坦原生矿晶，泰坦合金冶炼的唯一来源。" },
+    phase_iridium_core:   { id: "phase_iridium_core",   name: "相位铱核", icon: "🔮", img: "assets/icons/titan-materials/starward_titanium.webp", cat: "titan", from: "wormhole", desc: "虫洞采集产出的相位铱核，泰坦能量合金冶炼来源。" },
+    titan_struct_alloy:   { id: "titan_struct_alloy",   name: "泰坦结构合金", icon: "🟦", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "由星骸钛晶冶炼的泰坦结构合金，制造舰体类部件。" },
+    titan_phase_alloy:    { id: "titan_phase_alloy",    name: "泰坦相能合金", icon: "🟪", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "由相位铱核冶炼的泰坦相能合金，制造武器/核心类部件。" },
+    titan_composite_plate: { id: "titan_composite_plate", name: "泰坦复合板", icon: "🟫", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "由两种原生矿复合冶炼的泰坦复合板，高强结构件。" },
+    titan_hull_plate:         { id: "titan_hull_plate",         name: "泰坦舰体装甲板", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦舰体部件：装甲板。" },
+    titan_hull_frame:         { id: "titan_hull_frame",         name: "泰坦舰体框架",   icon: "🛡", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦舰体部件：承载框架。" },
+    titan_hull_reinforcement: { id: "titan_hull_reinforcement", name: "泰坦舰体加固件", icon: "🛡", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦舰体部件：加固节点。" },
+    titan_weapon_barrel:      { id: "titan_weapon_barrel",      name: "泰坦武器炮管",   icon: "🔫", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦武器部件：主炮管。" },
+    titan_weapon_core:        { id: "titan_weapon_core",        name: "泰坦武器核心",   icon: "🔫", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦武器部件：能量核心。" },
+    titan_weapon_mount:       { id: "titan_weapon_mount",       name: "泰坦武器基座",   icon: "🔫", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦武器部件：挂载基座。" },
+    titan_core_reactor:       { id: "titan_core_reactor",       name: "泰坦核心反应堆", icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "titan", desc: "泰坦核心部件：反应堆。" },
+    titan_core_computer:      { id: "titan_core_computer",      name: "泰坦核心智脑",   icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "titan", desc: "泰坦核心部件：作战智脑。" },
+    titan_core_shield:        { id: "titan_core_shield",        name: "泰坦核心护盾",   icon: "⚙", img: "assets/icons/ship-components/base_powercore.webp", cat: "titan", desc: "泰坦核心部件：护盾发生器。" },
+    titan_hull_assembly:      { id: "titan_hull_assembly",      name: "泰坦舰体总成",   icon: "🛰", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦 3×3×3 总装第一阶：舰体类 3 部件合成。" },
+    titan_weapon_assembly:    { id: "titan_weapon_assembly",    name: "泰坦武器总成",   icon: "🛰", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦 3×3×3 总装第二阶：武器类 3 部件合成。" },
+    titan_core_assembly:      { id: "titan_core_assembly",      name: "泰坦核心总成",   icon: "🛰", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦 3×3×3 总装第三阶：核心类 3 部件合成。" },
+  };
+
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC, TITAN);
 
   // 增强剂瓶身（booster:<id>）与战术材料（tactic:*）的显示名回退：
   // 增强剂数据由 js/lib/eveidle/data/boosters.js 运行时全局加载（window.BOOSTER_ITEMS），
@@ -192,5 +214,5 @@
     "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag",
     "ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
 
-  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, ALL, HUD_ORDER, startingResources, meta };
+  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, TITAN, ALL, HUD_ORDER, startingResources, meta };
 });

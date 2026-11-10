@@ -36,8 +36,8 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log("PASS", name, e
 // ① 数量
 const shipIds = Object.keys(Data.Ships.SHIPS);
 const layoutIds = Object.keys(Data.Ships.SLOT_LAYOUT);
-ok("① SHIPS 数量 = 44（33+11）", shipIds.length === 44, "n=" + shipIds.length);
-ok("①b SLOT_LAYOUT 数量 = 44", layoutIds.length === 44, "n=" + layoutIds.length);
+ok("① SHIPS 数量 = 45（33+11+1 泰坦）", shipIds.length === 45, "n=" + shipIds.length);
+ok("①b SLOT_LAYOUT 数量 = 45", layoutIds.length === 45, "n=" + layoutIds.length);
 
 // ② 工业舰 bonuses 真值
 const expect = {

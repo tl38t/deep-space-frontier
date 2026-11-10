@@ -34,7 +34,7 @@ const compIds = new Set(Data.Recipes.COMPONENT.map(r => r.out));
 
 // ① 44 舰齐全（Phase3 的 33 + Phase4 的 11 工业）+ 7 抽象 id 已清除
 const INDUSTRIAL = ["miner_frigate","gas_frigate","miner_destroyer","gas_destroyer","miner_cruiser","gas_cruiser","dolphin","miner_battleship","gas_battleship","yunjin","orca"];
-ok("① SHIPS 数量 = 44（33 战斗/考古 + 11 工业）", ids.length === 44, "n="+ids.length);
+ok("① SHIPS 数量 = 45（33 战斗/考古 + 11 工业 + 1 泰坦）", ids.length === 45, "n="+ids.length);
 ok("①b 7 抽象 id 已全部移除", OLD.every(o => !(o in SHIPS)), "残留=" + OLD.filter(o => o in SHIPS).join(","));
 ok("①c 11 工业舰全部就位", INDUSTRIAL.every(o => o in SHIPS), "缺失=" + INDUSTRIAL.filter(o => !(o in SHIPS)).join(","));
 
@@ -42,8 +42,8 @@ ok("①c 11 工业舰全部就位", INDUSTRIAL.every(o => o in SHIPS), "缺失="
 let fieldOk = true, fieldDetail = "";
 for (const id of ids) {
   const s = SHIPS[id];
-  if (s.classTier < 1 || s.classTier > 4) { fieldOk = false; fieldDetail += " ct:"+id; }
-  if (s.bodyLevelReq < 0 || s.bodyLevelReq > 3) { fieldOk = false; fieldDetail += " bl:"+id; }
+  if (s.classTier < 1 || s.classTier > 5) { fieldOk = false; fieldDetail += " ct:"+id; }
+  if (s.bodyLevelReq < 0 || s.bodyLevelReq > 4) { fieldOk = false; fieldDetail += " bl:"+id; }
   for (const k in (s.cost||{})) if (!compIds.has(k)) { fieldOk = false; fieldDetail += " cost:"+id+":"+k; }
   const lay = Data.Ships.slotLayout(id);
   const sum = lay.high + lay.mid + lay.low + lay.rig;
@@ -53,7 +53,7 @@ for (const id of ids) {
 ok("② 字段契约（classTier1-4/bodyLevel0-3/cost键有效/槽位一致/scan数值）", fieldOk, fieldDetail || "all-good");
 
 // ③ SLOT_LAYOUT 44 条（随 SHIPS 同步）
-ok("③ SLOT_LAYOUT 数量 = 44", Object.keys(Data.Ships.SLOT_LAYOUT).length === 44, "n="+Object.keys(Data.Ships.SLOT_LAYOUT).length);
+ok("③ SLOT_LAYOUT 数量 = 45", Object.keys(Data.Ships.SLOT_LAYOUT).length === 45, "n="+Object.keys(Data.Ships.SLOT_LAYOUT).length);
 
 // ④ repair 按 classTier 派生（4 个 tier 都返回正数，不再按字面 id）
 const rep = Data.Ships; // repair 经 Engine.Repair

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>舰船强化 · 设计 Demo（指数材料曲线）</title>
+<style>
+  :root{
+    --bg:#0b1420; --panel:#13202f; --panel2:#0f1925; --line:#22364a;
+    --txt:#cfe3f2; --dim:#7e95ab; --gold:#e8c46a; --red:#ff6b6b; --green:#5bd6a0;
+    --blue:#6db4ff; --titan:#b98bff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:13px/1.6 "Segoe UI",system-ui,monospace;padding:14px}
+  h1{font-size:16px;margin:0 0 4px;color:var(--gold)} .sub{color:var(--dim);margin-bottom:12px;font-size:12px}
+  .wrap{display:flex;gap:14px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:300px;flex:1}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--blue);border-bottom:1px solid var(--line);padding-bottom:6px}
+  select,input,button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit}
+  button{cursor:pointer} button:hover{border-color:var(--gold)}
+  .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed #1b2c3d}
+  .row b{color:var(--gold);font-weight:600}
+  .k{color:var(--dim)}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid var(--line);margin-left:4px}
+  .pill.t{fcolor:var(--titan);border-color:var(--titan)}
+  .enh{font-size:22px;color:var(--gold);font-weight:700}
+  .cost{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0}
+  .cost .item{display:flex;justify-content:space-between;padding:2px 0}
+  .btnrow{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .big{font-size:15px;padding:8px 14px;background:#1c2f44;border-color:var(--gold);color:var(--gold);font-weight:600}
+  .log{height:150px;overflow:auto;background:#08111b;border:1px solid var(--line);border-radius:6px;padding:6px;font-size:11px;margin-top:8px;color:var(--dim)}
+  .log .ok{color:var(--green)} .log .fail{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:3px 5px;text-align:right}
+  th{color:var(--dim);background:var(--panel2)} td:first-child,th:first-child{text-align:left}
+  .warn{color:var(--red);font-size:11px;margin-top:6px}
+  .resbar{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:6px}
+  .resbar span{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 8px}
+</style>
+</head>
+<body>
+<h1>舰船强化 · 设计 Demo</h1>
+<div class="sub">材料曲线 = 指数 N(L)=2^floor(L/5)　|　失败照扣　|　eng=成员 manufacture　|　成功率=2代改(eng永不封顶·饱和尺度随L增大·高L硬墙)　|　本页为设计预览，资源为虚拟</div>
+
+<div class="wrap">
+  <!-- 左：舰船/成员信息 -->
+  <div class="card">
+    <h2>舰船 / 成员</h2>
+    <div class="row"><span class="k">舰级档 tier</span>
+      <select id="tier">
+        <option value="frigate">护卫 (frigate)</option>
+        <option value="destroyer">驱逐 (destroyer)</option>
+        <option value="cruiser" selected>巡洋 (cruiser)</option>
+        <option value="battleship">战列 (battleship)</option>
+        <option value="capital">旗舰 (capital)</option>
+        <option value="supercapital">超级旗舰 (supercapital)</option>
+        <option value="titan">泰坦 (titan)</option>
+      </select>
+    </div>
+    <div class="row"><span class="k">成员 manufacture 等级</span><input id="mfg" type="number" value="10" min="1" max="60" style="width:70px"></div>
+    <div class="row"><span class="k">当前强化等级</span><span class="enh" id="lv">0</span></div>
+    <div class="row"><span class="k">HP 加成</span><b id="hp">+0.0%</b></div>
+    <div class="row"><span class="k">伤害加成</span><b id="dmg">+0.0%</b></div>
+    <div class="row"><span class="k">考古扫描加成</span><b id="scan">+0.0%</b></div>
+    <div class="row"><span class="k">升级到 +N 的加成</span><b id="nextbonus">—</b></div>
+    <div class="warn" id="titanNote"></div>
+  </div>
+
+  <!-- 右：强化面板 -->
+  <div class="card">
+    <h2>强化面板</h2>
+    <div class="resbar">
+      <span>星币 <b id="credits">99999999</b></span>
+      <span>组件库存 <b id="comp">9999</b></span>
+      <span id="titanRes"></span>
+    </div>
+    <div class="cost" id="nextCost">
+      <div class="k" style="margin-bottom:4px">下一级（L→L+1）成本预览</div>
+    </div>
+    <div class="row"><span class="k">本次成功率</span><b id="chance">—</b></div>
+    <div class="btnrow">
+      <button class="big" id="doOne">单次强化</button>
+      <span class="k">自动强化</span>
+      <input id="autoN" type="number" value="5" min="1" max="50" style="width:60px">
+      <button id="doAuto">×N</button>
+      <button id="reset">重置</button>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<!-- 底部：指数墙可视化 -->
+<div class="card" style="margin-top:14px">
+  <h2>材料墙曲线（L=0→20，当前档 tier + manufacture=<span id="curMfg">10</span>）</h2>
+  <table id="curve">
+    <thead><tr><th>L</th><th>N(L) 每套</th><th>单次组件套数</th><th>成功率</th><th>期望套数(1/chance)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="warn" id="curveNote"></div>
+</div>
+
+<!-- eng 对比：证明解除封顶后 eng 永远有用 -->
+<div class="card" style="margin-top:14px">
+  <h2>eng 对比（当前档=<span id="cmpTier">巡洋</span>，验证 300≠500 且高 L 仍硬）</h2>
+  <table id="engCmp">
+    <thead><tr><th>L \ eng</th><th>20</th><th>100</th><th>300</th><th>500</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="warn" id="engCmpNote"></div>
+</div>
+
+<script>
+// ===================== 已锁定的设计公式（与实装一致） =====================
+const TIERS = {
+  frigate:      { name:"护卫",       comp:["integrated_hull","power_core","functional_system"], credits:50000,  req:1, titan:false },
+  destroyer:    { name:"驱逐",       comp:["destroyer_integrated_hull","destroyer_power_core","destroyer_functional_system"], credits:80000, req:2, titan:false },
+  cruiser:      { name:"巡洋",       comp:["cruiser_integrated_hull","cruiser_power_core","cruiser_functional_system"], credits:200000, req:3, titan:false },
+  battleship:   { name:"战列",       comp:["battleship_integrated_hull","battleship_power_core","battleship_functional_system"], credits:350000, req:4, titan:false },
+  capital:      { name:"旗舰",       comp:["capital_integrated_hull","capital_power_core","capital_functional_system"], credits:600000, req:5, titan:false },
+  supercapital: { name:"超级旗舰",   comp:["supercapital_integrated_hull","supercapital_power_core","supercapital_functional_system"], credits:1000000, req:6, titan:false },
+  titan:        { name:"泰坦",       comp:["supercapital_integrated_hull","supercapital_power_core","supercapital_functional_system"], credits:2000000, req:6, titan:true },
+};
+const TITAN_MATS = { star_corpse_titanium:2, phase_iridium_core:1 }; // 每套 ×N(L)
+
+// 指数曲线（用户选定）
+const N = L => Math.pow(2, Math.floor(L/5));
+
+// 加成倍率（镜像引擎 getBonuses，每5级一档）
+function getBonuses(L){
+  L=Math.max(0,Math.floor(L||0));
+  const b=Math.floor(L/5), r=L%5;
+  return {
+    hpMultiplier:1+b*0.05+r*0.005,
+    damageMultiplier:1+b*0.025+r*0.0025,
+    archaeologyScanMultiplier:1+b*0.05+r*0.005,
+  };
+}
+// 2代成功率：eng 永不封顶（300≠500），高 L 硬墙由 cap(L) 保证
+// 关键：eng 的饱和尺度 K 随 L 增大 → 低 L 快速易成、高 L 处 eng 仍持续有用且不 trivialize 墙
+function chanceBreakdown(eng,req,L){
+  eng=Math.max(1,eng||1); req=Math.max(1,req||1);
+  L=Math.max(0,Math.floor(L||0));
+  const gap=Math.max(0,eng-req);
+  const floor=0.05;
+  const cap=Math.max(0.12,0.90-0.04*L);   // 高 L 硬墙：L0=0.90 … L20=0.12
+  const K=30+15*L;                         // 饱和尺度随 L 增大
+  const g=gap/(gap+K);                     // 严格递增、永不达 1、任何有限 eng 都不相等
+  const final=Math.max(floor,Math.min(cap,floor+(cap-floor)*g));
+  return {gap,K,g,final};
+}
+
+// ===================== 虚拟状态 =====================
+const S = { tier:"cruiser", lv:0, credits:99999999, comp:9999, titan:{star_corpse_titanium:9999,phase_iridium_core:9999} };
+
+function costOf(tier, L){
+  const t=TIERS[tier], n=N(L);
+  const comp={}; t.comp.forEach(k=>comp[k]=n);
+  const credits=t.credits*n;
+  const titan={}; if(t.titan){ for(const k in TITAN_MATS) titan[k]=TITAN_MATS[k]*n; }
+  return {comp,credits,titan,n};
+}
+function canAfford(c){
+  if(S.credits < c.credits) return false;
+  for(const k in c.comp) if((S.comp)<c.comp[k]) return false;
+  for(const k in c.titan) if((S.titan[k]||0) < c.titan[k]) return false;
+  return true;
+}
+function pay(c){
+  S.credits-=c.credits;
+  for(const k in c.comp) S.comp-=c.comp[k];
+  for(const k in c.titan) S.titan[k]-=c.titan[k];
+}
+function curChance(){ return chanceBreakdown(+mfg.value, TIERS[S.tier].req, S.lv).final; }
+
+// ===================== 渲染 =====================
+const $=id=>document.getElementById(id);
+const fmtPct=x=>"+"+((x-1)*100).toFixed(1)+"%";
+function render(){
+  const t=TIERS[S.tier], b=getBonuses(S.lv), nb=getBonuses(S.lv+1);
+  $("lv").textContent=S.lv;
+  $("hp").textContent=fmtPct(b.hpMultiplier);
+  $("dmg").textContent=fmtPct(b.damageMultiplier);
+  $("scan").textContent=fmtPct(b.archaeologyScanMultiplier);
+  $("nextbonus").textContent=`HP ${fmtPct(nb.hpMultiplier)} / 伤害 ${fmtPct(nb.damageMultiplier)} / 扫描 ${fmtPct(nb.archaeologyScanMultiplier)}`;
+  $("credits").textContent=S.credits;
+  $("comp").textContent=S.comp;
+  // 成本预览
+  const c=costOf(S.tier,S.lv);
+  let h='<div class="k" style="margin-bottom:4px">下一级（L'+S.lv+'→'+(S.lv+1)+'）成本预览　N(L)='+c.n+'</div>';
+  c.comp? Object.entries(c.comp).forEach(([k,v])=>h+=`<div class="item"><span>${k}</span><b>×${v}</b></div>`):0;
+  h+=`<div class="item"><span>星币</span><b>${c.credits.toLocaleString()}</b></div>`;
+  if(t.titan) for(const k in c.titan) h+=`<div class="item"><span style="color:var(--titan)">${k}</span><b style="color:var(--titan)">×${c.titan[k]}</b></div>`;
+  $("nextCost").innerHTML=h;
+  $("chance").textContent=(curChance()*100).toFixed(1)+"%";
+  $("titanNote").textContent=t.titan?"⚠ 泰坦舰额外消耗 星骸钛晶/相位铱核（虫洞事件产出）":"";
+  $("titanRes").innerHTML=t.titan?`星骸钛晶 <b>${S.titan.star_corpse_titanium}</b> 相位铱核 <b>${S.titan.phase_iridium_core}</b>`:"";
+  $("titanRes").style.display=t.titan?"":"none";
+  renderCurve();
+  renderEngCmp();
+}
+function renderCurve(){
+  const t=TIERS[S.tier], mfgLv=+mfg.value;
+  $("curMfg").textContent=mfgLv;
+  let total=0, rows="";
+  for(let L=0;L<=20;L++){
+    const n=N(L), c=costOf(S.tier,L), ch=chanceBreakdown(mfgLv,t.req,L).final;
+    const exp=n/ch; total+=exp;
+    const hot = (L>=15) ? ' style="color:var(--red)"' : '';
+    rows+=`<tr${hot}><td>${L}</td><td>${n}</td><td>${n}</td><td>${(ch*100).toFixed(1)}%</td><td>${exp.toFixed(1)}</td></tr>`;
+  }
+  $("curve").querySelector("tbody").innerHTML=rows;
+  $("curveNote").textContent=`冲到 L=20 期望总组件套数 ≈ ${total.toFixed(0)} 套（含指数材料 + 成功率地板效应）。红色 L≥15 即成功率贴地板段。`;
+}
+function renderEngCmp(){
+  const t=TIERS[S.tier];
+  $("cmpTier").textContent=t.name;
+  const Ls=[0,5,10,15,20], engs=[20,100,300,500];
+  let rows="";
+  for(const L of Ls){
+    let r=`<tr><td>${L}</td>`;
+    for(const e of engs){
+      const ch=chanceBreakdown(e,t.req,L).final;
+      const hot=(L>=15)?' style="color:var(--red)"':"";
+      r+=`<td${hot}>${(ch*100).toFixed(1)}%</td>`;
+    }
+    rows+=r+"</tr>";
+  }
+  $("engCmp").querySelector("tbody").innerHTML=rows;
+  const a=chanceBreakdown(300,t.req,20).final, b=chanceBreakdown(500,t.req,20).final;
+  $("engCmpNote").textContent=`L20 时 eng300=${(a*100).toFixed(1)}% vs eng500=${(b*100).toFixed(1)}%（不再相等）；两者都低 = 高 L 硬墙仍在，eng 越高越有用且无封顶。`;
+}
+
+// ===================== 交互 =====================
+function log(msg,cls){ const d=$("log"); d.innerHTML=`<div class="${cls||''}">${msg}</div>`+d.innerHTML; }
+function attempt(){
+  const c=costOf(S.tier,S.lv);
+  if(!canAfford(c)){ log("✗ 资源不足，无法强化","fail"); return false; }
+  pay(c);
+  const ch=curChance();
+  const ok=Math.random()<ch;
+  if(ok){ S.lv++; log(`✔ L${S.lv-1}→L${S.lv} 成功（成功率${(ch*100).toFixed(1)}%）`,"ok"); }
+  else  { log(`✗ L${S.lv} 失败（成功率${(ch*100).toFixed(1)}%，材料已扣）`,"fail"); }
+  render();
+  return ok;
+}
+$("doOne").onclick=()=>attempt();
+$("doAuto").onclick=()=>{ const n=Math.max(1,+autoN.value||1); let i=0; while(i<n && canAfford(costOf(S.tier,S.lv))){ attempt(); i++; } log(`— 自动强化结束，执行 ${i} 次，当前 L${S.lv} —`); };
+$("reset").onclick=()=>{ S.lv=0; S.credits=99999999; S.comp=9999; S.titan={star_corpse_titanium:9999,phase_iridium_core:9999}; render(); log("已重置"); };
+$("tier").onchange=e=>{ S.tier=e.target.value; render(); };
+mfg.oninput=render;
+render();
+log("Demo 就绪：切换档位/调 manufacture，点「单次强化」或「自动强化 ×N」体验指数材料墙。");
+</script>
+</body>
+</html>
