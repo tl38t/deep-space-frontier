@@ -265,7 +265,7 @@ body.shot.narrow iframe { width: 390px; height: 1100px; }
     ok("G4 科技节点全树 900 xp（bounty_1 40→60）", totalTech === 900 && techOk, "总=" + totalTech);
     var allExplicit = [
       S.recipeBatchXp(stG, "smelt", { recipeId: "smelt_fe_alloy", dur: 10 }),
-      S.recipeBatchXp(stG, "manufacture", { recipeId: "mk_struct", dur: 63 }),
+      S.recipeBatchXp(stG, "manufacture", { recipeId: "mk_power_core", dur: 42 }),
       S.recipeBatchXp(stG, "equip", { recipeId: (D.Equipment.bySlot("high")[0] || {}).id, dur: 60 }),
       S.recipeBatchXp(stG, "build", { shipId: (Object.values(D.Ships.SHIPS)[0] || {}).id, dur: 60 }),
       gxBooster, gxStudy, gxInvBp,
@@ -274,7 +274,7 @@ body.shot.narrow iframe { width: 390px; height: 1100px; }
     var ship0 = Object.values(D.Ships.SHIPS)[0] || {};
     var truth = [
       (D.Recipes.SMELT.find(function (r) { return r.id === "smelt_fe_alloy"; }) || {}).xp,
-      (D.Recipes.COMPONENT.find(function (r) { return r.id === "mk_struct"; }) || {}).xp,
+      (D.Recipes.COMPONENT.find(function (r) { return r.id === "mk_power_core"; }) || {}).xp,
       eq0.xp, ship0.xp,
       (BR.find(function (r) { return r.id === "mining_lubricant_n"; }) || {}).xp,
       I.xpForBlueprint(I.blueprintByKey("booster:neural_booster_l")),

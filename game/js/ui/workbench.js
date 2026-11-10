@@ -72,6 +72,7 @@
       tab: slot.type === "manufacture" ? "component" : slot.type === "invent" ? "study" : null,
       boosterCat: null,       // 反应实验室当前分类（null = 取第一个有配方的分类）
       equipCat: null,         // 制造车间当前分类（高槽/中槽/低槽/改装件）
+      dcnt: {},               // 拆解回收页：每装备选中的拆解数量 { equipId: n }
       studyTier: 0,            // 0 = 全部；1..5 = 按蓝图档位筛选
       studyQuery: "",          // 蓝图名 / key 搜索
       studyDir: "me",          // me | te
@@ -119,7 +120,7 @@
     if (cur.type === "smelt") return R.SMELT;
     if (cur.type === "invent") return R.INVENT;
     if (cur.type === "booster") return (window.BOOSTER_RECIPES || []);
-    if (cur.type === "equip") { const E = EData(); return E ? E.bySlot(equipCat()) : []; }
+    if (cur.type === "equip") { if (cur.tab === "dismantle") return []; const E = EData(); return E ? E.bySlot(equipCat()) : []; }
     if (cur.type === "manufacture" && cur.tab === "component") return R.COMPONENT;
     return [];
   }
@@ -428,6 +429,7 @@
     return list.some(c => c.id === cur.equipCat) ? cur.equipCat : list[0].id;
   }
   function equipCards() {
+    if (cur.type === "equip" && cur.tab === "dismantle") return dismantleCards();
     const st = state();
     const E = EData();
     if (!E) return '<div class="wb-empty">装备数据未就绪。</div>';
@@ -451,6 +453,31 @@
         + '<div class="wb-r1">' + inStr(cost) + ' → ' + CTX.esc(eq.name) + ' T' + tier + '</div>'
         + '<div class="wb-r2">' + (durMult < 0.995 ? Math.round(eq.time) + 's → ' + adjDur + 's' : adjDur + 's / 批') + ' ' + gateTag + '</div>'
         + '</button>';
+    }).join("");
+  }
+  function dismantleCards() {
+    const st = state();
+    const E = EData();
+    if (!E) return '<div class="wb-empty">装备数据未就绪。</div>';
+    const inv = st.equipment || {};
+    const ids = Object.keys(inv).filter(function (id) { return (inv[id] || 0) > 0; });
+    if (!ids.length) return '<div class="wb-empty">暂无可拆解的库存装备。先到「制造」页造一些吧。</div>';
+    return ids.map(function (id) {
+      const eq = E.byId ? E.byId(id) : null;
+      if (!eq) return "";
+      const have = inv[id];
+      const cnt = Math.max(1, Math.min(have, (cur.dcnt && cur.dcnt[id]) || 1));
+      const prev = Prod().dismantlePreview(st, id, cnt);
+      const backTxt = Object.keys(prev.back).length ? inStr(prev.back) : "无回收";
+      return '<div class="wb-dcard">'
+        + '<div class="wb-r1">' + CTX.esc(eq.name) + ' · 库存 ' + have + '</div>'
+        + '<div class="wb-r2">回收率 ' + Math.round(prev.rate * 100) + '% · 预计回收：' + backTxt + '</div>'
+        + '<div class="wb-stepper">'
+        + '<button class="wb-step" data-act="workbench:dcount:' + id + ':-1">−</button>'
+        + '<div class="wb-count">' + cnt + '</div>'
+        + '<button class="wb-step" data-act="workbench:dcount:' + id + ':1">+</button>'
+        + '<button class="wb-add" data-act="workbench:dismantle:' + id + '">拆解 ' + cnt + ' 件</button>'
+        + '</div></div>';
     }).join("");
   }
 
@@ -478,6 +505,7 @@
   }
 
   function buildBody() {
+    const isDismantle = (cur.type === "equip" && cur.tab === "dismantle");
     const hs = headStats();
     const st = state();
     const full = hs.used >= hs.total;
@@ -493,11 +521,16 @@
         + '<span class="wb-tab' + (cur.tab === "study" ? " on" : "") + '" data-act="workbench:tab:study">效率研究</span>'
         + '<span class="wb-tab' + (cur.tab === "synth" ? " on" : "") + '" data-act="workbench:tab:synth">图纸合成</span>'
         + '</div>';
+    } else if (cur.type === "equip") {
+      tabs = '<div class="wb-tabs">'
+        + '<span class="wb-tab' + (cur.tab !== "dismantle" ? " on" : "") + '" data-act="workbench:tab:make">制造</span>'
+        + '<span class="wb-tab' + (cur.tab === "dismantle" ? " on" : "") + '" data-act="workbench:tab:dismantle">拆解回收</span>'
+        + '</div>';
     }
     // 反应实验室：1 代式分类标签（采矿 / 考古 / 采气 / 冶炼 / 舰船工程 / 装备制造 /
     // 增幅剂制造 / 战斗武器 / 战斗维修 / 技能训练），标签上带该类配方条数。
     let catBar = "", catName = "", catN = 0;
-    const hasCats = cur.type === "booster" || cur.type === "equip";
+    const hasCats = (cur.type === "booster") || (cur.type === "equip" && cur.tab !== "dismantle");
     if (hasCats) {
       const list = cur.type === "booster" ? boosterCatList() : equipCatList();
       const selCat = cur.type === "booster" ? boosterCat() : equipCat();
@@ -548,21 +581,23 @@
           : (hasCats && catName ? '<span class="wb-catcount">' + CTX.esc(catName) + ' · ' + catN + (cur.type === "equip" ? ' 件' : ' 个配方') + '</span>' : ''))
       + '</div>'
       + '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + recipeCards() + '</div>'
-      + '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
-      + '<div class="wb-stepper">'
-      + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
-      + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
-      + '<button class="wb-step" data-act="workbench:count:1">+</button>'
-      + '<span class="wb-chips">'
-      + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
-      + '<span class="wb-chip" data-act="workbench:chip:10">×10</span>'
-      + '<span class="wb-chip" data-act="workbench:chip:100">×100</span>'
-      + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
-      + '</span></div>'
-      + '<div class="wb-cap">' + capText() + '</div>'
-      + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
-      + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>'
-      + hint
+      + (isDismantle ? '' : (
+          '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
+        + '<div class="wb-stepper">'
+        + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
+        + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
+        + '<button class="wb-step" data-act="workbench:count:1">+</button>'
+        + '<span class="wb-chips">'
+        + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
+        + '<span class="wb-chip" data-act="workbench:chip:10">×10</span>'
+        + '<span class="wb-chip" data-act="workbench:chip:100">×100</span>'
+        + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
+        + '</span></div>'
+        + '<div class="wb-cap">' + capText() + '</div>'
+        + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
+        + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>'
+      ))
+      + (isDismantle ? '<div class="wb-note">按精炼工艺科技的回收率无损返还装备制造成本材料（合金 / 气体 / 行星料）。回收率 = 科技树·精炼工艺，默认 100%，点了相关科技按倍率返还。</div>' : hint)
       + '<div class="wb-sec wb-queue-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
       + '<div class="wb-queue">' + queueRows() + '</div>'
       + '</div>';
@@ -609,7 +644,7 @@
       if (!b || !M.isUnlocked(state(), b)) canAdd = false;
     }
     const add = panel.querySelector(".wb-add");
-    if (add) {
+    if (add && !(cur.type === "equip" && cur.tab === "dismantle")) {
       if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
       if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
       else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
@@ -682,7 +717,7 @@
     else if (isStudy()) r = Prod().enqueueStudy(st, cur.recipeId, cur.studyDir, cur.count);
     else if (cur.type === "invent") r = Prod().enqueue(st, "invent", cur.recipeId, cur.count);
     else if (cur.type === "booster") r = Prod().enqueue(st, "booster", cur.recipeId, cur.count);
-    else if (cur.type === "equip") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
+    else if (cur.type === "equip" && cur.tab !== "dismantle") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "component") r = Prod().enqueue(st, "manufacture", cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "ship") r = Prod().buildShip(st, cur.recipeId, cur.count);
     if (r && r.ok) CTX.toast("已加入队列 · " + recipeOutName(cur.recipeId) + " ×" + cur.count);
@@ -715,6 +750,20 @@
       if (q && q[idx]) { q.splice(idx, 1); CTX.renderView(); return; }
     }
     else if (sub === "add") { doAdd(); return; }
+    else if (sub === "dcount") {
+      const id = p[2];
+      cur.dcnt = cur.dcnt || {};
+      const max = ((state().equipment && state().equipment[id]) || 0);
+      cur.dcnt[id] = Math.max(1, Math.min(max, (cur.dcnt[id] || 1) + (parseInt(p[3], 10) || 0)));
+      render(); return;
+    }
+    else if (sub === "dismantle") {
+      const id = p[2];
+      const cnt = (cur.dcnt && cur.dcnt[id]) || 1;
+      const r = Prod().dismantleEquipment(state(), id, cnt);
+      CTX.toast(r && r.ok ? ("拆解 " + cnt + " 件「" + r.name + "」，回收 " + Object.keys(r.back).length + " 种材料") : ((r && r.err) || "拆解失败"));
+      render(); return;
+    }
     else if (sub === "close") { close(); return; }
     render();
   }

@@ -143,7 +143,11 @@
         lines.push(m.name + " 在「" + body.name + "」的「" + profile.name + "」触发反噬，舰载稳定系统险险规避了船体损伤。");
       } else {
         const stabRed = Math.min(0.80, fit.archaeologyStabilizer || 0);
-        const frac = profile.hullDamageFrac(band) * (1 - stabRed);
+        // 舰船级失败损伤减免（1 代 archaeologyFailureDamageReduction）：与装配稳定器平行乘区；
+        // 双读 flat 字段 / bonuses 对象，与 scanStrength 口径一致（archaeology.js:63）。
+        const shipCfg2 = Data && Data.Ships ? Data.Ships.shipById(m.shipId) : null;
+        const shipFdr = (shipCfg2 && (shipCfg2.archaeologyFailureDamageReduction || (shipCfg2.bonuses && shipCfg2.bonuses.archaeologyFailureDamageReduction))) || 0;
+        const frac = profile.hullDamageFrac(band) * (1 - stabRed) * (1 - shipFdr);
         hullDamage.frac = frac;
         destroyed = applyHullDamage(m, frac);
         if (destroyed) {

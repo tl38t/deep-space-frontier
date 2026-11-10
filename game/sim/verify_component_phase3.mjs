@@ -32,9 +32,11 @@ const ids = Object.keys(SHIPS);
 const OLD = ["frigate","destroyer","cruiser","battlecruiser","battleship","capital","supercapital"];
 const compIds = new Set(Data.Recipes.COMPONENT.map(r => r.out));
 
-// ① 33 舰齐全 + 7 抽象 id 已清除
-ok("① SHIPS 数量 = 33", ids.length === 33, "n="+ids.length);
+// ① 44 舰齐全（Phase3 的 33 + Phase4 的 11 工业）+ 7 抽象 id 已清除
+const INDUSTRIAL = ["miner_frigate","gas_frigate","miner_destroyer","gas_destroyer","miner_cruiser","gas_cruiser","dolphin","miner_battleship","gas_battleship","yunjin","orca"];
+ok("① SHIPS 数量 = 44（33 战斗/考古 + 11 工业）", ids.length === 44, "n="+ids.length);
 ok("①b 7 抽象 id 已全部移除", OLD.every(o => !(o in SHIPS)), "残留=" + OLD.filter(o => o in SHIPS).join(","));
+ok("①c 11 工业舰全部就位", INDUSTRIAL.every(o => o in SHIPS), "缺失=" + INDUSTRIAL.filter(o => !(o in SHIPS)).join(","));
 
 // ② classTier/bodyLevelReq 范围 + cost 键有效 + 槽位一致
 let fieldOk = true, fieldDetail = "";
@@ -50,8 +52,8 @@ for (const id of ids) {
 }
 ok("② 字段契约（classTier1-4/bodyLevel0-3/cost键有效/槽位一致/scan数值）", fieldOk, fieldDetail || "all-good");
 
-// ③ SLOT_LAYOUT 33 条
-ok("③ SLOT_LAYOUT 数量 = 33", Object.keys(Data.Ships.SLOT_LAYOUT).length === 33, "n="+Object.keys(Data.Ships.SLOT_LAYOUT).length);
+// ③ SLOT_LAYOUT 44 条（随 SHIPS 同步）
+ok("③ SLOT_LAYOUT 数量 = 44", Object.keys(Data.Ships.SLOT_LAYOUT).length === 44, "n="+Object.keys(Data.Ships.SLOT_LAYOUT).length);
 
 // ④ repair 按 classTier 派生（4 个 tier 都返回正数，不再按字面 id）
 const rep = Data.Ships; // repair 经 Engine.Repair

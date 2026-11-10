@@ -176,8 +176,14 @@
       const ArchP = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Archaeology : null;
       if (ArchP && ArchP.fittedBonuses) {
         for (const mbr of (state.members || [])) {
-          if (!mbr.fitted) continue;
-          smeltFit += ArchP.fittedBonuses(mbr).smeltingSpeed || 0;
+          // 装备精炼泵提速：仅统计已装配成员（与既有规则一致）。
+          if (mbr.fitted && ArchP.fittedBonuses) {
+            smeltFit += ArchP.fittedBonuses(mbr).smeltingSpeed || 0;
+          }
+          // 舰船工业加成（专项①+②-min）：成员舰船 smeltingSpeed 与装备平行叠加（同池封顶 50%）。
+          // 基于成员所分配舰船生效，与是否装配无关；工业舰（驮星/云津/山海级等）驻留阵营即计入，普通舰无 bonuses → 退化为 0。
+          const sh = (Data && Data.Ships && Data.Ships.shipById) ? Data.Ships.shipById(mbr.shipId) : null;
+          if (sh && sh.bonuses) smeltFit += sh.bonuses.smeltingSpeed || 0;
         }
         smeltFit = Math.min(0.50, smeltFit);
       }
@@ -322,6 +328,50 @@
     return { ok: true, equip: Eq };
   }
 
+  // 装备拆解回收精炼料（2026-11-10）：拆未装配的库存装备 → 按精炼回收率无损返还制造成本材料，
+  // 形成「造→拆→回料→再造」闭环，补齐 1 代精炼 parity。
+  // 回收率复用科技树·精炼工艺（Tech.smeltYieldMult），默认 1.0 即无损，封顶 1.0（不超发材料）。
+  function recoverRate(state) {
+    const Tech = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Tech) ? window.NSK.Engine.Tech : null;
+    const y = (Tech && Tech.smeltYieldMult) ? Tech.smeltYieldMult(state) : 1;
+    return Math.min(1.0, y);
+  }
+  // 纯计算（不落库）：返回某装备拆 count 件的回收明细，供 UI 预览。
+  function dismantlePreview(state, equipId, count) {
+    const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
+    const rate = recoverRate(state);
+    const back = {};
+    if (Eq && count > 0) {
+      const cost = Eq.cost || {};
+      for (const k in cost) {
+        const q = Math.floor((cost[k] || 0) * rate);
+        if (q > 0) back[k] = (back[k] || 0) + q;
+      }
+    }
+    return { rate: rate, back: back };
+  }
+  // 实际拆解：校验库存 → 回收材料 → 扣库存。
+  function dismantleEquipment(state, equipId, count) {
+    count = Math.floor(Number(count) || 0);
+    if (count < 1) return { ok: false, err: "数量无效" };
+    const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
+    if (!Eq) return { ok: false, err: "装备不存在" };
+    const have = ((state.equipment && state.equipment[equipId]) || 0);
+    if (have < count) return { ok: false, err: "库存不足（拥有 " + have + "）" };
+    const rate = recoverRate(state);
+    const back = {};
+    const cost = Eq.cost || {};
+    for (const k in cost) {
+      const q = Math.floor((cost[k] || 0) * rate);
+      if (q > 0) back[k] = (back[k] || 0) + q;
+    }
+    state.res = state.res || {};
+    for (const k in back) state.res[k] = (state.res[k] || 0) + back[k];
+    state.equipment[equipId] = have - count;
+    if (state.equipment[equipId] <= 0) delete state.equipment[equipId];
+    return { ok: true, back: back, rate: rate, count: count, name: Eq.name };
+  }
+
   // 结算造船队列：完成一艘 → 推入 state.ships（{id, shipId, name, status, nodeId}），并记 counters.builtShips。
   function processBuildQueue(state, now) {
     const pm = (Base && Base.powerMult) ? Base.powerMult(state) : 1;
@@ -428,5 +478,5 @@
     });
   }
 
-  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain };
+  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, buildShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
 });

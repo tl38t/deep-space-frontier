@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dismantle-selftest</title>
+<style>
+body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}
+#log{white-space:pre-wrap}
+iframe{position:absolute;left:-9999px;top:0;width:1280px;height:2000px;border:0}
+</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f" src="../index.html"></iframe>
+<script>
+// 装备拆解回收精炼料 · 自测（2026-11-10）
+// 纪律：iframe 加载真实 index.html，取真实 NSK.*；结算跑在 LIVE() 的深拷贝上，真档一次不动。
+// 反 mock：装备 cost 动态读 Data.Equipment.byId，不造样例数据。
+(function () {
+  var out = [], pass = 0, fail = 0, ERR = [];
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+  }
+  function dump() {
+    out.push("");
+    out.push("== " + pass + " PASS / " + fail + " FAIL / " + ERR.length + " ERR ==");
+    document.getElementById("log").textContent = out.join("\n");
+    document.title = pass + "PASS-" + fail + "FAIL";
+  }
+  window.addEventListener("error", function (e) { ERR.push(String(e.message)); });
+  function W() { return document.getElementById("f").contentWindow; }
+  function LIVE() { return W().NSK.Core.Persistence.state; }
+  function clone() { return JSON.parse(JSON.stringify(LIVE())); }
+  function fix(st) {
+    st.base.bodyLevel = 3;
+    st.res = st.res || {};
+    st.res.fe_alloy = 1e6; st.res.zr_alloy = 1e6; st.res.poly_gas = 1e6;
+    st.equipment = st.equipment || {};
+    return st;
+  }
+  function run() {
+    try {
+      var D = W().NSK.Data, P = W().NSK.Engine.Production;
+      var eqId = "t1_salvage_arm";
+      var eq = D.Equipment.byId(eqId);
+      if (!eq) { ok("前置：装备数据可用", false, "t1_salvage_arm 缺失"); dump(); return; }
+      var cost = eq.cost || {};
+
+      // ① 库存不足拒绝
+      var st1 = clone(); fix(st1); st1.equipment[eqId] = 0;
+      var r1 = P.dismantleEquipment(st1, eqId, 2);
+      ok("① 库存不足拒绝", !r1.ok && /库存不足/.test(r1.err || ""), "err=" + (r1.err || ""));
+
+      // ①b 不存在装备拒绝
+      var r1b = P.dismantleEquipment(clone(), "no_such_eq", 1);
+      ok("①b 不存在装备拒绝", !r1b.ok, "err=" + (r1b.err || ""));
+
+      // ② 回收量 = floor(cost × rate)，rate 默认 1.0 → 等于 cost（无损）
+      var st2 = clone(); fix(st2); st2.equipment[eqId] = 5;
+      var resBefore = JSON.parse(JSON.stringify(st2.res));
+      var r2 = P.dismantleEquipment(st2, eqId, 1);
+      var backOk = r2.ok && r2.rate === 1.0;
+      for (var k in cost) {
+        if (r2.back[k] !== Math.floor(cost[k] * r2.rate)) backOk = false;
+        if ((st2.res[k] || 0) - (resBefore[k] || 0) !== r2.back[k]) backOk = false;
+      }
+      ok("② 回收量=floor(cost×rate)=cost（无损 rate=1.0）", backOk, "back=" + JSON.stringify(r2.back) + " rate=" + r2.rate);
+      ok("②b 库存正确扣减（5→4）", st2.equipment[eqId] === 4, "left=" + st2.equipment[eqId]);
+      var cZero = (function () { var s = clone(); fix(s); s.equipment[eqId] = 1; P.dismantleEquipment(s, eqId, 1); return s.equipment[eqId] === undefined; })();
+      ok("②c 拆到 0 自动删键", cZero, "");
+
+      // ③ 不碰已装配 state.fitted
+      var st3 = clone(); fix(st3); st3.equipment[eqId] = 3;
+      st3.fitted = { high: ["x"], mid: ["y"], low: ["z"], rig: [] };
+      var fitBefore = JSON.stringify(st3.fitted);
+      P.dismantleEquipment(st3, eqId, 1);
+      ok("③ 不修改 state.fitted（已装配不受拆库存影响）", JSON.stringify(st3.fitted) === fitBefore, "fit=" + st3.fitted.low);
+
+      // ④ rate 响应精炼率且封顶 1.0
+      var Tech = W().NSK.Engine.Tech;
+      var orig = Tech.smeltYieldMult;
+      Tech.smeltYieldMult = function () { return 0.5; };
+      var st4 = clone(); fix(st4); st4.equipment[eqId] = 2;
+      var r4 = P.dismantleEquipment(st4, eqId, 1);
+      var ok4 = r4.rate === 0.5;
+      for (var k2 in cost) if (r4.back[k2] !== Math.floor(cost[k2] * 0.5)) ok4 = false;
+      ok("④a 回收率=0.5 → back=floor(cost×0.5)", ok4, "back=" + JSON.stringify(r4.back));
+
+      Tech.smeltYieldMult = function () { return 2.0; };
+      var st4b = clone(); fix(st4b); st4b.equipment[eqId] = 2;
+      var r4b = P.dismantleEquipment(st4b, eqId, 1);
+      var ok4b = r4b.rate === 1.0;
+      for (var k3 in cost) if (r4b.back[k3] !== Math.floor(cost[k3] * 1.0)) ok4b = false;
+      ok("④b 回收率>1 封顶 1.0（不超发材料）", ok4b, "rate=" + r4b.rate + " back=" + JSON.stringify(r4b.back));
+      Tech.smeltYieldMult = orig;
+
+      // ⑤ preview 不落库
+      var st5 = clone(); fix(st5); st5.equipment[eqId] = 7;
+      var expBack = {}; for (var k4 in cost) expBack[k4] = Math.floor(cost[k4]);
+      var prev = P.dismantlePreview(st5, eqId, 1);
+      ok("⑤ 预览不修改库存/资源", st5.equipment[eqId] === 7 && prev.rate === 1.0 && JSON.stringify(prev.back) === JSON.stringify(expBack), "back=" + JSON.stringify(prev.back));
+
+      dump();
+    } catch (e) { ERR.push(String(e && e.stack || e.message || e)); dump(); }
+  }
+  document.getElementById("f").addEventListener("load", function () { run(); });
+})();
+</script>
+</body>
+</html>

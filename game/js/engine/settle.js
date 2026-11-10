@@ -428,13 +428,23 @@
             ? 1 + (fitB.gasEfficiency || 0) + (fitB.gasLaserEfficiency || 0)
             : 1 + (fitB.miningEfficiency || 0) + (fitB.miningLaserEfficiency || 0);
         }
+        // 舰船工业加成（专项①+②-min）：工业舰 miningLaserEfficiency / gasLaserEfficiency 为引擎真读活字段，
+        // 与装备 fitEff 平行叠加（独立乘区 ×），使采矿/采气产出随舰种放大，避免工业舰成空壳。
+        // 普通战斗/考古舰无 bonuses 字段 → shipEff=1，零影响。
+        let shipEff = 1;
+        const mineShip = (Data && Data.Ships && Data.Ships.shipById) ? Data.Ships.shipById(m.shipId) : null;
+        if (mineShip && mineShip.bonuses) {
+          shipEff = isGas
+            ? 1 + (mineShip.bonuses.gasLaserEfficiency || 0)
+            : 1 + (mineShip.bonuses.miningLaserEfficiency || 0);
+        }
         // 增强剂（忠实 1 代）：采矿/气云速度与「翻倍概率」由全局 16 槽聚合。
         // 连续产出模型下，翻倍概率按期望值并入（×(1+chance)），避免离线大 dt 单次掷骰的剧烈波动。
         const Bm = (window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
         const bEff = Bm ? Bm.getEffectState(state) : null;
         const bSpeed = bEff ? (isGas ? bEff.gasSpeedMultiplier : bEff.miningSpeedMultiplier) : 1;
         const bDouble = bEff ? (isGas ? bEff.doubleGasChance : bEff.doubleMineralChance) : 0;
-        const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff * bSpeed * (1 + bDouble);
+        const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff * shipEff * bSpeed * (1 + bDouble);
         state.res[ore] = (state.res[ore] || 0) + y;
         m.skills[mineKey] = (m.skills[mineKey] || 0) + miningXpRate(node, isGas) * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
       } else if (a.type === "explore" && node) {

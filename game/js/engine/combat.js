@@ -189,6 +189,13 @@
     };
     const fit = m && m.fitted;
     if (!fit) return out;
+    // 舰船级战斗加成（1 代 STARTER_SHIPS.bonuses，仅搬引擎真读活键）：
+    //   weaponType+Damage → 乘进该型武器伤害；hitBonus → 加进命中；structure/armorRepair → 乘进维修池；
+    //   structureEmergencyRepair → 留待 advance 按我方结构比<0.7 触发。
+    const _D = _Data();
+    const shipB = (_D && _D.Ships && _D.Ships.shipById && m.shipId)
+      ? ((_D.Ships.shipById(m.shipId) || {}).bonuses || {})
+      : {};
     const slots = ["high", "mid", "low", "rig"];
     for (const slot of slots) {
       const arr = fit[slot] || [];
@@ -200,11 +207,11 @@
         if (c.kind === "weapon") {
           const skKey = SKILL_OF_WEAPON[c.weaponType];
           const lv = (Settle && m.skills && skKey) ? Settle.levelOf(m.skills[skKey]) : 1;
-          const ht = (c.baseHit || 100) + lv * 4 + hitAdd + techHit;           // 1 代命中加值（selectors.js:2575）+ 指挥塔 + 科技树
+          const ht = (c.baseHit || 100) + lv * 4 + hitAdd + techHit + (shipB.hitBonus || 0);           // 1 代命中加值（selectors.js:2575）+ 指挥塔 + 科技树 + 舰船 hitBonus
           const hitChance = hitCoeff(ht, evasion);                  // 1 代命中公式 hit^1.4/(hit^1.4+dodge^1.4)
           // 增强剂武器伤害乘区（忠实 1 代 combat.js:1788-1792：按主武器 weaponType 查 weaponDamageMultiplier 表）
           const wbm = (eff && eff.weaponDamageMultiplier && eff.weaponDamageMultiplier[c.weaponType]) ? eff.weaponDamageMultiplier[c.weaponType] : 1;
-          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult * wbm; // 1 代伤害乘区（selectors.js:2603）× 指挥塔 × 增强剂
+          const dmg = (c.baseDamage || 0) * (1 + lv * 0.02) * dmgMult * wbm * (1 + (shipB[c.weaponType + "Damage"] || 0)); // 1 代伤害乘区 × 指挥塔 × 增强剂 × 舰船武器伤害加成
           out.weapons.push({ type: c.weaponType, dmg: dmg, hitChance: hitChance, ammoCost: c.ammoCost || 0 });
           // 每轮 → 每秒：一轮占 ROUND_SEC 秒，故「每秒」量一律再除一次 ROUND_SEC。
           out.dpsByType[c.weaponType] = (out.dpsByType[c.weaponType] || 0) + dmg * hitChance / ROUND_SEC;
@@ -217,6 +224,9 @@
         }
       }
     }
+    // 舰船级维修加成（1 代 structureRepair/armorRepair，与装备维修平行乘区）
+    out.repair *= (1 + (shipB.structureRepair || 0) + (shipB.armorRepair || 0));
+    out.emergencyRepair = out.repair > 0 ? (shipB.structureEmergencyRepair || 0) : 0;
     if (Arch && Arch.fittedBonuses) {
       const b = Arch.fittedBonuses(m);
       out.dmgRed = b.globalDamageReduction || 0;
@@ -296,7 +306,7 @@
     let dpsByType = { laser: 0, missile: 0, cannon: 0 };
     let ammoRate = { laser: 0, missile: 0, cannon: 0 };
     let weapons = [];
-    let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0, fuelPerVolley = 0;
+    let repairRaw = 0, dmgRedRaw = 0, modCreditSum = 0, fuelPerVolley = 0, emergencyRepairSum = 0;
     // 指挥塔全局加成只算一次（驻塔者不参战，是远程指挥）
     const cmdBuff = stationCommandBuff(state);
 
@@ -309,6 +319,7 @@
       // 装配战斗贡献（每门武器按自己的类型取技能：命中 +lv×4、伤害 ×(1+lv×0.02)，见 scanFit）
       const f = scanFit(m, fleet.evasion, fleet.split, cmdBuff, state);
       fuelPerVolley += f.fuelPerVolley;
+      emergencyRepairSum += f.emergencyRepair || 0;
       for (const t of AMMO_TYPES) {
         dpsByType[t] += f.dpsByType[t] || 0;
         ammoRate[t] += f.ammoRate[t] || 0;
@@ -386,6 +397,9 @@
       fuelPerVolley: fuelPerVolley,
       repairPerSec: repairPerSec,
       dmgReduction: dmgReduction,
+      repairRaw: repairRaw,
+      incomingRaw: incomingRaw,
+      emergencyRepair: emergencyRepairSum,
       incomingDps: incomingDps,
 
       dropCredits: dropCredits,
@@ -656,10 +670,15 @@
       };
     }
 
-    // 血池：参战成员当前剩余三防总和
-    let pool = 0;
-    for (const m of P.members) pool += Math.max(0, (m.hp && m.hp.shield) || 0) + Math.max(0, (m.hp && m.hp.armor) || 0) + Math.max(0, (m.hp && m.hp.structure) || 0);
-    const maxFightSec = P.incomingDps > 0 ? (pool / P.incomingDps) : dt;
+    // 血池：参战成员当前剩余三防分层统计（盾→甲→构，供紧急维修结构比判定）
+    let pool = 0, shieldTotal = 0, armorTotal = 0, structureTotal = 0;
+    for (const m of P.members) {
+      const sh = (m.hp && m.hp.shield) || 0, ar = (m.hp && m.hp.armor) || 0, st = (m.hp && m.hp.structure) || 0;
+      pool += Math.max(0, sh) + Math.max(0, ar) + Math.max(0, st);
+      shieldTotal += Math.max(0, sh); armorTotal += Math.max(0, ar); structureTotal += Math.max(0, st);
+    }
+    const baseIncoming = P.incomingDps;
+    let effIncoming = baseIncoming;
 
     let dmg = 0, fireSec = 0, ammoUsed = null, allDry = false, hits = 0, misses = 0, simmed = false, fuelStarved = false;
     let noWeapon = false;
@@ -682,6 +701,23 @@
       noWeapon = fp.noWeapon;
       dmg = fp.dmg;   // 精确值：整波跳按 k×fleetHp 累加，不用 segs 回乘（避免舍入少算一波）
     }
+
+    // 舰船级紧急维修（1 代 structureEmergencyRepair：结构比 <0.7 额外加成）。
+    // fireSec 仅由我方进攻决定（与 repair 无关），故先算 fireSec 再判定防御，无循环依赖。
+    // 单遍判定：用基准（无紧急）damage 推 structureRatio；emergency 只增 repair（基准 damage 是上界），结构比只会更高，判定保守且正确。
+    if (P.emergencyRepair > 0 && structureTotal > 0) {
+      const baseDmg = baseIncoming * fireSec;
+      let rem = baseDmg;
+      rem = Math.max(0, rem - shieldTotal);
+      rem = Math.max(0, rem - armorTotal);
+      const remStruct = Math.max(0, structureTotal - rem);
+      if (remStruct / structureTotal < 0.7) {
+        const repairRawE = P.repairRaw * (1 + P.emergencyRepair);
+        const repairPerSecE = Math.min(REPAIR_CAP * P.incomingRaw, repairRawE);
+        effIncoming = Math.max(0, P.incomingRaw * (1 - P.dmgReduction) - repairPerSecE);
+      }
+    }
+    const maxFightSec = effIncoming > 0 ? (pool / effIncoming) : dt;
 
     // 血池封顶：被打穿就当场撤离，剩余时间不再产出（离线 8 小时不会凭空吃伤害）
     const wiped = fireSec > maxFightSec + 1e-9;
@@ -722,7 +758,7 @@
     if (P.fleetHp > 0) wHp -= waves * P.fleetHp;
     else wHp = 0;
 
-    const damage = P.incomingDps * fireSec;
+    const damage = effIncoming * fireSec;
     const progress = P.fleetHp > 0 ? Math.max(0, Math.min(1, wHp / P.fleetHp)) : 1;
 
     // 战术材料掉落（band N → tactic:tN）：与 credits/rep 同口径按 waves 缩放；这是 tactic 唯一获取途径。
@@ -751,7 +787,7 @@
       squadDps: P.squadDps,
       weaponDps: P.weaponDps,
       fleetDps: P.fleetDps,
-      incomingDps: P.incomingDps,
+      incomingDps: effIncoming,
       repairPerSec: P.repairPerSec,
       dmgReduction: P.dmgReduction,
       band: P.band,
