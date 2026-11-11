@@ -39,6 +39,9 @@
   // ---- 标定常量（§13 默认，待平衡） ----
   const FUEL_REGEN = 0.02;       // 跃迁燃料 /秒
   const BASE_MINE = 0.5;         // 矿石基础速率 /秒（abundance=1, lv=0）
+  // ① 异地采集衰减（考古版）：远处遗址解析周期放大的下限。jobEfficiency 在远距可趋近 0，
+  //   其倒数会发散，故用 max(FLOOR, je) 兜底；FLOOR=0.4 ⇒ 最远解析周期 ≤ 2.5×。
+  const ARCH_HOP_FLOOR = 0.4;
   // 经验速率（每技能 /秒，MVP 周五落地提案值，待标定）。train = 演训 dispatch，增长所选技能。
   // 2026-10-30 调慢：原值约 ×10 会导致 1 分钟内冲到 Lv5、半小时破 Lv10；
   //   现约 ÷10，使「试玩周期可见成长但不瞬满」——Lv5 约需 6~9 分钟专注（含专精 passion），Lv10 约需 17~25 分钟。
@@ -456,6 +459,13 @@
         const Bm = (window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
         const bEff = Bm ? Bm.getEffectState(state) : null;
         if (bEff) period *= bEff.archaeologySpeedMultiplier;
+        // ① 异地采集衰减（考古版）：远处遗址解析更慢——周期按距母舰跳数放大（加解析时间），
+        // 与采矿/采气同根（Logistics.jobEfficiency = clamp(1 - pen×hops + comp/100, 0,1)），
+        // 但用其倒数并设下限避免归零奇点；母舰本星 hops=0 ⇒ ×1 无影响。不改奖励（保 1 代保真）。
+        if (Logistics) {
+          const effLogiArch = Logistics.jobEfficiency(state, a.nodeId);
+          period /= Math.max(ARCH_HOP_FLOOR, effLogiArch);
+        }
         a.exploreProgress += dt / period;
         const ebody = Dispatch.bodyById ? Dispatch.bodyById(state.starMap, a.nodeId, a.bodyId) : null;
         if (ebody && ebody.kind === "derelict") {

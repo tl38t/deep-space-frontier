@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>考古跳数衰减探针</title></head>
+<body>
+<div id="log"></div>
+<iframe id="f" src="../index.html" style="display:none"></iframe>
+<script>
+function W(){ return document.getElementById('f').contentWindow; }
+var results = [];
+function ok(name, cond, extra){ results.push((cond?'PASS':'FAIL')+' '+name+(extra!==undefined?' :: '+extra:'')); }
+function finish(){
+  var pass = results.filter(function(r){return r.indexOf('PASS')===0;}).length;
+  var fail = results.filter(function(r){return r.indexOf('FAIL')===0;}).length;
+  var errs = results.filter(function(r){return r.indexOf('ERR')===0;}).length;
+  document.title = pass+'/'+fail+'/'+errs;
+  document.getElementById('log').textContent = results.join('\n');
+}
+function run(){
+  try {
+    var NSK = W().NSK; if(!NSK) throw new Error('NSK not ready');
+    var Live = NSK.Core.Persistence.state;
+    var st = JSON.parse(JSON.stringify(Live));
+    var Log = NSK.Engine.Logistics;
+    var Settle = NSK.Engine.Settle;
+    if(!Log || !Settle) throw new Error('Logistics/Settle missing');
+
+    var bodies = (st.starMap && st.starMap.bodies) || [];
+
+    // ① 考古分支在 a.exploreProgress += dt/period 即生效，仅 ebody.kind==="derelict"
+    // 才触发后续解析周期。故探针只需一个「距母舰≥1 跳的节点」作 explore 目标，
+    // 不必依赖残骸场天体（LIVE 存档未必生成 derelict 天体）。
+    var sm = st.starMap || {};
+    var nodeIds = [];
+    if (sm.nodes) nodeIds = sm.nodes.map(function(n){ return n.id; });
+    else if (sm.edges) { sm.edges.forEach(function(e){ nodeIds.push(e.from); nodeIds.push(e.to); }); }
+    else if (bodies.length) { nodeIds = bodies.map(function(b){ return b.nodeId; }); }
+    nodeIds = nodeIds.filter(function(v,i,a){ return a.indexOf(v)===i; });
+
+    function hops(nid){ return Log.hopsTo(st, nid); }
+    var base = st.base.nodeId;
+    var farNode=null, fh=-1;
+    nodeIds.forEach(function(nid){
+      if(nid===base) return;
+      var h=hops(nid); if(h>fh){ fh=h; farNode=nid; }
+    });
+    ok('找到距母舰≥1跳的节点', fh>=1, 'farHops='+fh+' base='+base+' farNode='+farNode);
+    if(fh<1){ finish(); return; }
+
+    var m = st.members.filter(function(x){ return x && !x.destroyed; })[0];
+    ok('有可用成员', !!m, m? m.id : '');
+    if(!m){ finish(); return; }
+
+    // 远处态：母舰在原基地，成员在 farNode 解析
+    m.assignment = { type:'explore', nodeId: farNode, bodyId:'__probe__', exploreProgress:0 };
+    st.lastSeen = 0;
+
+    // 近处态：克隆并把母舰迁到 farNode 节点（hops=0），同节点解析
+    var stHome = JSON.parse(JSON.stringify(st));
+    stHome.base.nodeId = farNode;
+    var mHome = stHome.members.filter(function(x){ return x && !x.destroyed; })[0];
+    mHome.assignment = { type:'explore', nodeId: farNode, bodyId:'__probe__', exploreProgress:0 };
+    stHome.lastSeen = 0;
+
+    Settle.settle(st, 20000);     // dt=20s
+    Settle.settle(stHome, 20000); // dt=20s
+
+    var pDist = m.assignment.exploreProgress;
+    var pHome = mHome.assignment.exploreProgress;
+
+    var jeHome = Log.jobEfficiency(stHome, farNode);
+    var jeFar  = Log.jobEfficiency(st, farNode);
+    ok('母舰本星(hops=0) jobEfficiency=1', Math.abs(jeHome-1)<1e-9, 'jeHome='+jeHome);
+    ok('远处 jobEfficiency<1', jeFar < 1, 'jeFar='+jeFar.toFixed(4));
+    ok('近处解析进度>0（无退化）', pHome>0, 'pHome='+pHome.toFixed(5));
+    ok('远处解析更慢（进度更低）', pDist < pHome*0.999, 'pDist='+pDist.toFixed(5)+' pHome='+pHome.toFixed(5));
+
+    // 周期放大 = effLogi 倒数经 40% 下限；进度比 = max(0.4, 1-0.2*hops)
+    var jeRaw = 1 - 0.20*fh;
+    var expRatio = Math.max(0.4, jeRaw);
+    var ratio = pDist / pHome;
+    ok('进度比符合公式(含40%下限)', Math.abs(ratio-expRatio)/expRatio < 0.02,
+       'ratio='+ratio.toFixed(4)+' exp='+expRatio.toFixed(4)+' farHops='+fh);
+  } catch(e){
+    results.push('ERR '+(e&&e.message?e.message:e));
+  }
+  finish();
+}
+var f = document.getElementById('f');
+if(f.readyState==='complete'){ setTimeout(run, 600); }
+else { f.onload = function(){ setTimeout(run, 600); }; }
+</script>
+</body></html>
