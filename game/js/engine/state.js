@@ -75,7 +75,7 @@
       reports: [
         { ts: now, title: "序章 · 拓荒启航", lines: [
           "边疆拓荒协议已激活，唯一舰基核心「" + baseIdentity.coreId + "」上线运行。",
-          "居住舱完成部署，首批人口容量已开放（名册上限 20）；成员名册就绪。",
+          "成员名册已就绪（名册上限 20）；演训舱完成部署，可驻舱按时间训练技能。",
           "可派遣成员采矿 / 勘探，或在行星部署采集装置持续产出（回星系回收）；母舰精炼与总装已可运转。",
           "升级舰基核心可解锁更大电网、更多工业槽与更高级舰种。",
         ] },
@@ -301,7 +301,7 @@
     // 招募钳制（F 决策，2026-10-27）：单项≤10 / 总和≤30，生成后 clamp 且保 major 专精
     clampSkills(skills, passion);
     const mods = compileMods(bs.adulthood ? bs.adulthood.trait : null);
-    mods.goalXp = 1; // 人生目的全局经验乘区（O(1)，由 Engine.Npc 累乘 done 目的）
+    mods.goalXp = 1; // 人生目的全局经验乘区（O(1），由 Engine.Npc 按完成个数给档：1个×1.1 / 2个×1.2 / 3个×1.3）
     // 人生目的系统（设计草案 ⑤）：入职确定性抽 3 个目的
     const Npc = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Npc) || null;
     const goals = Npc ? Npc.rollGoals(rng) : [];

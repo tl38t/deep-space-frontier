@@ -700,7 +700,7 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   {
     const s25 = Engine.State.defaultState(now, Data);
     ok("闭环:新档 version=8", s25.version === 8, "v=" + s25.version);
-    ok("闭环:序章报告已发居住舱", String((s25.reports[0] || {}).title || "").indexOf("序章") >= 0);
+    ok("闭环:序章报告已发（演训舱）", String((s25.reports[0] || {}).title || "").indexOf("序章") >= 0);
     ok("闭环:起始本体 Lv1(bodyLevel=0)", s25.base.bodyLevel === 0);
 
     // 1) 招募中心：确保候选 → 招 1 人进名册

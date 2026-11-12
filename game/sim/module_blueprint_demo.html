@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>舱段蓝图制造 · 设计 Demo（非产品代码）</title>
+<style>
+  :root{--bg:#f6f8fa;--card:#ffffff;--line:#e2e6eb;--ink:#1f2328;--dim:#6b7480;--blue:#185fa5;--blue-bg:#e6f1fb;--green:#0f6e56;--green-bg:#e1f5ee;--red:#a32d2d;--red-bg:#fcebeb;--amber:#854f0b;--amber-bg:#faeeda}
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  h1{font-size:18px;font-weight:500;margin:0 0 4px}
+  h2{font-size:14px;font-weight:500;margin:0 0 10px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+  .notice{background:var(--amber-bg);border:1px solid #efc775;color:#633806;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:16px}
+  .wrap{display:grid;grid-template-columns:minmax(470px,1fr) minmax(390px,1fr);gap:16px;align-items:start}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .grid{display:grid;grid-template-columns:repeat(7,60px);grid-template-rows:repeat(6,60px);gap:6px;margin:12px 0 4px}
+  .cell{border:1px dashed var(--line);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--dim);background:#fbfcfd;text-align:center;cursor:default;line-height:1.25;padding:2px}
+  .cell .ic{font-size:17px;line-height:1;margin-bottom:3px}
+  .cell.on{border-style:solid;color:var(--ink);cursor:pointer}
+  .cell.flex{border-color:#b5d4f4;background:var(--blue-bg);color:var(--blue);cursor:pointer}
+  .cell.core{background:#eceff3;border-style:solid;color:#444}
+  .cell.empty-spec{cursor:pointer;border-color:#d3d8df}
+  .cell:hover.on,.cell:hover.flex,.cell:hover.empty-spec{outline:2px solid #85b7eb}
+  .legend{font-size:11px;color:var(--dim);margin-top:8px}
+  .tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:6px 12px;border-radius:8px 8px 0 0;font-size:12px;color:var(--dim);cursor:pointer;border:1px solid transparent;border-bottom:none}
+  .tab.on{background:var(--blue-bg);color:var(--blue);border-color:#b5d4f4;font-weight:500}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:300px;overflow:auto;padding-right:4px}
+  .bp{border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;background:#fff;text-align:left}
+  .bp:hover{border-color:#85b7eb}
+  .bp.sel{border-color:var(--blue);background:var(--blue-bg)}
+  .bp.locked{opacity:.45;cursor:not-allowed}
+  .bp .n{font-weight:500;font-size:13px}
+  .bp .c{font-size:11px;color:var(--dim);margin-top:2px}
+  .bp .t{font-size:11px;color:var(--blue);margin-top:3px}
+  .detail{border-top:1px solid var(--line);margin-top:12px;padding-top:10px;font-size:12px;min-height:74px}
+  .detail .ttl{font-weight:500;margin-bottom:4px}
+  .costline{color:var(--dim)}
+  .row{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{font:inherit;font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  button:hover{border-color:#85b7eb}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:#0c447c}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .stepper{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .stepper span{padding:6px 10px;font-size:12px;cursor:pointer;background:#fff;user-select:none}
+  .stepper span:hover{background:var(--blue-bg)}
+  .stepper b{padding:6px 12px;font-weight:500;font-size:12px;border-left:1px solid var(--line);border-right:1px solid var(--line);min-width:40px;text-align:center}
+  .jobs{margin-top:10px;font-size:12px}
+  .job{display:flex;justify-content:space-between;padding:5px 8px;background:var(--blue-bg);border-radius:6px;margin-top:4px;color:var(--blue)}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .stat{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:11px;color:var(--dim)}
+  .stat .v{font-size:16px;font-weight:500;margin-top:2px}
+  .picker{margin-top:10px;padding:10px;background:var(--blue-bg);border:1px solid #b5d4f4;border-radius:8px;display:none}
+  .picker.on{display:block}
+  .picker .opts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .picker .opts button{padding:4px 9px;font-size:11px}
+  .foot{margin-top:14px;font-size:12px;color:var(--dim);border-top:1px solid var(--line);padding-top:10px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;margin-left:6px}
+  .tag.g{background:var(--green-bg);color:var(--green)}
+  .tag.r{background:var(--red-bg);color:var(--red)}
+  .tag.a{background:var(--amber-bg);color:var(--amber)}
+</style>
+</head>
+<body>
+<h1>舱段蓝图制造 · 设计 Demo</h1>
+<div class="sub">非产品代码 · 纯交互演示 · 对应四拍板：同一队列+新页签 / 通用舱位 / 槽位+1 且每舱位各需一人 / 开局四舱</div>
+<div class="notice">所有成本与耗时均为 <b>MVP 提议值，待标定</b>。资源键全部复用既有注册表（<code>resources.js:101</code> 的 <code>struct</code> 已弃用，本方案不用），不新增资源。</div>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>舰基舱位图 · 拓荒者级 <span class="tag a">开局四舱</span></h2>
+    <div class="sub">左侧 10 个专用位（每类 1 个）+ 右侧 4 个通用位。点空位可从舱段库装入；点已装通用位可拆下。</div>
+    <div class="grid" id="grid"></div>
+    <div class="legend">实线彩底 = 已装舱段 · 虚线灰 = 空专用位 · 蓝色虚线 = 通用位（可插任意类型）· 点击格子交互</div>
+
+    <div class="picker" id="picker">
+      <b id="pickerTitle">选择要装入的舱段</b>
+      <div class="opts" id="pickerOpts"></div>
+      <div style="margin-top:8px"><button id="pickerCancel">取消</button></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">精炼队列上限</div><div class="v" id="capSmelt">1</div></div>
+      <div class="stat"><div class="k">总装队列上限</div><div class="v" id="capManu">1</div></div>
+      <div class="stat"><div class="k">需驻舱人数</div><div class="v" id="needCrew">2</div></div>
+    </div>
+    <div class="foot" id="linkNote"></div>
+  </div>
+
+  <div class="panel">
+    <h2>总装船坞 · 舱段工作台 <span class="tag g">新增第 4 页签</span></h2>
+    <div class="tabs">
+      <div class="tab">部件 / 弹药</div><div class="tab">造船</div><div class="tab">强化舰船</div><div class="tab on">舱段</div>
+    </div>
+    <div class="sub">初始 10 张蓝图直接解锁；未解锁的显示「需蓝图」并禁用。</div>
+    <div class="cards" id="cards"></div>
+
+    <div class="detail" id="detail"></div>
+    <div class="row">
+      <div class="stepper"><span id="minus">−</span><b id="count">1</b><span id="plus">+</span></div>
+      <button class="primary" id="add">加入制造</button>
+      <span class="sub" style="margin:0">与造船共用 <code>buildQueue</code> 与总装槽位</span>
+    </div>
+    <div class="jobs" id="jobs"></div>
+    <div class="foot">Demo 内 3 秒完成一件（产品按 <code>buildTime</code>）；完成后进「舱段库」，不自动装配。</div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:16px">
+  <h2>本轮设计要点（确认后才写产品代码）</h2>
+  <div class="sub" id="designNotes"></div>
+</div>
+
+<script>
+var RES = { credits:"星币", fe_alloy:"标准钛材", ni_alloy:"银镍合金", bo_alloy:"同位复材", px_alloy:"奇点合金",
+  integrated_hull:"综合舰体组件", power_core:"动力控制核心", functional_system:"舰船功能组件" };
+
+var MODULES = [
+  {type:"energy",      name:"能源舱",    ic:"⚡", color:"#e7b45d", cost:{credits:2000,fe_alloy:20}, time:20},
+  {type:"cargo",       name:"仓储舱",    ic:"▣", color:"#79a9ff", cost:{credits:2000,fe_alloy:20}, time:20},
+  {type:"smelt",       name:"精炼环",    ic:"⚗", color:"#67d4a1", cost:{credits:4000,fe_alloy:40,integrated_hull:2}, time:30},
+  {type:"manufacture", name:"总装船坞",  ic:"⌬", color:"#42d6e8", cost:{credits:6000,fe_alloy:60,power_core:2}, time:40},
+  {type:"equip",       name:"制造车间",  ic:"⚒", color:"#e08a5a", cost:{credits:3000,fe_alloy:30,functional_system:2}, time:30},
+  {type:"invent",      name:"发明舱",    ic:"◇", color:"#b28cff", cost:{credits:8000,ni_alloy:30,power_core:3}, time:50},
+  {type:"dock",        name:"舰队泊位",  ic:"◈", color:"#b28cff", cost:{credits:3000,fe_alloy:30,integrated_hull:2}, time:25},
+  {type:"command",     name:"指挥塔",    ic:"⌁", color:"#e8c46a", cost:{credits:4000,fe_alloy:40,functional_system:2}, time:30},
+  {type:"habitat",     name:"演训舱",    ic:"⌂", color:"#ef7b87", cost:{credits:3000,fe_alloy:30}, time:25},
+  {type:"booster",     name:"反应实验室",ic:"⚗", color:"#c98bff", cost:{credits:5000,ni_alloy:20,power_core:2}, time:40}
+];
+var BY = {}; MODULES.forEach(function(m){ BY[m.type]=m; });
+
+var LAYOUT = { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2], invent:[2,2],
+  dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5], equip:[4,2] };
+var FLEX = [ {id:"flex_1",x:6,y:1}, {id:"flex_2",x:6,y:2}, {id:"flex_3",x:6,y:3}, {id:"flex_4",x:6,y:4} ];
+var STARTER = ["energy","cargo","smelt","manufacture"];
+
+var installed = {};       // slotId -> moduleType
+STARTER.forEach(function(t){ installed[t]=t; });
+var stock = [];           // 舱段库（未装实例）
+var jobs = [];
+var selected = null, count = 1, pickSlot = null;
+
+function costText(c){ return Object.keys(c).map(function(k){ return RES[k]+" "+c[k]; }).join(" · "); }
+function installedCount(t){ var n=0; for(var k in installed) if(installed[k]===t) n++; return n; }
+function extra(t){ return Math.max(0, installedCount(t)-1); }
+function industrial(t){ return ["smelt","manufacture","invent","booster","equip"].indexOf(t)>=0; }
+
+function renderGrid(){
+  var h="";
+  for(var y=1;y<=6;y++) for(var x=1;x<=7;x++){
+    var id=null, isFlex=false, isCore=false;
+    for(var k in LAYOUT){ if(LAYOUT[k][0]===x && LAYOUT[k][1]===y) id=k; }
+    FLEX.forEach(function(f){ if(f.x===x&&f.y===y){ id=f.id; isFlex=true; } });
+    if(id==="core") isCore=true;
+    if(!id){ h+='<div class="cell" style="grid-column:'+x+';grid-row:'+y+'"></div>'; continue; }
+    if(isCore){ h+='<div class="cell core" style="grid-column:'+x+';grid-row:'+y+'"><span class="ic">◉</span>舰基核心</div>'; continue; }
+    var t=installed[id];
+    if(t){ var m=BY[t]; h+='<div class="cell on" data-slot="'+id+'" style="grid-column:'+x+';grid-row:'+y+';border-color:'+m.color+';background:'+m.color+'22"><span class="ic">'+m.ic+'</span>'+m.name+'</div>'; }
+    else if(isFlex){ h+='<div class="cell flex" data-slot="'+id+'" style="grid-column:'+x+';grid-row:'+y+'"><span class="ic">＋</span>通用位</div>'; }
+    else { var mm=BY[id]; h+='<div class="cell empty-spec" data-slot="'+id+'" style="grid-column:'+x+';grid-row:'+y+'"><span class="ic">·</span>'+mm.name+'<br>空位</div>'; }
+  }
+  document.getElementById("grid").innerHTML=h;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-slot]"),function(el){
+    el.addEventListener("click",function(){ onSlot(el.getAttribute("data-slot")); });
+  });
+  renderStats();
+}
+
+function renderStats(){
+  document.getElementById("capSmelt").textContent = 1+extra("smelt");
+  document.getElementById("capManu").textContent  = 1+extra("manufacture");
+  var crew=0; for(var k in installed) if(industrial(installed[k])) crew++;
+  document.getElementById("needCrew").textContent = crew;
+  var sm=extra("smelt");
+  document.getElementById("linkNote").innerHTML = sm>0
+    ? '已装 <b>'+installedCount("smelt")+'</b> 个精炼环 → 精炼队列上限 <b>1 + '+sm+' = '+(1+sm)+'</b>；按「每舱位各需一人」，这 '+(1+sm)+' 条队列要分别派人，无人者耗时 ×1.4。'
+    : '当前只有 1 个精炼环 → 队列上限 1。往通用位再插一个精炼环，上限立即 +1，并需要多派 1 名驻舱者。';
+}
+
+function onSlot(slotId){
+  if(installed[slotId]){
+    if(slotId.indexOf("flex_")===0){ stock.push(installed[slotId]); delete installed[slotId]; renderGrid(); renderPicker(false); }
+    return;
+  }
+  pickSlot=slotId; renderPicker(true);
+}
+function renderPicker(show){
+  var p=document.getElementById("picker");
+  if(!show){ p.classList.remove("on"); pickSlot=null; return; }
+  p.classList.add("on");
+  var isFlex=pickSlot.indexOf("flex_")===0;
+  document.getElementById("pickerTitle").textContent = isFlex
+    ? "通用位「"+pickSlot+"」：可插任意类型舱段"
+    : "专用位「"+BY[pickSlot].name+"」：只能插 "+BY[pickSlot].name;
+  var opts="";
+  MODULES.forEach(function(m){
+    if(!isFlex && m.type!==pickSlot) return;
+    var avail=stock.filter(function(s){return s===m.type;}).length;
+    opts+='<button data-type="'+m.type+'"'+(avail?'':' disabled')+'>'+m.name+(avail?' (库存 '+avail+')':' (需先制造)')+'</button>';
+  });
+  if(!opts) opts='<span class="sub">舱段库为空 —— 先在右侧工作台「加入制造」，完成后实例会进这里。</span>';
+  document.getElementById("pickerOpts").innerHTML=opts;
+  Array.prototype.forEach.call(document.querySelectorAll("#pickerOpts button"),function(b){
+    b.addEventListener("click",function(){
+      var t=b.getAttribute("data-type"), i=stock.indexOf(t);
+      if(i<0) return;
+      stock.splice(i,1); installed[pickSlot]=t; renderGrid(); renderPicker(false);
+    });
+  });
+}
+document.getElementById("pickerCancel").addEventListener("click",function(){ renderPicker(false); });
+
+function renderCards(){
+  var h="";
+  MODULES.forEach(function(m){
+    var owned=STARTER.indexOf(m.type)>=0;
+    var sel=selected===m.type?" sel":"";
+    h+='<button class="bp'+sel+'" data-type="'+m.type+'"><div class="n">'+m.ic+' '+m.name+'</div>'
+      +'<div class="c">'+costText(m.cost)+'</div><div class="t">'+m.time+'s / 件 · 蓝图已解锁</div></button>';
+  });
+  document.getElementById("cards").innerHTML=h;
+  Array.prototype.forEach.call(document.querySelectorAll(".bp"),function(b){
+    b.addEventListener("click",function(){ selected=b.getAttribute("data-type"); renderCards(); renderDetail(); });
+  });
+}
+function renderDetail(){
+  var d=document.getElementById("detail");
+  if(!selected){ d.innerHTML='<div class="costline">选择一张蓝图查看成本与产出。</div>'; return; }
+  var m=BY[selected];
+  d.innerHTML='<div class="ttl">'+m.ic+' '+m.name+' ×'+count+' <span class="tag g">蓝图已解锁</span></div>'
+    +'<div class="costline">单件：'+costText(m.cost)+' · '+m.time+'s</div>'
+    +'<div class="costline">合计：'+Object.keys(m.cost).map(function(k){return RES[k]+" "+m.cost[k]*count;}).join(" · ")+'</div>'
+    +'<div class="costline">产出：舱段库 +'+count+' 个「'+m.name+'」实例（不自动装配）</div>';
+}
+document.getElementById("minus").addEventListener("click",function(){ count=Math.max(1,count-1); document.getElementById("count").textContent=count; renderDetail(); });
+document.getElementById("plus").addEventListener("click",function(){ count=Math.min(20,count+1); document.getElementById("count").textContent=count; renderDetail(); });
+document.getElementById("add").addEventListener("click",function(){
+  if(!selected) return;
+  jobs.push({type:selected,n:count,left:3});
+  renderJobs();
+});
+function renderJobs(){
+  document.getElementById("jobs").innerHTML = jobs.length
+    ? '<div style="margin-bottom:4px;color:var(--dim)">总装船坞队列（与造船共享槽位）</div>'
+      + jobs.map(function(j,i){ return '<div class="job"><span>'+BY[j.type].name+' ×'+j.n+'</span><span>制造中 · '+j.left+'s</span></div>'; }).join("")
+    : '<div class="costline" style="color:var(--dim)">队列为空</div>';
+}
+setInterval(function(){
+  if(!jobs.length) return;
+  var done=[];
+  jobs.forEach(function(j,i){ j.left-=1; if(j.left<=0){ for(var k=0;k<j.n;k++) stock.push(j.type); done.push(i); } });
+  if(done.length){ jobs=jobs.filter(function(j,i){return done.indexOf(i)<0;}); renderJobs(); renderPicker(!!pickSlot); }
+  else renderJobs();
+},1000);
+
+document.getElementById("designNotes").innerHTML = [
+  '<b>① 数据</b>：<code>BASE_MODULES[type]</code> 增 <code>cost/buildTime/tier</code>；<code>baseHullSlots()</code> 统一追加 4 个 <code>type:"flex"</code> 通用位（x=6, y=1..4），8 艘母舰无需各补坐标。',
+  '<b>② 开局</b>：<code>createInitialBase()</code> 只发 能源 / 仓储 / 精炼 / 总装 4 个实例并装上；电网由 165/180 变 55/180。老档已有 10 个实例<b>保留不回收</b>。',
+  '<b>③ 蓝图</b>：<code>state.base.ownedModuleBlueprints</code> 存 10 类、初始全解锁；<code>base.js normalize</code> 幂等补齐，不升 STATE_VERSION。',
+  '<b>④ 制造</b>：<code>Prod.buildModule()</code> 复用 <code>buildQueue</code> + <code>kind:"module"</code>；结算产出到 <code>modules.owned</code>，不发「造船 +3 精通点」；无 kind 的旧队列项照旧造船。',
+  '<b>⑤ 槽位</b>：<code>Base.queueCap(state,q) = bodyLevelPlan[q] + max(0, 已装该类型舱段数 − 1)</code>；production.js 六处 <code>plan.X</code> 比较统一改走它。',
+  '<b>⑥ 驻舱</b>：队列项入队时烘 <code>slotId</code>，结算按该舱位精确找人；无人 ×1.4。旧档无 slotId 回退按类型查找。',
+  '<b>⑦ 修正既有隐患</b>：<code>slotEffects</code> / <code>queueDurationMultiplier</code> 改用「实际安装模块类型」而非 <code>slot.type</code>，否则通用位不触发相邻增效与特化判定。',
+  '<b>⑧ 探针</b>：新建 <code>module_blueprint_selftest.html</code>；同步改 <code>arch_probe.mjs:459</code>、<code>compartment_consistency_selftest</code> 的 165/180 与「10 舱全装」冻结断言。'
+].join('<br>');
+
+renderGrid(); renderCards(); renderDetail(); renderJobs();
+
+if (location.search.indexOf("selftest=1") >= 0) {
+  var slog = [];
+  function sok(n, c, x) { slog.push((c ? "PASS " : "FAIL ") + n + (x ? " :: " + x : "")); }
+  document.querySelector('.bp[data-type="smelt"]').click();
+  sok("选中精炼环蓝图", document.querySelectorAll(".bp.sel").length === 1);
+  document.getElementById("add").click();
+  sok("加入制造后 buildQueue 有 1 项", jobs.length === 1, "jobs=" + jobs.length);
+  setTimeout(function () {
+    sok("结算后舱段库 +1 实例", stock.length === 1, "stock=" + JSON.stringify(stock));
+    document.querySelector('[data-slot="flex_1"]').click();
+    sok("点通用位弹出选单", document.getElementById("picker").classList.contains("on"));
+    var btn = document.querySelector('#pickerOpts button[data-type="smelt"]');
+    sok("通用位可选任意类型（精炼环可选）", !!btn && !btn.disabled);
+    if (btn) btn.click();
+    sok("通用位已装精炼环", installed.flex_1 === "smelt");
+    sok("精炼队列上限 1 → 2", document.getElementById("capSmelt").textContent === "2", "cap=" + document.getElementById("capSmelt").textContent);
+    sok("需驻舱人数 2 → 3", document.getElementById("needCrew").textContent === "3", "crew=" + document.getElementById("needCrew").textContent);
+    var passed = slog.filter(function (s) { return s.indexOf("PASS ") === 0; }).length;
+    var pre = document.createElement("pre");
+    pre.id = "selftest";
+    pre.textContent = slog.join("\n") + "\nTOTAL " + passed + "/" + slog.length;
+    document.body.appendChild(pre);
+    document.title = "SELFTEST " + passed + "/" + slog.length;
+  }, 3800);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>running</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:940px;border:1px solid #ccc"></iframe>
+<script>
+// 舱段一致性收口真机自测（2026-11-11）
+// 覆盖：habitat 正名为演训舱 / 叙事与 UI 文案统一 / 成员容量展示解绑 /
+//       电耗清单由 BASE_MODULES 生成（mutation 漂移测试）/ 数值全表冻结 / 结构未变
+const out=[]; let PASS=0, FAIL=0, ERR=0;
+const log=(s)=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+async function until(fn,ms,step){ ms=ms||20000; step=step||150; const t0=Date.now();
+  while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(step); } return false; }
+const D=()=>fr.contentDocument;
+const W=()=>fr.contentWindow;
+const q=(sel)=>D().querySelector(sel);
+const qa=(sel)=>D().querySelectorAll(sel);
+const txt=(el)=>el?el.textContent.trim():"";
+const nav=(url)=>new Promise((res)=>{ fr.onload=()=>{ fr.onload=null; res(); }; fr.src=url; });
+const hit=(el)=>{ if(!el) return false; if(typeof el.click==="function" && !(el instanceof W().SVGElement)){ el.click(); return true; }
+  const win=W(); el.dispatchEvent(new win.MouseEvent("click",{bubbles:true,cancelable:true,view:win})); return true; };
+const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+const energyDim=()=>{ const ps=qa(".panel"); for(const p of ps){ const b=p.querySelector(".row b");
+  if(b && txt(b)==="能源电网"){ const d=p.querySelector(".dim"); return txt(d); } } return ""; };
+const finish=()=>{ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ERR="+ERR+" ========");
+  document.title=PASS+"/"+FAIL+"/"+ERR; };
+
+(async function(){
+ try{
+  // ---- 跳过序章遮罩（与 station_selftest 同款做法）----
+  await nav("../index.html#base");
+  const b0=await until(booted,25000);
+  ok("游戏启动完成", b0);
+  if(!b0){ finish(); return; }
+  const hasCore=await until(()=>W().NSK && W().NSK.Core && W().NSK.Core.load && W().NSK.Core.save,15000);
+  ok("存档接口可用", hasCore);
+  if(hasCore){
+    const S=W().NSK.Narrative && W().NSK.Narrative.Story;
+    const st=W().NSK.Core.load();
+    if(st){ st.story=st.story||{}; st.story.seen=S?S.list().map(x=>x.id):[]; st.story.cur=null;
+      st.story.flags=st.story.flags||{}; st.res.credits=200000; W().NSK.Core.save(st); }
+  }
+  await wait(600);
+  await nav("../index.html?r="+Date.now()+"#base");
+  const b1=await until(booted,25000);
+  ok("重载后启动并停在舰基页", b1);
+  if(!b1){ finish(); return; }
+  const baseTab=q('[data-act="tab:base"]');
+  if(baseTab) hit(baseTab);
+  await until(()=>q('[data-act^="baseinfo:"]'),10000);
+
+  const NSK=W().NSK;
+  const Ships=NSK.Data.Ships;
+  const mods=Ships.BASE_MODULES;
+
+  // ---- A. 数据层：正名 + 数值冻结 + 结构未变 ----
+  ok("A1 habitat 显示名已改为「演训舱」", mods.habitat.name==="演训舱", mods.habitat.name);
+  ok("A2 desc 改训练口径、不含「生活」", /演训/.test(mods.habitat.desc) && !/生活/.test(mods.habitat.desc), mods.habitat.desc);
+  const FROZEN={energy:0,cargo:5,smelt:20,manufacture:30,equip:15,invent:40,dock:10,command:10,habitat:10,booster:25};
+  const keys=Object.keys(FROZEN);
+  const energyMap={}; keys.forEach(k=>{ energyMap[k]=mods[k]&&mods[k].energy; });
+  const frozen=keys.every(k=>energyMap[k]===FROZEN[k]);
+  ok("A3 10 类电耗全表冻结（数值一个不动）", frozen, JSON.stringify(energyMap));
+  ok("A4 舱段仍为 10 类（只改名不改结构）", Object.keys(mods).length===10, "count="+Object.keys(mods).length);
+  const hulls=Ships.BASE_HULLS||[];
+  ok("A5 8 艘母舰 layout 仍含 habitat 键", hulls.length===8 && hulls.every(h=>h.layout&&h.layout.habitat), "hulls="+hulls.length);
+
+  // ---- B. 引擎：电网实测不变 ----
+  const st=NSK.Core.Persistence && NSK.Core.Persistence.state;
+  ok("B1 实时 state 可取", !!st);
+  if(st){
+    const pw=NSK.Engine.Base.powerReport(st);
+    ok("B2 电网仍 165/180 供能充足（零数值改动）", pw.consumed===165 && pw.produced===180 && pw.ok===true,
+       JSON.stringify(pw));
+    const rep=(st.reports&&st.reports[0])||{};
+    const repTxt=((rep.lines)||[]).join("|");
+    ok("B3 序章报告改「演训舱」且不再有「居住舱」", /演训舱/.test(repTxt) && !/居住舱/.test(repTxt), repTxt.slice(0,90));
+  }
+
+  // ---- C. 剧情数据：台词统一 ----
+  const Story=NSK.Narrative && NSK.Narrative.Story;
+  const scenes=Story&&Story.scenes?Story.scenes():[];
+  const flora=scenes.filter(s=>s&&s.id==="prologue_flora")[0];
+  const floraTxt=flora?((flora.lines||[]).map(l=>l.text||"").join("|")):"";
+  ok("C1 序章剧情可读取", !!flora, "scenes="+scenes.length);
+  ok("C2 剧情台词改「演训舱」且不再有「居住舱」", /演训舱/.test(floraTxt) && !/居住舱/.test(floraTxt), floraTxt.slice(0,110));
+
+  // ---- D. UI 真机 DOM：上屏文案 ----
+  const habBtn=q('[data-act="baseinfo:habitat"]');
+  ok("D1 舰基页仍有演训舱入口", !!habBtn);
+  if(habBtn){
+    const nm=txt(habBtn.querySelector("b")), sd=txt(habBtn.querySelector("small")), stt=txt(habBtn.querySelector(".base-module-status"));
+    ok("D2 舱段卡片标题为「演训舱」", nm==="演训舱", nm);
+    ok("D3 短描述为「技能演训」", sd==="技能演训", sd);
+    ok("D4 舱段卡片不再挂「成员 N/20」", !/成员\s*\d+\s*\/\s*20/.test(stt), stt);
+  }
+  const foot=txt(q(".base-stage-foot"));
+  ok("D5 「成员 N/20」移到舰基总览栏（中性位置）", /成员\s*\d+\s*\/\s*20/.test(foot), foot);
+
+  // ---- E. 电耗清单：读表生成 + mutation 漂移测试 ----
+  const dim=energyDim();
+  ok("E1 能源电网面板可读", !!dim, dim.slice(0,60));
+  const missing=keys.filter(k=>k!=="energy").filter(k=>dim.indexOf(mods[k].name+" "+mods[k].energy)<0);
+  ok("E2 文案含全部 9 个舱段的「名称+电耗」", missing.length===0, "missing="+missing.join(","));
+  ok("E3 文案含「能源舱自身 0」", /能源舱自身 0/.test(dim));
+  ok("E4 文案不再出现「居住舱」", !/居住舱/.test(dim));
+  ok("E5 文案出现「演训舱 10」", /演训舱 10/.test(dim));
+
+  // ⚠ renderTabs() 会重写 $tabs.innerHTML，缓存的页签节点点一次就脱离文档 → 每次必须重新查询。
+  const oldE=mods.cargo.energy;
+  mods.cargo.energy=999;
+  ok("E6a 数据表对象确被改写", mods.cargo.energy===999 && Ships.baseModuleByType("cargo").energy===999);
+  hit(q('[data-act="tab:base"]')); await wait(500);
+  const dimMut=energyDim();
+  ok("E6 改数据表后文案同步（无硬编码漂移）", /仓储舱 999/.test(dimMut), dimMut.slice(0,140));
+  mods.cargo.energy=oldE;
+  hit(q('[data-act="tab:base"]')); await wait(500);
+  const dimBack=energyDim();
+  ok("E7 恢复数据表后文案回退为「仓储舱 5」", /仓储舱 5/.test(dimBack) && !/仓储舱 999/.test(dimBack), dimBack.slice(0,140));
+ }catch(e){ ERR++; log("[ERR] "+(e&&e.stack||e)); }
+ finish();
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 // ================================================================
 // 深空星疆 —— Engine.Npc：成员人生目的系统（设计草案 ⑤）
 // 每个 NPC 随机 3 个人生目的（visit / bindShip / giveItem），
-// 达成后给该 NPC 一个全局经验乘区 goalXp（各目的 reward 累乘）。
+// 达成后给该 NPC 一个全局经验乘区 goalXp（按完成个数给档：1 个×1.1 / 2 个×1.2 / 3 个×1.3）。
 // 纯函数 + O(1) 聚合，不触碰 settle 热循环（§14.5 红线）。
 // ================================================================
 (function (root, factory) {
@@ -22,7 +22,8 @@
   const Data = (typeof window !== "undefined" ? window.NSK.Data : null);
 
   // 三档经验倍率（用户原话：达成 ×1.1 / ×1.2 / ×1.3）
-  const REWARDS = [1.1, 1.2, 1.3];
+  // 按「完成个数」给档的全局经验倍率：doneCount=1→×1.1, 2→×1.2, 3→×1.3
+  const COUNT_REWARDS = [1.1, 1.2, 1.3];
 
   // ---- 确定性 rng（用于老档迁移，按 member id 稳定派生）----
   function hashSeed(str) {
@@ -65,9 +66,8 @@
     });
   }
 
-  // ---- 生成 3 个目的：visit / bindShip / giveItem 各一，reward 随机分配 ----
+  // ---- 生成 3 个目的：visit / bindShip / giveItem 各一（倍率为全局档位，按完成个数由 recomputeGoalXp 算）----
   function rollGoals(rng) {
-    const rewards = shuffle(REWARDS, rng);
     const regs = regionDefs();
     const reg = regs.length ? regs[Math.floor(rng() * regs.length)] : { name: "未知星域" };
     const regIdx = regs.indexOf(reg);
@@ -76,20 +76,20 @@
     const item = pool.length ? pool[Math.floor(rng() * pool.length)] : "fe_alloy";
     const giveCredits = rng() < 0.5;
     return [
-      { type: "visit", target: "region_" + regIdx, targetName: reg.name, reward: rewards[0], done: false },
-      { type: "bindShip", targetTier: tier, reward: rewards[1], done: false },
-      { type: "giveItem", target: giveCredits ? "credits" : item, reward: rewards[2], done: false },
+      { type: "visit", target: "region_" + regIdx, targetName: reg.name, done: false },
+      { type: "bindShip", targetTier: tier, done: false },
+      { type: "giveItem", target: giveCredits ? "credits" : item, done: false },
     ];
   }
   function rollGoalsFor(memberId) { return rollGoals(mulberry32(hashSeed(memberId))); }
 
-  // ---- 聚合（O(1)）：done 目的 reward 累乘 → mods.goalXp ----
+  // ---- 聚合（O(1)）：按「完成个数」给档 → mods.goalXp（1 个×1.1 / 2 个×1.2 / 3 个×1.3）----
   function recomputeGoalXp(m) {
-    let x = 1;
-    for (const g of (m.goals || [])) if (g.done) x *= g.reward;
+    const n = doneCount(m);
+    const mult = (n >= 1 && n <= COUNT_REWARDS.length) ? COUNT_REWARDS[n - 1] : 1;
     if (!m.mods) m.mods = {};
-    m.mods.goalXp = x;
-    return x;
+    m.mods.goalXp = mult;
+    return mult;
   }
 
   // ---- 追踪：派遣到目标星域节点 → 命中 visit ----
@@ -234,7 +234,7 @@
   }
 
   return {
-    REWARDS, hashSeed, mulberry32, rollGoals, rollGoalsFor,
+    COUNT_REWARDS, hashSeed, mulberry32, rollGoals, rollGoalsFor,
     recomputeGoalXp, noteVisit, completeGiveItem, completeBindShip,
     goalIcon, goalLabel, goalHint, shipNameAtTier, shipIdAtTier, shipTierOf,
     MILESTONES, milestoneById, milestoneList, checkMilestones,

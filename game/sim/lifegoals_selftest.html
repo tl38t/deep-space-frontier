@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>lifegoals selftest</title></head>
+<body>
+<iframe id="f" src="../index.html" style="display:none"></iframe>
+<pre id="log">loading…</pre>
+<script>
+const FR = document.getElementById('f');
+function W(){ return FR.contentWindow; }
+function LIVE(){ return W().NSK.Core.Persistence.state; }
+function clone(){ return JSON.parse(JSON.stringify(LIVE())); }
+
+let pass=0, fail=0;
+const lines=[];
+function ok(name, cond, extra){
+  if(cond){ pass++; lines.push('PASS '+name+(extra!==undefined?'  ['+JSON.stringify(extra)+']':'')); }
+  else { fail++; lines.push('FAIL '+name+(extra!==undefined?'  ['+JSON.stringify(extra)+']':'')); }
+}
+
+function runAll(){
+  try {
+    const NSK = W().NSK;
+    const Npc = NSK.Engine.Npc;
+    const Settle = NSK.Engine.Settle;
+    ok('NSK.Engine.Npc 已挂载', !!Npc);
+    ok('NSK.Engine.Settle 已挂载', !!Settle && !!Settle.xpMultOf);
+
+    const st = clone();
+    const ms = (st.members||[]).filter(function(m){ return m && !m.destroyed; });
+    ok('存档有存活成员', ms.length>0, 'count='+ms.length);
+    const m = ms[0];
+    ok('成员带 3 个人生目的', m.goals && m.goals.length===3, m.goals? m.goals.length : 'none');
+
+    // —— 核心修复：按完成个数给档，而非各目的连乘 ——
+    m.goals.forEach(function(g){ g.done=false; });
+    Npc.recomputeGoalXp(m);
+    ok('0 完成 → 全经验 ×1.0', Math.abs(m.mods.goalXp-1)<1e-9, m.mods.goalXp);
+
+    m.goals[0].done=true; Npc.recomputeGoalXp(m);
+    ok('1 完成 → ×1.1', Math.abs(m.mods.goalXp-1.1)<1e-9, m.mods.goalXp);
+
+    m.goals[1].done=true; Npc.recomputeGoalXp(m);
+    ok('2 完成 → ×1.2', Math.abs(m.mods.goalXp-1.2)<1e-9, m.mods.goalXp);
+
+    m.goals[2].done=true; Npc.recomputeGoalXp(m);
+    ok('3 完成 → ×1.3', Math.abs(m.mods.goalXp-1.3)<1e-9, m.mods.goalXp);
+
+    // —— 关键反例：旧逻辑会把 3 个 done 连乘成 ×1.716，必须不是 ——
+    ok('不是连乘（3完成绝对≠1.716）', Math.abs(m.mods.goalXp-1.716)>1e-6, m.mods.goalXp);
+
+    // —— 结算链路：xpMultOf 随 goalXp 比例放大（bXp 等其余因子恒定，只看比值）——
+    const st0 = clone(); const m0 = st0.members.filter(function(x){return x&&!x.destroyed;})[0];
+    m0.goals.forEach(function(g){ g.done=false; }); Npc.recomputeGoalXp(m0);
+    const xp0 = Settle.xpMultOf(st0, m0, 'mining');
+    const st3 = clone(); const m3 = st3.members.filter(function(x){return x&&!x.destroyed;})[0];
+    m3.goals.forEach(function(g){ g.done=true; }); Npc.recomputeGoalXp(m3);
+    const xp3 = Settle.xpMultOf(st3, m3, 'mining');
+    // goalXp 1.0→1.3，其余因子相同 ⇒ 比值应≈1.3
+    ok('xpMultOf 随 goalXp 比例放大(÷=1.3)', Math.abs((xp3/xp0)-1.3)<1e-6, {xp0:xp0, xp3:xp3, ratio:xp3/xp0});
+
+    // —— 新成员目的不再带 per-goal reward 字段（避免 UI 误读）——
+    const fresh = Npc.rollGoalsFor('probe_member_'+Date.now());
+    ok('新成员目的无 per-goal reward', fresh.every(function(g){ return g.reward===undefined; }),
+       fresh.map(function(g){ return g.reward; }));
+  } catch(e){
+    fail++; lines.push('ERR '+(e&&e.stack? e.stack : e));
+  }
+  const title = pass+'/'+(pass+fail)+'/0';
+  document.getElementById('log').textContent = lines.join('\n')+'\n\n'+title;
+  document.title = title;
+}
+FR.addEventListener('load', function(){ setTimeout(runAll, 1800); });
+</script>
+</body>
+</html>

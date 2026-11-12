@@ -158,12 +158,14 @@
     smelt:       { type: "smelt",       name: "精炼环",   icon: "⚗",  color: "#67d4a1", desc: "将采集矿石转化为矿材。", energy: 20 },
     manufacture: { type: "manufacture", name: "总装船坞", icon: "⌬",  color: "#42d6e8", desc: "制造舰船组件与整舰。", energy: 30 },
     // 2026-11-03 新增：装备制造独立成舱（此前内联在舰基页，与总装坞共用槽位）。
-    // energy 15 = 提议值，介于泊位 10 与精炼环 20 之间（开局已超预算，尽量少再加棕化）。
+    // energy 15 = 提议值，介于泊位 10 与精炼环 20 之间。
+    // 开局实测（真机 powerReport）：10 舱全装负载 165 / 供能 180（本体 80 + 能源舱 100），
+    // 供能充足、余量 15，并未超预算；后续标定须以保住余量为约束，避免再加棕化。
     equip:       { type: "equip",       name: "制造车间", icon: "⚒",  color: "#e08a5a", desc: "制造装备与改装件，独立产线。", energy: 15 },
     invent:      { type: "invent",      name: "发明舱",   icon: "◇",  color: "#b28cff", desc: "研发改装图纸与高级配方。", energy: 40 },
     dock:        { type: "dock",        name: "舰队泊位", icon: "◈",  color: "#b28cff", desc: "停泊与维护舰队。", energy: 10 },
     command:     { type: "command",     name: "指挥塔",   icon: "⌁",  color: "#e8c46a", desc: "统筹成员、舰队与基地行动。", energy: 10 },
-    habitat:     { type: "habitat",     name: "居住舱",   icon: "⌂",  color: "#ef7b87", desc: "供成员生活与训练。", energy: 10 },
+    habitat:     { type: "habitat",     name: "演训舱",   icon: "⌂",  color: "#ef7b87", desc: "成员技能演训，全游戏唯一纯时间涨经验通道。", energy: 10 },
     booster:     { type: "booster",     name: "反应实验室", icon: "⚗", color: "#c98bff", desc: "制造增强剂瓶身（反应实验室）。", energy: 25 },
   };
 
