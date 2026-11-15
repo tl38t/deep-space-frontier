@@ -1091,12 +1091,7 @@
     if (!slot || slot.type === "core") { toast("唯一核心不可改装"); return false; }
     const m = state.base.modules.owned.find(x => x.id === moduleId);
     if (!m) { toast("模块不在库存中"); return false; }
-    const d = Data.Ships.baseModuleByType(m.type) || {};
-    if (m.type !== slot.type) {
-      const sd = Data.Ships.baseModuleByType(slot.type) || {};
-      toast("舱位不兼容：这里是「" + (sd.name || slot.type) + "」位");
-      return false;
-    }
+    const d = Data.Ships.baseModuleByType(m.type) || {};   // 折中：任意舱段可装任意格，去掉类型不兼容门禁
     const occupied = !!Engine.Base.moduleAt(state, slotId);
     const r = occupied
       ? Engine.Base.replaceModule(state, slotId, moduleId)
@@ -1114,35 +1109,35 @@
   }
 
   function baseModule(slot, plan) {
-    const def = Data.Ships.baseModuleByType(slot.type);
-    const installed = Engine.Base.moduleAt(state, slot.id);
+    const inst = Engine.Base.moduleAt(state, slot.id);   // 折中：功能跟随「已装舱段」类型，而非槽位原生类型
+    const installed = !!inst;
+    const t = inst ? inst.type : null;
+    // 折中（通用槽）：空槽不再展示原生舱段类型的图标/配色，统一为「通用接口」外观，避免暗示槽位专属
+    const def = inst || { name: "空舱位", color: "#5d7782", icon: "◯", energy: 0 };
     const selected = baseFocus === slot.id;
-    // 「停泊」= 库存里没人开的船（含在役数会让玩家以为造完就自动配人了）
-    // 这里直接数，不调 Fleet.summary —— 那是渲染路径，不该顺带跑 ensure 改 state。
     const stockShips = (state.ships || []).filter(s => !s.memberId && s.status !== "lost").length;
     const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", equip: "装备 / 改装件", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "技能演训", booster: "增强剂瓶身" };
     let label = installed ? "在线" : "待装配";
     let progress = 0;
-    if (installed && slot.type === "smelt") { const q = baseQueueState("smelt", Data.Recipes.SMELT); label = q.count ? q.label : "精炼待命"; progress = q.progress; }
-    if (installed && slot.type === "manufacture") { const q = baseQueueState("manufacture", Data.Recipes.COMPONENT); label = q.count ? q.label : "总装待命"; progress = q.progress; }
-    if (installed && slot.type === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
-    if (installed && slot.type === "equip") { const q = baseQueueState("equip", null); label = q.count ? q.label : "制造待命"; progress = q.progress; }
-    if (installed && slot.type === "cargo") label = "真实库存 · 可用";
-    if (installed && slot.type === "dock") label = "待配属 " + stockShips + " 艘";
-    if (installed && slot.type === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
-    // 名册上限是全局规则（recruit.js ROSTER_CAP = 20），不归属任何舱段；容量展示移到舰基总览栏。
-    if (!installed && slot.type === "invent" && plan.invent <= 0) label = "核心 Lv.2 解锁";
+    if (installed && t === "smelt") { const q = baseQueueState("smelt", Data.Recipes.SMELT); label = q.count ? q.label : "精炼待命"; progress = q.progress; }
+    if (installed && t === "manufacture") { const q = baseQueueState("manufacture", Data.Recipes.COMPONENT); label = q.count ? q.label : "总装待命"; progress = q.progress; }
+    if (installed && t === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
+    if (installed && t === "equip") { const q = baseQueueState("equip", null); label = q.count ? q.label : "制造待命"; progress = q.progress; }
+    if (installed && t === "cargo") label = "真实库存 · 可用";
+    if (installed && t === "dock") label = "待配属 " + stockShips + " 艘";
+    if (installed && t === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
     const special = slot.special ? " special" : "";
-    return '<button class="base-module base-' + slot.type + (selected ? " selected" : "") + special + (!installed ? " empty" : "") + '" style="grid-column:' + slot.x + ';grid-row:' + slot.y + ';--module-color:' + esc(def.color) + '" data-act="baseinfo:' + slot.id + '">'
+    return '<button class="base-module ' + (installed ? "base-" + t : "base-" + slot.type) + (selected ? " selected" : "") + special + (!installed ? " empty" : "") + '" style="grid-column:' + slot.x + ';grid-row:' + slot.y + ';--module-color:' + esc(def.color) + '" data-act="baseinfo:' + slot.id + '">'
       + (slot.special ? '<i class="base-special-mark" title="特化舱位">✦</i>' : "")
       + '<span class="base-module-icon">' + def.icon + '</span><b>' + (installed ? esc(def.name) : "空舱位") + '</b>'
-      + '<small>' + esc(installed ? shortDesc[slot.type] : "兼容：" + def.name) + '</small>'
+      + '<small>' + esc(installed ? (shortDesc[t] || "") : "空舱位 · 待装配") + '</small>'
       + '<span class="base-module-status">' + esc(label) + (progress ? " · " + Math.round(progress * 100) + "%" : "") + '</span></button>';
   }
 
   function baseFocusPanel(plan, hull) {
     if (baseFocus === "core" || baseFocus === "") {
-      const specialActive = !!Engine.Base.moduleAt(state, hull.specialSlot.id);
+      const _sp = Engine.Base.moduleAt(state, hull.specialSlot.id);
+      const specialActive = !!(_sp && _sp.type === hull.specialSlot.id);   // 折中：特化位须装对应类型才激活
       return '<div class="base-core-inspector"><span class="eyebrow">UNIQUE COMMAND CORE</span><h3>唯一舰基核心</h3>'
         + '<div class="base-focus-title">' + esc(hull.name) + ' · ' + esc(plan.name) + ' Lv.' + plan.lv + '</div>'
         + '<div class="dim">核心编号 ' + esc(state.base.coreId) + '。更换母舰只改变船体和舱位拓扑，核心等级、燃料、库存与工业队列继续归属本舰基。</div>'
@@ -1150,13 +1145,16 @@
     }
     const slot = Engine.Base.slotById(state, baseFocus);
     if (!slot) return '<h3>舰基核心</h3><div class="dim">选择舱位查看模块与连接状态。</div>';
-    const def = Data.Ships.baseModuleByType(slot.type);
-    const installed = Engine.Base.moduleAt(state, slot.id);
+    const inst = Engine.Base.moduleAt(state, slot.id);   // 折中：明细跟随已装舱段类型
+    const installed = !!inst;
+    const t = inst ? inst.type : null;
+    const nativeDef = Data.Ships.baseModuleByType(slot.type);
+    const def = inst || nativeDef || { name: "空舱位", color: "#3a4a52", icon: "＋", energy: 0 };
     const effects = Engine.Base.slotEffects(state, slot.id);
-    const energyLine = slot.type === "energy"
-      ? '发电输出 +' + Data.Ships.ENERGY_OUTPUT
-      : '电力占用 ' + (def.energy || 0);
-    let html = '<span class="eyebrow">COMPARTMENT / ' + esc(slot.type.toUpperCase()) + '</span><h3>' + esc(def.name) + '</h3>';
+    const energyLine = !inst ? "未装配"
+      : (t === "energy" ? '发电输出 +' + Data.Ships.ENERGY_OUTPUT
+        : '电力占用 ' + (def.energy || 0));
+    let html = '<span class="eyebrow">COMPARTMENT / ' + esc((t || slot.type).toUpperCase()) + '</span><h3>' + esc(installed ? def.name : "空舱位") + '</h3>';
     html += '<div class="base-focus-title">' + (installed ? "已装配" : "空舱位") + ' · ' + esc(hull.name) + '</div>';
     html += '<div class="dim">' + esc(def.desc) + '</div>';
     html += '<div class="base-focus-energy">⚡ ' + energyLine + '　·　电网 ' + Engine.Base.energyUsed(state) + ' / ' + Engine.Base.energyBudget(state) + '</div>';
@@ -1177,8 +1175,8 @@
       // 右侧舱段库上线后两套入口会状态不同步，按用户决策 ④ 收成一行指引。
       const choices = Engine.Base.availableModules(state, slot.id);
       html += '<div class="base-module-library-title">装配方式</div>';
-      html += '<div class="dim base-module-library-tip">从舰船图右侧的<b>舱段库</b>拖入「' + esc(def.name) + '」即可装配'
-        + (choices.length ? '（库中有 ' + choices.length + ' 个可用）' : '（库中暂无同型舱段，先拆下其他位置的）')
+      html += '<div class="dim base-module-library-tip">从舰船图右侧的<b>舱段库</b>拖入任意舱段即可装配'
+        + (choices.length ? '（库中有 ' + choices.length + ' 个可用舱段）' : '（舱段库暂无空闲舱段，先拆下其他位置的）')
         + '；拖到已占用的舱位会<b>直接交换</b>，原舱段自动退回舱段库。</div>';
     }
     return html;
@@ -1217,10 +1215,12 @@
   // 驻舱面板：一人一岗。驻舱只提供技能倍率，**不产经验**（经验只在批次真产出时结算）。
   function stationPanel(st, slot) {
     const B = Engine.Base, S = Engine.Settle;
-    const isTrain = slot.type === "habitat";
-    const isCmd = slot.type === "command";
+    const st0 = B.moduleAt(st, slot.id);   // 折中：驻舱技能跟随已装舱段类型
+    const t = st0 ? st0.type : null;
+    const isTrain = t === "habitat";
+    const isCmd = t === "command";
     const worker = B.stationedAt(st, slot.id);
-    const fixedSkill = isTrain ? null : (STATION_SKILL[slot.type] || null);
+    const fixedSkill = isTrain ? null : (STATION_SKILL[t] || null);
     const lvOf = (mm, key) => S.levelOf(((mm && mm.skills) || {})[key] || 0);
     let h = '<div class="base-station">';
     h += '<div class="base-station-head"><b>驻舱</b>';
@@ -1238,7 +1238,7 @@
       h += '<span class="base-station-who">' + esc(worker.name) + extra + '</span>';
       h += '<button class="sm ghost" data-act="station:clear:' + slot.id + '">撤下</button>';
     } else {
-      const pen = STATION_SKILL[slot.type] ? ' · 该队列耗时 +40%' : '';
+      const pen = STATION_SKILL[t] ? ' · 该队列耗时 +40%' : '';
       h += '<span class="base-station-none">无人' + pen + '</span>';
     }
     h += '</div>';
@@ -3268,14 +3268,14 @@
         const slotId = b, mid = act.split(":")[3];
         const slot = B.slotById(state, slotId);
         const opts = { slotId: slotId };
-        if (slot && slot.type === "habitat") opts.trainSkill = habitatSkill;
+        if (slot && (Engine.Base.moduleAt(state, slot.id) || {}).type === "habitat") opts.trainSkill = habitatSkill;
         const r = D.assign(state, mid, "station", opts);
         toast(r.ok ? "已驻舱" : r.err);
         renderView(); refreshOpenModuleModal(); return;
       }
       if (a === "train") {
         const mm = state.members.find(x => x.id === b);
-        const slot = B.stateSlots(state).find(s => s.type === "habitat");
+        const slot = B.stateSlots(state).find(s => (B.moduleAt(state, s.id) || {}).type === "habitat");
         if (!mm) return;
         if (!slot) { toast("本舰没有演训舱"); return; }
         // 默认练它最高的一项 —— 修掉旧版「演训恒练激光」的 bug
@@ -3562,11 +3562,9 @@
     const slotEl = hit && hit.closest ? hit.closest(".base-module") : null;
     if (slotEl && !slotEl.classList.contains("base-core")) {
       if (d.kind === "stock") {
-        // 同类型即可落（空的=装配、已占=交换），异类型给拒绝反馈
-        const m = state.base.modules.owned.find(x => x.id === d.moduleId);
+        // 折中：任意类型舱段均可落（空的=装配、已占=交换），不再按类型拒绝
         const sid = baseSlotIdOf(slotEl);
-        const slot = sid ? Engine.Base.slotById(state, sid) : null;
-        markBaseDrop(slotEl, !(m && slot && slot.type === m.type));
+        markBaseDrop(slotEl, false);
       } else if (slotEl !== d.el) {
         markBaseDrop(slotEl, false);
       }

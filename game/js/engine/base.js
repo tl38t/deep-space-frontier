@@ -105,7 +105,7 @@
     base.modules.installed = base.modules.installed.filter(entry => {
       if (!entry || !validSlots.has(entry.slotId) || seen.has(entry.slotId)) return false;
       const module = owned.get(entry.moduleId);
-      if (!module || module.type !== validSlots.get(entry.slotId)) return false;
+      if (!module) return false;   // 折中：任意舱段可装任意格，不再校验 module.type === 槽位原生类型
       seen.add(entry.slotId);
       return true;
     });
@@ -172,7 +172,7 @@
     if (!slot || slot.type === "core") return [];
     const modules = state.base.modules || { owned: [], installed: [] };
     const used = new Set(modules.installed.map(x => x.moduleId));
-    return modules.owned.filter(m => m.type === slot.type && !used.has(m.id));
+    return modules.owned.filter(m => !used.has(m.id));  // 折中：任意未安装的舱段都可装入任意格
   }
 
   function buyBlueprint(state, hullId) {
@@ -207,7 +207,6 @@
     if (installation(state, slotId)) return { ok: false, err: "请先拆下当前模块" };
     const module = state.base.modules.owned.find(m => m.id === moduleId);
     if (!module) return { ok: false, err: "模块不在库存中" };
-    if (module.type !== slot.type) return { ok: false, err: "模块与舱位不兼容" };
     if (state.base.modules.installed.some(x => x.moduleId === moduleId)) return { ok: false, err: "该模块已安装" };
     // 能源门禁（§1.5）：安装后将超出电网预算则拒绝。
     // 注意：装「能源舱」会即时提升预算（+ENERGY_OUTPUT），故其可用预算须计入自身发电，否则过载时永远无法自救（死锁）。
@@ -326,8 +325,9 @@
     let multiplier = 1;
     for (const slot of slots) {
       if (!installedTypes.get(slot.id)) continue;
-      if (slot.special && slot.special.id === slot.type && slot.special.queue === specialKey) multiplier *= slot.special.speedMult;
-      if (slot.type !== "energy" && slot.type !== "cargo") continue;
+      const st = installedTypes.get(slot.id);   // 折中：功能跟随已装舱段类型
+      if (slot.special && slot.special.id === st && slot.special.queue === specialKey) multiplier *= slot.special.speedMult;
+      if (st !== "energy" && st !== "cargo") continue;
       for (const other of slots) {
         if (Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) !== 1) continue;
         for (const rule of LINK_RULES) {

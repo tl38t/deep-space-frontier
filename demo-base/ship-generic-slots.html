@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通用槽 · 方案 B 交互 demo（深空星疆）</title>
+<style>
+  :root{
+    --bg:#0b1318; --panel:#0f1b22; --line:rgba(80,150,170,.35);
+    --txt:#cfe6ee; --dim:#7f97a3; --ok:#67d4a1; --bad:#ef7b87; --warn:#e7b45d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.5 "Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:18px 20px 60px;}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{background:transparent;color:var(--dim);border:0;padding:7px 14px;cursor:pointer;font-size:13px}
+  .seg button.on{background:#173039;color:var(--txt)}
+  .seg button.on.b{background:#1d2f3a;color:var(--warn)}
+  select,label{font-size:13px;color:var(--dim)}
+  select{background:#10202a;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
+  @media(max-width:820px){.layout{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:14px;margin:0 0 12px;color:#9fd0dd;font-weight:600;letter-spacing:.04em}
+  /* 船体网格：真实 layout 坐标（1-based），5 列 × 5 行 */
+  .grid{display:grid;grid-template-columns:repeat(5,64px);grid-template-rows:repeat(5,64px);
+    gap:8px;justify-content:center}
+  .slot{width:64px;height:64px;border-radius:10px;border:1px dashed rgba(120,160,175,.45);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:rgba(10,20,26,.6);cursor:pointer;position:relative;user-select:none;transition:.12s}
+  .slot:hover{border-color:var(--warn)}
+  .slot.filled{border-style:solid}
+  .slot.held-target{border-color:var(--ok);box-shadow:0 0 0 2px rgba(103,212,161,.4)}
+  .slot .ico{font-size:22px;line-height:1}
+  .slot .nm{font-size:10px;color:var(--txt);text-align:center;padding:0 2px}
+  .slot .en{font-size:9px;color:var(--dim)}
+  .slot .src{position:absolute;top:3px;right:4px;font-size:8px;color:var(--dim)}
+  .slot.empty .nm{color:var(--dim);font-size:11px}
+  /* 模块调色板 */
+  .pal{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+  .pal button{display:flex;align-items:center;gap:5px;background:rgba(10,20,26,.7);
+    border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:6px 9px;cursor:pointer;font-size:12px}
+  .pal button:hover{border-color:var(--warn)}
+  .pal button .ico{font-size:15px}
+  .pal button .ct{font-size:10px;color:var(--dim)}
+  .pal button.held{outline:2px solid var(--ok)}
+  /* 电网报告 */
+  .pwr{margin-top:6px}
+  .prow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(80,150,170,.18)}
+  .prow b{font-variant-numeric:tabular-nums}
+  .st{font-weight:700}
+  .st.ok{color:var(--ok)} .st.bad{color:var(--bad)}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+    background:#3a1418;color:#ffd9dd;border:1px solid #ef7b87;padding:9px 16px;border-radius:9px;
+    font-size:13px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .notes{margin-top:18px;font-size:12.5px;color:var(--dim)}
+  .notes code{background:#10202a;padding:1px 5px;border-radius:4px;color:#9fd0dd}
+  .legend{font-size:11.5px;color:var(--dim);margin-top:10px}
+  .legend b{color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>通用槽方案 B · 交互 demo</h1>
+  <div class="sub">真实数据：<code>BASE_MODULES</code>（energy 占用）、<code>ENERGY_OUTPUT=100</code>、<code>BODY_LEVELS</code>、拓荒者级 <code>layout</code>。电网本就按舱段算，B 只去掉装配的类型门禁。</div>
+
+  <div class="bar">
+    <div class="seg" id="mode">
+      <button data-m="B" class="on b">B · 通用槽（任意舱段装任意格）</button>
+      <button data-m="OLD">现状 · 类型绑定</button>
+    </div>
+    <label>本体等级
+      <select id="body">
+        <option value="0">Lv.1 空间站（电网 80）</option>
+        <option value="1">Lv.2 星堡（电网 180）</option>
+        <option value="2">Lv.3 星城（电网 320）</option>
+        <option value="3">Lv.4 深空要塞（电网 520）</option>
+      </select>
+    </label>
+    <button id="reset" style="background:#173039;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer">重置为初始布局</button>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <h2>舰基母舰 · 舱位拓扑（拖放式装配）</h2>
+      <div class="grid" id="grid"></div>
+      <div class="legend">点击左侧调色板里的舱段「拿起」→ 点船上的空格放下；点已占用格可<b>交换</b>；不选直接点已占用格 = 卸回调色板。<br>船形坐标与游戏中完全一致（<code>layout</code>）。</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card">
+        <h2>模块调色板（库存）</h2>
+        <div class="pal" id="pal"></div>
+      </div>
+      <div class="card">
+        <h2>电网报告（按舱段实时计算）</h2>
+        <div class="pwr" id="pwr"></div>
+        <div class="legend">供能预算 = 本体外壳电网 + 已装<b>能源舱</b>数 × 100。<br>负载 = 各已装舱段的 <code>energy</code> 占用之和（能源舱自身 0）。<br>超预算时工业队列按比例降速（下限 0.1）。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes" id="notes"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== 真实数据（取自 game/js/data/ships.js） ===== */
+const ENERGY_OUTPUT = 100;
+const BASE_MODULES = {
+  energy:      { type:"energy",      name:"能源舱",     ico:"⚡", color:"#e7b45d", energy:0 },
+  cargo:       { type:"cargo",       name:"仓储舱",     ico:"▣",  color:"#79a9ff", energy:5 },
+  smelt:       { type:"smelt",       name:"精炼环",     ico:"⚗",  color:"#67d4a1", energy:20 },
+  manufacture: { type:"manufacture", name:"总装船坞",   ico:"⌬",  color:"#42d6e8", energy:30 },
+  equip:       { type:"equip",       name:"制造车间",   ico:"⚒",  color:"#e08a5a", energy:15 },
+  invent:      { type:"invent",      name:"发明舱",     ico:"◇",  color:"#b28cff", energy:40 },
+  dock:        { type:"dock",        name:"舰队泊位",   ico:"◈",  color:"#b28cff", energy:10 },
+  command:     { type:"command",     name:"指挥塔",     ico:"⌁",  color:"#e8c46a", energy:10 },
+  habitat:     { type:"habitat",     name:"演训舱",     ico:"⌂",  color:"#ef7b87", energy:10 },
+  booster:     { type:"booster",     name:"反应实验室", ico:"⚗",  color:"#c98bff", energy:25 },
+};
+/* 拓荒者级 layout：[列,行] 1-based；core 独立，其余 10 类各占一格 = 旧版「类型绑定」的「应装类型」 */
+const LAYOUT = { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2],
+  invent:[2,2], dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5], equip:[4,2] };
+const BODY_ENERGY = [80,180,320,520];
+const SPECIAL = { pos:[4,4], id:"smelt", name:"矿脉导流舱", mult:0.94 }; /* 特化舱位：该坐标本属 smelt */
+
+/* ===== 状态 ===== */
+let MODE = "B";
+let BODY = 0;
+let held = null;                 // 当前拿起的模块 type
+let placed = {};                 // slotKey -> moduleType | undefined（core 固定）
+const SLOT_KEYS = Object.keys(LAYOUT).filter(k=>k!=="core");
+
+/* 折中范围：每类恰好 1 份（与 createInitialBase 一致），自由摆放、可卸下留空，不允许多造。
+   电网只能因「卸下/装回」而升降（无法凭空多装能源舱）。 */
+let pool = {};
+function initPool(){
+  pool = {};
+  for(const t of Object.keys(BASE_MODULES)) pool[t]=1;
+}
+function initPlaced(){
+  placed = {};
+  for(const k of SLOT_KEYS) placed[k] = k;   // 初始：每格装「应装类型」
+}
+
+/* ===== 电网（与 base.js 同口径） ===== */
+function powerReport(){
+  let gens=0, used=0;
+  for(const k of SLOT_KEYS){ const t=placed[k]; if(!t) continue;
+    if(t==="energy") gens++; else used += BASE_MODULES[t].energy; }
+  const budget = BODY_ENERGY[BODY] + gens*ENERGY_OUTPUT;
+  return { budget, used, gens, ok: used<=budget, deficit: Math.max(0,used-budget) };
+}
+
+/* ===== 渲染 ===== */
+function render(){
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  // 5x5 网格，按坐标放
+  for(const k of SLOT_KEYS){
+    const [x,y] = LAYOUT[k];
+    const t = placed[k];
+    const d = t ? BASE_MODULES[t] : null;
+    const el = document.createElement("div");
+    el.className = "slot " + (t?"filled":"empty");
+    el.style.gridColumn = x; el.style.gridRow = y;
+    if(d){
+      el.style.borderColor = d.color;
+      el.innerHTML = `<div class="ico" style="color:${d.color}">${d.ico}</div>`
+        + `<div class="nm">${d.name}</div><div class="en">⚡${d.energy}</div>`;
+    } else {
+      el.innerHTML = `<div class="nm">空舱位</div>`;
+    }
+    // 特化位标记
+    if(SPECIAL.pos[0]===x && SPECIAL.pos[1]===y){
+      const sp = document.createElement("div");
+      sp.className="src"; sp.style.color="#67d4a1"; sp.textContent="✦特化";
+      el.appendChild(sp);
+    }
+    el.onclick = ()=>onSlotClick(k);
+    grid.appendChild(el);
+  }
+  // 调色板
+  const pal = document.getElementById("pal");
+  pal.innerHTML = "";
+  for(const t of Object.keys(BASE_MODULES)){
+    const d = BASE_MODULES[t];
+    const b = document.createElement("button");
+    b.className = (held===t?"held":"");
+    b.innerHTML = `<span class="ico" style="color:${d.color}">${d.ico}</span>${d.name}`
+      + `<span class="ct">×${pool[t]||0} · ⚡${d.energy}</span>`;
+    b.onclick = ()=>onPalClick(t);
+    pal.appendChild(b);
+  }
+  // 电网
+  const p = powerReport();
+  document.getElementById("pwr").innerHTML =
+    `<div class="prow"><span>外壳电网（Lv.${BODY+1}）</span><b>${BODY_ENERGY[BODY]}</b></div>`
+    + `<div class="prow"><span>能源舱发电 ×${p.gens}</span><b>+${p.gens*ENERGY_OUTPUT}</b></div>`
+    + `<div class="prow"><span>供能预算</span><b>${p.budget}</b></div>`
+    + `<div class="prow"><span>负载（已装舱段占用）</span><b>${p.used}</b></div>`
+    + `<div class="prow"><span>余量</span><b style="color:${p.ok?'var(--ok)':'var(--bad)'}">${p.budget-p.used}</b></div>`
+    + `<div class="prow"><span class="st ${p.ok?'ok':'bad'}">${p.ok?'● 电网充足':'● 电网超载 '+p.deficit}</span><b></b></div>`;
+  renderNotes();
+}
+
+function renderNotes(){
+  const n = document.getElementById("notes");
+  if(MODE==="B"){
+    n.innerHTML = `当前：<b style="color:var(--warn)">B 通用槽</b> —— 任意舱段可装任意格，无「不兼容」提示。`
+      + `电网只随「装了哪些舱段」变化：多装一个能源舱 +100 供能；卸下精炼环 −20 负载。`
+      + `试试把能源舱拖到额外空格，或把某生产舱卸回调色板，看右侧电网实时变化。`;
+  } else {
+    n.innerHTML = `当前：<b>现状类型绑定</b> —— 每个格只认自己的「应装类型」，放错会弹「舱位不兼容」。`
+      + `切回 B 即可任意摆放。`;
+  }
+}
+
+/* ===== 交互 ===== */
+function onPalClick(t){
+  if((pool[t]||0)<=0){ toast("库存不足"); return; }
+  held = (held===t) ? null : t;
+  render();
+}
+function onSlotClick(k){
+  const cur = placed[k];
+  if(held){
+    // 拿起的有货 → 放到 k
+    if(MODE==="OLD" && cur===undefined && k!==held){
+      // 现状：空格只接受「应装类型」
+      if(k!==held){ toast("舱位不兼容：这里是「"+BASE_MODULES[k].name+"」位"); return; }
+    }
+    if(MODE==="OLD" && cur!==undefined && cur!==k){
+      toast("舱位不兼容：这里是「"+BASE_MODULES[k].name+"」位"); return;
+    }
+    // 取出原占用退回库存
+    if(cur) pool[cur] = (pool[cur]||0)+1;
+    placed[k] = held;
+    pool[held] = (pool[held]||0)-1;
+    held = null;
+    render(); return;
+  }
+  // 没拿起的：点已占用 = 卸回库存
+  if(cur){ pool[cur]=(pool[cur]||0)+1; placed[k]=undefined; render(); }
+}
+
+let toastT;
+function toast(msg){
+  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),1600);
+}
+
+/* ===== 控件 ===== */
+document.querySelectorAll("#mode button").forEach(b=>{
+  b.onclick=()=>{
+    MODE=b.dataset.m;
+    document.querySelectorAll("#mode button").forEach(x=>x.classList.remove("on","b"));
+    b.classList.add("on"); if(MODE==="B") b.classList.add("b");
+    held=null; render();
+  };
+});
+document.getElementById("body").onchange=e=>{ BODY=+e.target.value; render(); };
+document.getElementById("reset").onclick=()=>{ initPool(); initPlaced(); held=null; render(); };
+
+initPool(); initPlaced(); render();
+</script>
+</body>
+</html>

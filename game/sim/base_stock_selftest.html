@@ -166,22 +166,36 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
       st.base.modules.installed.length === st.base.modules.owned.length - 1,
       st.base.modules.installed.length + "/" + st.base.modules.owned.length);
 
-    // === E. 异类型 = 拒绝，库与舱位都不变 ===
-    var cargoBefore = installedId(st, "cargo");
-    await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-cargo"));
-    ok("E1 拖到异类型舱位被拒绝（仓储舱原样）", installedId(st, "cargo") === cargoBefore, installedId(st, "cargo"));
-    ok("E2 被拒后精炼环仍在库中", stockIds(st).indexOf("module_smelt_01") >= 0, stockIds(st).join(","));
+    // === E. 折中：异类型不再拒绝，拖到已占用的异类型舱位 = 直接交换 ===
+    // 还原「每类 1 件」规范库存（D 段临时补的 smelt_02 要清掉，否则原生重置会出现同槽两位）
+    st.base.modules.owned = st.base.modules.owned.filter(function (m) { return m.id !== "module_smelt_02"; });
+    // 重置到原生全装，再只拆 smelt 段（cargo 段仍占 cargo 槽），构造干净的「库里有 smelt_01、cargo 槽占用」状态
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
+    B.uninstallModule(st, "smelt");
+    await toBase();
+    await wait(200);
+    ok("E0 重置后 cargo 槽=cargo_01、smelt 槽空", installedId(st, "cargo") === "module_cargo_01" && !installedId(st, "smelt"),
+      installedId(st, "cargo") + "/" + installedId(st, "smelt"));
+    var dbgE = await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-cargo"));
+    ok("E1 折中：拖 smelt 段到占用的 cargo 槽 = 交换（不再拒绝）", installedId(st, "cargo") === "module_smelt_01",
+      installedId(st, "cargo") + " | hit=" + dbgE.hit);
+    ok("E2 折中：旧 cargo 段退回库、smelt 槽仍空（占位的旧段回库，不互换）",
+      stockIds(st).indexOf("module_cargo_01") >= 0 && !installedId(st, "smelt"),
+      "stock=" + stockIds(st).join(",") + " smelt=" + installedId(st, "smelt"));
 
-    // === F. 引擎层：replaceModule 的失败回滚 ===
-    var r1 = B.replaceModule(st, "smelt", "module_cargo_01");
-    ok("F1 类型不兼容时 replaceModule 报错", !r1.ok, r1.ok ? "ok" : r1.err);
-    ok("F2 失败后原舱段仍在原位（回滚生效）", installedId(st, "smelt") === "module_smelt_02", installedId(st, "smelt"));
-    ok("F3 失败后 installed 数量不变", st.base.modules.installed.length === st.base.modules.owned.length - 1,
-      st.base.modules.installed.length);
+    // === F. 引擎层：折中后 replaceModule 不再因类型拒绝；仍拦「已装 / 核心」 ===
+    // 重置回原生全装，再拆 smelt 与 cargo 两段，使 cargo_01 落入库中
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
+    B.uninstallModule(st, "smelt");
+    B.uninstallModule(st, "cargo");
+    await wait(50);
+    var r1 = B.replaceModule(st, "smelt", "module_cargo_01");   // cargo_01 在库，装入 smelt 槽（异类型，折中允许）
+    ok("F1 折中：类型不匹配也能装入（replaceModule 成功）", r1.ok, r1.ok ? "" : r1.err);
+    ok("F1b 装完后 cargo 段落在 smelt 槽", installedId(st, "smelt") === "module_cargo_01", installedId(st, "smelt"));
     var r2 = B.replaceModule(st, "core", "module_smelt_01");
     ok("F4 唯一核心拒绝 replaceModule", !r2.ok, r2.ok ? "ok" : r2.err);
-    var r3 = B.replaceModule(st, "smelt", "module_smelt_02");
-    ok("F5 换成已装在同一舱位的同一件 = 拒绝", !r3.ok, r3.ok ? "ok" : r3.err);
+    var r3 = B.replaceModule(st, "smelt", "module_cargo_01");   // cargo_01 已装在 smelt 槽
+    ok("F5 同一件已装在该槽 = 拒绝（仍拦重复安装）", !r3.ok, r3.ok ? "ok" : r3.err);
 
     // === G. 舱位详情弹窗：模块库列表退役，改一行指引（决策 ④） ===
     // 腾空发明舱：把它的模块拆下（引擎直调，避免依赖拖拽布局）

@@ -51,7 +51,10 @@ const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
     let rc=qa(".wb-overlay.active .wb-recipe");
     ok("默认分类卡片数 = 该分类配方数", rc.length===cats[0].n, rc.length+" vs "+cats[0].n);
     ok("全量配方不再一次性铺满(少于总数)", rc.length<(W().BOOSTER_RECIPES||[]).length, rc.length+" < "+(W().BOOSTER_RECIPES||[]).length);
-    ok("「选择配方」右侧显示当前分类与条数", new RegExp(cats[0].name+" · "+cats[0].n+" 个配方").test((q(".wb-overlay.active .wb-sec")||{}).textContent||""), (q(".wb-overlay.active .wb-sec")||{}).textContent);
+    // ⚠️ 宽屏分栏后左栏多出 .wb-queue-sec，泛化的 `.wb-sec` 首个匹配已不再是「选择配方」，
+    //    精确锚到右栏标题（display:contents 不影响选择器匹配，宽屏/窄屏通用）。
+    const secSel = ".wb-overlay.active .wb-col-right > .wb-sec";
+    ok("「选择配方」右侧显示当前分类与条数", new RegExp(cats[0].name+" · "+cats[0].n+" 个配方").test((q(secSel)||{}).textContent||""), (q(secSel)||{}).textContent);
 
     // 3) 切到「战斗武器」分类
     const tgt=cats.find(c=>c.id==="combatWeapon")||cats[cats.length-1];
@@ -63,7 +66,7 @@ const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
     ok("切换后仅该分类高亮", sel0.length===1 && sel0[0].getAttribute("data-act")==="workbench:cat:"+tgt.id, sel0[0]?sel0[0].textContent.trim():"无");
     rc=qa(".wb-overlay.active .wb-recipe");
     ok("切换后卡片数 = 新分类配方数", rc.length===tgt.n, rc.length+" vs "+tgt.n);
-    ok("切换分类后清空已选配方", !q(".wb-overlay.active .wb-recipe.sel") && !!q('.wb-overlay.active [data-act="workbench:add"][disabled]'));
+    ok("切换分类后清空已选配方", !q(".wb-overlay.active .wb-recipe.sel") && !!q('.wb-overlay.active .wb-detail-empty'));
 
     // 4) 选中 + 连续 + 加入队列 + 取消
     const first=rc[0];

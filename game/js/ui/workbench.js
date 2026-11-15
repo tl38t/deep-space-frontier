@@ -49,8 +49,8 @@
   function slotIfIndustrial(st, slotId) {
     const B = Base(); if (!B || !st) return null;
     const slot = B.slotById(st, slotId);
-    if (!slot || !INDUSTRIAL[slot.type]) return null;
-    if (!B.moduleAt(st, slot.id)) return null;
+    const inst = slot && B.moduleAt(st, slot.id);   // 折中：工业类型跟随已装舱段，而非槽位原生类型
+    if (!slot || !inst || !INDUSTRIAL[inst.type]) return null;
     return slot;
   }
 
@@ -66,7 +66,8 @@
     let slotId = null;
     for (const inst of insts) {
       const slot = B.slotById(st, inst.slotId);
-      if (slot && slot.type === "manufacture" && B.moduleAt(st, slot.id)) { slotId = slot.id; break; }
+      const m = slot && B.moduleAt(st, slot.id);
+      if (slot && m && m.type === "manufacture") { slotId = slot.id; break; }
     }
     if (!slotId) { CTX.toast("总装船坞未安装，无法强化"); return; }
     open(slotId);
@@ -86,10 +87,11 @@
     //    后果：① 点 × 只关最上面那个，玩家会看到「关了还开着」；② 残留 overlay 的明细
     //    容器一直留在文档里，全局选择器/点按命中会命中旧内容（station_selftest 因此长期假红）。
     if (cur && cur.overlay) close();
+    const instType = (Base().moduleAt(st, slotId) || {}).type;
     cur = {
-      slotId: slotId, type: slot.type,
+      slotId: slotId, type: instType,
       // 发明舱双子页签：效率研究（默认）/ 图纸合成。总装船坞沿用 component/ship。
-      tab: slot.type === "manufacture" ? "component" : slot.type === "invent" ? "study" : null,
+      tab: instType === "manufacture" ? "component" : instType === "invent" ? "study" : null,
       boosterCat: null,       // 反应实验室当前分类（null = 取第一个有配方的分类）
       equipCat: null,         // 制造车间当前分类（高槽/中槽/低槽/改装件）
       dcnt: {},               // 拆解回收页：每装备选中的拆解数量 { equipId: n }
@@ -223,8 +225,21 @@
   }
 
   // ---------- 渲染 ----------
-  function inStr(obj) {
-    return Object.entries(obj).map(([k, v]) => CTX.resIcon(k) + CTX.resName(k) + " " + v).join(" ");
+  // 通用「材料清单」渲染：每种原料附带当前库存持有量（用户需求：配方卡显示有多少原料）。
+  // 数据键与入队/结算同口径（st.res[k]），数值取自 state()。
+  // showStock=false 时仅显示需求（拆解回收的「预计回收」行是产出语义，不显示持有量，避免误读成需求）。
+  function inStr(obj, showStock) {
+    const st = state();
+    const show = showStock !== false;   // 默认显示库存
+    return Object.entries(obj).map(([k, v]) => {
+      const have = (st && st.res && st.res[k]) || 0;
+      const short = show && have < v;
+      const stock = show
+        ? '<i class="wb-stock">持 ' + CTX.fmt(have) + '</i>'
+        : '';
+      return '<span class="wb-io' + (short ? " short" : "") + (show ? '" data-sk="' + k + '" data-need="' + v + '"' : '"') + '>'
+        + '<span class="wb-ic">' + CTX.resIcon(k) + '</span>' + CTX.resName(k) + ' <b>×' + CTX.fmt(v) + '</b>' + stock + '</span>';
+    }).join(" ");
   }
 
   // 当前选中配方的「单批成本」，六类队列统一入口（必须与入队/结算同口径，否则可产批数会骗人）：
@@ -280,6 +295,165 @@
     if (!cur.recipeId) return "选择" + (isStudy() ? "蓝图" : "配方") + "后显示可产" + noun;
     const mx = maxBatches(unitCost(cur.recipeId));
     return mx > 0 ? "按当前材料 · 最多 <b>" + mx + "</b> " + noun : "材料不足，无法排产";
+  }
+
+  // 是否走「左明细栏 + 配方网格 + 右明细面板」三段式（标准配方类：精炼/发明/部件/造船/增强剂/装备制造）。
+  // 研究、拆解回收、强化舰船各自有独立布局，不走此分支。
+  function isRecipeDetailType() {
+    const isDismantle = (cur.type === "equip" && cur.tab === "dismantle");
+    const isEnhance = (cur.type === "manufacture" && cur.tab === "enhance");
+    return !isStudy() && !isDismantle && !isEnhance;
+  }
+
+  // 单张配方卡的「门禁 + 可负担」状态，渲染与每秒刷新共用，避免两处各算一遍漂移。
+  function cardState(id) {
+    const st = state();
+    let can = false, gateOk = true, gateText = "";
+    if (isStudy()) {
+      const M = I(), bp = M && M.blueprintByKey(id);
+      gateOk = !!(bp && M.isUnlocked(st, bp));
+      gateText = gateOk ? "" : "科研 Lv" + (bp ? bp.gate : "?") + " 解锁";
+      can = gateOk && Prod().canAfford(st.res, bp.costCycle);
+    } else if (cur.type === "manufacture" && cur.tab === "ship") {
+      const s = Data().Ships.shipById(id);
+      gateOk = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel));
+      gateText = gateOk ? "" : "需核心 Lv" + (s ? s.bodyLevelReq + 1 : "?");
+      can = gateOk && Prod().canAfford(st.res, s ? s.cost : {});
+    } else if (cur.type === "equip") {
+      const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
+      if (!eq) { gateOk = false; gateText = "—"; can = false; }
+      else {
+        const gate = Prod().equipGateLevel(eq.level);
+        const lvOk = st.base.bodyLevel >= gate;
+        const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
+        gateOk = lvOk && bpOk;
+        gateText = !lvOk ? "需核心 Lv" + (gate + 1) : (!bpOk ? "需蓝图" : "");
+        can = gateOk && Prod().canAfford(st.res, eq.cost || {});
+      }
+    } else if (cur.type === "booster") {
+      const B = BEngine(); const cost = B && B.craftCost(st, id); const r = B && B.getRecipe(id);
+      gateOk = !!(r && (!r.requiresBlueprint || (st.ownedBlueprints || []).includes("booster:" + id)));
+      gateText = gateOk ? "" : "需蓝图";
+      can = gateOk && cost && Prod().canAfford(st.res, cost);
+    } else {
+      const r = recipeTable().find(function (x) { return x.id === id; });
+      gateOk = !!(r && (r.bodyLevelReq == null || st.base.bodyLevel >= r.bodyLevelReq));
+      gateText = gateOk ? "" : "需舰基 Lv" + (r ? r.bodyLevelReq + 1 : "?");
+      can = gateOk && r && Prod().canAfford(st.res, r.in);
+    }
+    return { can: can, gateOk: gateOk, gateText: gateText };
+  }
+
+  // 已拥有该产物数量（1 代卡片「库存 N」口径）：资源走 st.res[out]，舰船/装备/增强剂走各自库存。
+  function ownedOf(id) {
+    const st = state();
+    if (cur.type === "manufacture" && cur.tab === "ship") {
+      return (st.ships || []).filter(function (s) { return s.shipId === id; }).length;
+    }
+    if (cur.type === "equip") {
+      return (st.equipment && st.equipment[id]) || 0;
+    }
+    if (cur.type === "booster") {
+      const r = (window.BOOSTER_RECIPES || []).find(function (x) { return x.id === id; });
+      const itemId = r && r.itemId;
+      return itemId ? ((st.res && st.res["booster:" + itemId]) || 0) : 0;
+    }
+    const r = recipeTable().find(function (x) { return x.id === id; });
+    const key = r && r.out;
+    return key ? ((st.res && st.res[key]) || 0) : 0;
+  }
+
+  // 紧凑产品卡（1 代式）：产出图标 + 名称×qty + 状态徽章(可制造/缺料/锁定) + 耗时/库存(已拥有产物)。
+  // durTxt 已含单位（如「20s / 批」「20s / 艘」），不再在此拼接。
+  function recipeCardHTML(id, name, qty, icon, durTxt) {
+    const s = cardState(id);
+    const badgeCls = s.gateOk ? (s.can ? "can" : "short") : "lock";
+    const badgeTxt = s.gateOk ? (s.can ? "可制造" : "缺料") : (s.gateText || "锁定");
+    const owned = ownedOf(id);
+    const sel = cur.recipeId === id ? " sel" : "";
+    const dis = s.can ? "" : " dis";
+    return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + id + '" data-own-id="' + id + '">'
+      + '<div class="wb-ric">' + (icon || "") + CTX.esc(name) + (qty > 1 ? ' <span class="wb-qty">×' + qty + '</span>' : '') + '</div>'
+      + '<span class="wb-badge ' + badgeCls + '">' + badgeTxt + '</span>'
+      + '<div class="wb-r2">' + durTxt + ' · 库存 <span class="wb-own">' + CTX.fmt(owned) + '</span></div>'
+      + '</button>';
+  }
+
+  // 选中配方的「耗时」文案（与卡片 / 明细脚注共用）。
+  function recipeDurText(id) {
+    const st = state();
+    const durMult = Base().queueDurationMultiplier(st, cur.type);
+    if (cur.type === "manufacture" && cur.tab === "ship") {
+      const s = Data().Ships.shipById(id);
+      return (s ? Math.round(s.buildTime * durMult) : 0) + "s / 艘";
+    }
+    if (cur.type === "equip") {
+      const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
+      return (eq ? Math.round(eq.time * durMult) : 0) + "s / 批";
+    }
+    if (cur.type === "booster") {
+      const B = BEngine(); const r = B && B.getRecipe(id);
+      const t = r ? r.time : 0; const d = Math.round(t * durMult * 10) / 10;
+      return (durMult < 0.995 ? t + "s → " : "") + d + "s / 批";
+    }
+    const r = recipeTable().find(function (x) { return x.id === id; });
+    const t = r ? r.dur : 0; const d = Math.round(t * durMult * 10) / 10;
+    return (durMult < 0.995 ? t + "s → " : "") + d + "s / 批";
+  }
+
+  // 「连续生产数量」步进器 + 可产批数提示 + 加入队列按钮。
+  // 标准配方类放在右侧明细面板内；研究类放在右栏底部；拆解/强化各自维护自己的按钮。
+  function batchControlsHtml() {
+    const st = state();
+    const hs = headStats();
+    const full = hs.used >= hs.total;
+    let canAdd = !!cur.recipeId && !full;
+    if (isStudy() && cur.recipeId) {
+      const M = I(), b = M && M.blueprintByKey(cur.recipeId);
+      if (!b || !M.isUnlocked(st, b)) canAdd = false;
+    }
+    const selName = cur.recipeId ? recipeOutName(cur.recipeId) : "未选择";
+    return '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
+      + '<div class="wb-stepper">'
+      + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
+      + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
+      + '<button class="wb-step" data-act="workbench:count:1">+</button>'
+      + '<span class="wb-chips">'
+      + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
+      + '<span class="wb-chip" data-act="workbench:chip:10">×10</span>'
+      + '<span class="wb-chip" data-act="workbench:chip:100">×100</span>'
+      + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
+      + '</span></div>'
+      + '<div class="wb-cap">' + capText() + '</div>'
+      + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
+      + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>';
+  }
+
+  // 右侧「配方明细面板」：产出 + 制造材料表(含库存持有量，缺料标红) + 耗时/最多制造批数 + 批量控制。
+  // 未选中时给占位；这一段是 1 代式「原料库存只在选中后显示」的核心。
+  function recipeDetailHtml() {
+    if (!cur.recipeId) return '<div class="wb-detail-empty">选择配方后显示明细</div>';
+    const st = state();
+    const cost = unitCost(cur.recipeId) || {};
+    const outName = recipeOutName(cur.recipeId);
+    const dur = recipeDurText(cur.recipeId);
+    const mx = maxBatches(cost);
+    const mats = Object.keys(cost).length
+      ? Object.entries(cost).map(function (kv) {
+          const k = kv[0], v = kv[1];
+          const have = (st.res && st.res[k]) || 0;
+          const short = have < v;
+          return '<div class="wb-mat' + (short ? " short" : "") + '">'
+            + '<span class="wb-mat-name">' + '<span class="wb-ic">' + CTX.resIcon(k) + '</span>' + CTX.resName(k) + ' <b>×' + CTX.fmt(v) + '</b></span>'
+            + '<span class="wb-mat-have" data-sk="' + k + '" data-need="' + v + '">持 ' + CTX.fmt(have) + '</span>'
+            + '</div>';
+        }).join("")
+      : '<div class="wb-detail-empty">该配方无需材料</div>';
+    return '<div class="wb-detail-title">' + CTX.esc(outName) + '</div>'
+      + '<div class="wb-sec">制造材料</div>'
+      + '<div class="wb-mats">' + mats + '</div>'
+      + '<div class="wb-detail-foot">' + dur + ' · 最多制造 <b>' + mx + '</b> 批</div>'
+      + batchControlsHtml();
   }
 
   // ---------- 发明舱 · 效率研究（66 张蓝图，由真实配方派生） ----------
@@ -382,17 +556,10 @@
     const durMult = Base().queueDurationMultiplier(st, cur.type);
     const R = recipeTable();
     if (!R.length) return '<div class="wb-empty">该舱段暂无可生产配方。</div>';
-    return R.map(r => {
-      const gateOk = r.bodyLevelReq == null || st.base.bodyLevel >= r.bodyLevelReq;
-      const gateTag = gateOk ? "" : '<span class="wb-lock">需舰基 Lv' + (r.bodyLevelReq + 1) + '</span>';
-      const can = gateOk && Prod().canAfford(st.res, r.in);
+    return R.map(function (r) {
       const adjDur = Math.round(r.dur * durMult * 10) / 10;
-      const sel = cur.recipeId === r.id ? " sel" : "";
-      const dis = can ? "" : " dis";
-      return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + r.id + '">'
-        + '<div class="wb-r1">' + inStr(r.in) + ' → ' + CTX.resIcon(r.out) + CTX.resName(r.out) + ' ×' + r.qty + '</div>'
-        + '<div class="wb-r2">' + (durMult < 0.995 ? r.dur + 's → ' + adjDur + 's' : adjDur + 's') + ' / 批 ' + gateTag + '</div>'
-        + '</button>';
+      const durTxt = (durMult < 0.995 ? r.dur + "s → " : "") + adjDur + "s / 批";
+      return recipeCardHTML(r.id, CTX.resName(r.out), r.qty, '<span class="wb-ic">' + CTX.resIcon(r.out) + '</span> ', durTxt);
     }).join("");
   }
 
@@ -455,17 +622,9 @@
     const st = state();
     const durMult = Base().queueDurationMultiplier(st, "manufacture");
     const ships = Object.values(Data().Ships.SHIPS).sort((a, b) => a.classTier - b.classTier || a.bodyLevelReq - b.bodyLevelReq);
-    return ships.map(s => {
-      const ok = Data().Ships.canBuildAt(s.id, st.base.bodyLevel);
-      const canAfford = Prod().canAfford(st.res, s.cost);
+    return ships.map(function (s) {
       const adjDur = Math.round(s.buildTime * durMult);
-      const lock = ok ? "" : '<span class="wb-lock">核心 Lv' + (s.bodyLevelReq + 1) + '</span>';
-      const sel = cur.recipeId === s.id ? " sel" : "";
-      const dis = (ok && canAfford) ? "" : " dis";
-      return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + s.id + '">'
-        + '<div class="wb-r1">' + inStr(s.cost) + ' → ' + CTX.esc(s.name) + ' ×1</div>'
-        + '<div class="wb-r2">' + adjDur + 's / 艘 ' + lock + '</div>'
-        + '</button>';
+      return recipeCardHTML(s.id, s.name, 1, "", adjDur + "s / 艘");
     }).join("");
   }
 
@@ -479,19 +638,11 @@
     const R = (window.BOOSTER_RECIPES || []).filter(r => bInCat(r, cat));
     if (!R.length) return '<div class="wb-empty">该分类暂无可生产配方。</div>';
     const hasBp = (id) => (st.ownedBlueprints || []).includes("booster:" + id);
-    return R.map(r => {
-      const cost = (B && B.craftCost(st, r.id)) || {};
-      const gateOk = !r.requiresBlueprint || hasBp(r.id);
-      const gateTag = gateOk ? "" : '<span class="wb-lock">需蓝图</span>';
-      const can = gateOk && Prod().canAfford(st.res, cost);
+    return R.map(function (r) {
       const adjDur = Math.round(r.time * durMult * 10) / 10;
-      const sel = cur.recipeId === r.id ? " sel" : "";
-      const dis = can ? "" : " dis";
+      const durTxt = (durMult < 0.995 ? r.time + "s → " : "") + adjDur + "s / 批";
       const item = (B && B.getItem(r.itemId)) || { name: r.name };
-      return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + r.id + '">'
-        + '<div class="wb-r1">' + inStr(cost) + ' → ' + CTX.esc(item.name) + ' ×' + ((r.output && r.output.qty) || 1) + '</div>'
-        + '<div class="wb-r2">' + (durMult < 0.995 ? r.time + 's → ' + adjDur + 's' : adjDur + 's / 批') + ' ' + gateTag + '</div>'
-        + '</button>';
+      return recipeCardHTML(r.id, item.name, (r.output && r.output.qty) || 1, "", durTxt);
     }).join("");
   }
 
@@ -516,23 +667,10 @@
     const durMult = Base().queueDurationMultiplier(st, "equip");
     const R = E.bySlot(equipCat());
     if (!R.length) return '<div class="wb-empty">该分类暂无可制造装备。</div>';
-    return R.map(eq => {
+    return R.map(function (eq) {
       const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
-      const gate = Prod().equipGateLevel(eq.level);
-      const lvLocked = st.base.bodyLevel < gate;
-      const bpLocked = !!eq.requiresBlueprint && !(E.hasBlueprint && E.hasBlueprint(st, eq.id));
-      const locked = lvLocked || bpLocked;
-      const gateTag = lvLocked ? '<span class="wb-lock">需核心 Lv' + (gate + 1) + '</span>'
-        : bpLocked ? '<span class="wb-lock">需蓝图</span>' : "";
-      const cost = eq.cost || {};
-      const can = !locked && Prod().canAfford(st.res, cost);
       const adjDur = Math.round(eq.time * durMult);
-      const sel = cur.recipeId === eq.id ? " sel" : "";
-      const dis = can ? "" : " dis";
-      return '<button class="wb-recipe' + sel + dis + '" data-act="workbench:sel:' + eq.id + '">'
-        + '<div class="wb-r1">' + inStr(cost) + ' → ' + CTX.esc(eq.name) + ' T' + tier + '</div>'
-        + '<div class="wb-r2">' + (durMult < 0.995 ? Math.round(eq.time) + 's → ' + adjDur + 's' : adjDur + 's / 批') + ' ' + gateTag + '</div>'
-        + '</button>';
+      return recipeCardHTML(eq.id, eq.name + " T" + tier, 1, "", adjDur + "s / 批");
     }).join("");
   }
   function dismantleCards() {
@@ -548,7 +686,7 @@
       const have = inv[id];
       const cnt = Math.max(1, Math.min(have, (cur.dcnt && cur.dcnt[id]) || 1));
       const prev = Prod().dismantlePreview(st, id, cnt);
-      const backTxt = Object.keys(prev.back).length ? inStr(prev.back) : "无回收";
+      const backTxt = Object.keys(prev.back).length ? inStr(prev.back, false) : "无回收";
       return '<div class="wb-dcard">'
         + '<div class="wb-r1">' + CTX.esc(eq.name) + ' · 库存 ' + have + '</div>'
         + '<div class="wb-r2">回收率 ' + Math.round(prev.rate * 100) + '% · 预计回收：' + backTxt + '</div>'
@@ -630,10 +768,12 @@
       const M = I(), b = M && M.blueprintByKey(cur.recipeId);
       if (!b || !M.isUnlocked(st, b)) canAdd = false;   // 门槛未达：卡片灰显且不可入队
     }
+    // 研究详情单独包一层：选蓝图时 patch() 只重写这个容器，
+    // 搜索框 #ivq 与筛选条的节点身份保持不变（否则输入到一半点蓝图会失焦、光标归零）。
     const studyHead = isStudy()
       ? '<div class="iv-search"><input id="ivq" type="text" placeholder="搜索蓝图名称 / key" value="'
         + attrEsc(cur.studyQuery) + '"></div>'
-        + studyFiltersHtml() + studyDetailHtml()
+        + studyFiltersHtml() + '<div class="wb-study-detail">' + studyDetailHtml() + '</div>'
       : "";
     const hint = isStudy()
       ? '<div class="wb-note">研究消耗星币与改装图纸（图纸合成页产出，考古亦有掉落）。ME 减免在制造报价生效，'
@@ -651,43 +791,191 @@
       try { dh = cur.detailBuilder() || ""; } catch (e) { dh = ""; }
       if (dh) detail = '<div class="wb-detail base-focus-panel">' + dh + '</div>';
     }
-    return '<div class="wb-panel">'
-      + '<div class="wb-head"><div><b>' + CTX.esc(hs.name) + '</b><span class="wb-sub">槽位 ' + hs.used + ' / ' + hs.total + ' · 耗时 −' + hs.speedPct + '%</span></div>'
-      + '<span class="wb-close" data-act="workbench:close">×</span></div>'
-      + detail
-      + tabs
+    // PC 宽屏（≥900px）左右分栏：左栏 = 舱段明细 + 队列（状态类），右栏 = 页签 / 配方 / 操作区。
+    // 窄屏靠 CSS 把两个 wrapper 设成 display:contents 摊平，再用 order 还原原本的上下顺序，
+    // 因此只维护一份 DOM，render()/patch()/refresh() 的后代选择器无需分叉。
+    const leftHtml = detail
+      + '<div class="wb-sec wb-queue-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
+      + '<div class="wb-queue">' + queueRows() + '</div>';
+    const rightHtml = tabs
       + catBar
       + studyHead
       + '<div class="wb-sec">' + (isStudy() ? "选择蓝图" : "选择配方")
       + (isStudy() ? '<span class="iv-catcount">共 ' + studyList().length + ' 张 · 当前 ' + studyVisible().length + ' 张</span>'
           : (hasCats && catName ? '<span class="wb-catcount">' + CTX.esc(catName) + ' · ' + catN + (cur.type === "equip" ? ' 件' : ' 个配方') + '</span>' : ''))
       + '</div>'
-      + '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + (isEnhance ? enhanceCards() : recipeCards()) + '</div>'
-        + (isDismantle || isEnhance ? '' : (
-              '<div class="wb-sec">' + (cur.type === "smelt" ? "连续冶炼数量" : isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
-        + '<div class="wb-stepper">'
-        + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
-        + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
-        + '<button class="wb-step" data-act="workbench:count:1">+</button>'
-        + '<span class="wb-chips">'
-        + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
-        + '<span class="wb-chip" data-act="workbench:chip:10">×10</span>'
-        + '<span class="wb-chip" data-act="workbench:chip:100">×100</span>'
-        + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
-        + '</span></div>'
-        + '<div class="wb-cap">' + capText() + '</div>'
-        + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
-        + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>'
-      ))
-      + (isDismantle ? '<div class="wb-note">按精炼工艺科技的回收率无损返还装备制造成本材料（合金 / 气体 / 行星料）。回收率 = 科技树·精炼工艺，默认 100%，点了相关科技按倍率返还。</div>' : hint)
-      + '<div class="wb-sec wb-queue-sec">队列 · ' + hs.used + ' / ' + hs.total + (full ? ' <span class="wb-full">已满</span>' : '') + '</div>'
-      + '<div class="wb-queue">' + queueRows() + '</div>'
+      + (isEnhance
+        ? '<div class="wb-enh-wrap">' + enhanceCards() + '</div>'
+        : '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + recipeCards() + '</div>')
+      + (isRecipeDetailType()
+        ? '<div class="wb-recipe-detail base-focus-panel">' + recipeDetailHtml() + '</div>'
+        : "")
+      + (isStudy()
+        ? ('<div class="wb-sec">' + (isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
+      + '<div class="wb-stepper">'
+      + '<button class="wb-step" data-act="workbench:count:-1">−</button>'
+      + '<div class="wb-count">' + CTX.fmt(cur.count) + '</div>'
+      + '<button class="wb-step" data-act="workbench:count:1">+</button>'
+      + '<span class="wb-chips">'
+      + '<span class="wb-chip" data-act="workbench:chip:1">×1</span>'
+      + '<span class="wb-chip" data-act="workbench:chip:10">×10</span>'
+      + '<span class="wb-chip" data-act="workbench:chip:100">×100</span>'
+      + '<span class="wb-chip cont" data-act="workbench:chip:9999">连续</span>'
+      + '</span></div>'
+      + '<div class="wb-cap">' + capText() + '</div>'
+      + '<button class="wb-add' + (canAdd ? "" : " off") + '" data-act="workbench:add"' + (canAdd ? "" : " disabled") + '>'
+      + (isStudy() ? "加入研究队列" : "加入队列") + ' · ' + CTX.esc(selName) + '</button>')
+        : "")
+      + (isDismantle ? '<div class="wb-note">按精炼工艺科技的回收率无损返还装备制造成本材料（合金 / 气体 / 行星料）。回收率 = 科技树·精炼工艺，默认 100%，点了相关科技按倍率返还。</div>' : hint);
+    return '<div class="wb-panel">'
+      + '<div class="wb-head"><div><b>' + CTX.esc(hs.name) + '</b><span class="wb-sub">槽位 ' + hs.used + ' / ' + hs.total + ' · 耗时 −' + hs.speedPct + '%</span></div>'
+      + '<span class="wb-close" data-act="workbench:close">×</span></div>'
+      + '<div class="wb-col-left">' + leftHtml + '</div>'
+      + '<div class="wb-col-right">' + rightHtml + '</div>'
       + '</div>';
+  }
+
+  // 滚动位置的「快照 / 还原」：窄屏只有 .wb-panel 滚；PC 宽屏 panel 定高不滚，
+  // 改由左栏、右侧配方区、研究详情三个容器各自滚。按选择器统一收一份，布局切换无需分支判断。
+  const SCROLL_SLOTS = [null, ".wb-col-left", ".wb-col-right > .wb-recipes", ".wb-study-detail"];
+  function captureScroll(panel) {
+    return SCROLL_SLOTS.map(function (sel) {
+      const el = sel ? panel.querySelector(sel) : panel;
+      return el ? el.scrollTop : null;
+    });
+  }
+  function restoreScroll(panel, snap) {
+    if (!snap) return;
+    SCROLL_SLOTS.forEach(function (sel, i) {
+      const v = snap[i];
+      if (!v) return;
+      const el = sel ? panel.querySelector(sel) : panel;
+      if (el) el.scrollTop = v;   // 浏览器自动 clamp 到新的可滚上限
+    });
   }
 
   function render() {
     if (!cur || !cur.overlay) return;
+    // 整块重建会替换 .wb-panel 及内部所有滚动容器，滚动位置随之归零。
+    // 结构性动作（切页签 / 分类 / 蓝图档位 / 装拆数量）仍需整块重建，这里统一记住位置再还原；
+    // 轻量动作改走 patch()，根本不进这里。
+    const oldPanel = cur.overlay.querySelector(".wb-panel");
+    const snap = oldPanel ? captureScroll(oldPanel) : null;
     cur.overlay.innerHTML = buildBody();
+    const newPanel = cur.overlay.querySelector(".wb-panel");
+    if (newPanel) restoreScroll(newPanel, snap);
+  }
+
+  // 配方明细面板「制造材料」行的实时库存（持 N）+ 缺料标红，以及卡片「库存 N」（已拥有产物），
+  // 随库存每秒变化（结算/派遣/其它队列都在动）实时刷新；只改文本与 .short 态，
+  // 不重建节点、不丢 hover/滚动。由 refresh() 每秒调用。
+  function syncStock(panel) {
+    const st = state();
+    if (!st) return;
+    // 右侧明细面板：每行「原料 ×N  持 M」，M 取自 st.res[k]（与入队/结算同口径）
+    panel.querySelectorAll(".wb-mat-have[data-sk]").forEach(function (node) {
+      const k = node.getAttribute("data-sk");
+      const need = parseFloat(node.getAttribute("data-need")) || 0;
+      const have = (st.res && st.res[k]) || 0;
+      const t = "持 " + CTX.fmt(have);
+      if (node.textContent !== t) node.textContent = t;
+      const short = have < need;
+      const mat = node.closest(".wb-mat");
+      if (mat && mat.classList.contains("short") !== short) mat.classList.toggle("short", short);
+    });
+    // 卡片「库存 N」（已拥有该产物数）：build 时写了 data-own-id，这里按 state 重算，资源/舰/装/剂全覆盖
+    panel.querySelectorAll(".wb-recipe[data-own-id]").forEach(function (node) {
+      const id = node.getAttribute("data-own-id");
+      const tgt = node.querySelector(".wb-own");
+      if (!tgt || !id) return;
+      const t = CTX.fmt(ownedOf(id));
+      if (tgt.textContent !== t) tgt.textContent = t;
+    });
+  }
+
+  // 「可产批数」提示：只在文本真变了才写 DOM，与 refresh()/patch() 共用一份逻辑。
+  function syncCap(panel) {
+    const cap = panel.querySelector(".wb-cap");
+    if (!cap) return;
+    const capHtml = capText();
+    if (cap.innerHTML !== capHtml) cap.innerHTML = capHtml;
+  }
+
+  // 「加入队列」按钮的文案 / 可用态：随 recipeId、槽位占用、科研门槛变化。
+  // 拆解回收页每张卡片自带 .wb-add（不是底部主按钮）、强化页文案带次数，两者由各自页面维护，跳过。
+  function syncAdd(panel) {
+    if (cur.type === "equip" && cur.tab === "dismantle") return;
+    if (cur.type === "manufacture" && cur.tab === "enhance") return;
+    const add = panel.querySelector(".wb-add");
+    if (!add) return;
+    const hs = headStats();
+    let canAdd = !!cur.recipeId && hs.used < hs.total;
+    if (isStudy() && cur.recipeId) {
+      const M = I(), b = M && M.blueprintByKey(cur.recipeId);
+      if (!b || !M.isUnlocked(state(), b)) canAdd = false;   // 门槛未达：按钮置灰
+    }
+    if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
+    if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
+    else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
+    const addTxt = (isStudy() ? "加入研究队列 · " : "加入队列 · ")
+      + (cur.recipeId ? recipeOutName(cur.recipeId) : "未选择");
+    if (add.textContent !== addTxt) add.textContent = addTxt;
+  }
+
+  // 强化子页签的 .wb-add 文案含连续次数（其余页面由 syncAdd 管）。
+  function syncEnhanceAdd(panel) {
+    if (!(cur.type === "manufacture" && cur.tab === "enhance")) return;
+    const add = panel.querySelector(".wb-add");
+    if (!add) return;
+    const m = (state().members || []).find(x => x.id === cur.enhMember);
+    const txt = "强化 " + CTX.fmt(cur.count) + " 次 · " + (m ? m.name : "");
+    if (add.textContent !== txt) add.textContent = txt;
+  }
+
+  // 轻量交互（选配方 / 改数量 / 切 ME·TE）只更新受影响的那一小块，不整块重建面板：
+  // 保住滚动位置、hover、焦点和卡片节点身份。结构性变化仍走 render()（内部已恢复 scrollTop）。
+  function patch(kind) {
+    if (!cur || !cur.overlay || !cur.overlay.classList.contains("active")) { render(); return; }
+    const panel = cur.overlay.querySelector(".wb-panel");
+    if (!panel) { render(); return; }
+    try {
+      if (kind === "sel") {
+        const prefix = "workbench:sel:";
+        panel.querySelectorAll(".wb-recipe[data-act^='workbench:sel:']").forEach(function (node) {
+          const id = (node.getAttribute("data-act") || "").slice(prefix.length);
+          node.classList.toggle("sel", !!cur.recipeId && id === cur.recipeId);
+        });
+        const slot = panel.querySelector(".wb-study-detail");
+        if (slot) {   // 效率研究页：换详情，但搜索框 / 筛选条节点不动
+          const dh = studyDetailHtml();
+          if (slot.innerHTML !== dh) slot.innerHTML = dh;
+        }
+        const det = panel.querySelector(".wb-recipe-detail");
+        if (det && isRecipeDetailType()) {   // 标准配方：换明细（材料 + 库存 + 批量控制），不丢滚动/焦点
+          const dh = recipeDetailHtml();
+          if (det.innerHTML !== dh) det.innerHTML = dh;
+        }
+      }
+      if (kind === "sdir") {
+        // .iv-dir 的高亮由 studyDetailHtml() 按 cur.studyDir 生成，重写详情容器即可，不必再单独 toggle。
+        const slot = panel.querySelector(".wb-study-detail");
+        if (slot) {
+          const dh = studyDetailHtml();
+          if (slot.innerHTML !== dh) slot.innerHTML = dh;
+        }
+      }
+      if (kind === "count") {
+        const txt = CTX.fmt(cur.count);
+        panel.querySelectorAll(".wb-count").forEach(function (el) {
+          if (el.textContent !== txt) el.textContent = txt;
+        });
+        syncEnhanceAdd(panel);
+      }
+      syncCap(panel);
+      syncAdd(panel);
+    } catch (e) {
+      render();   // 就地更新万一失败就退回整块重建：宁可闪一下，也不能显示错状态
+    }
   }
 
   // 每秒由 renderView 调用：仅就地更新「动态部分」（队列进度 / 头部槽位 / 加按钮可用态 / 配方可负担），
@@ -697,7 +985,7 @@
     if (!cur || !cur.overlay || !cur.overlay.classList.contains("active")) return;
     const panel = cur.overlay.querySelector(".wb-panel");
     if (!panel) return;
-    const scrollTop = panel.scrollTop;
+    const snap = captureScroll(panel);   // 1Hz 刷新里队列块会改高度，宽屏左栏滚动位置也要保住
     const hs = headStats();
     const full = hs.used >= hs.total;
 
@@ -713,30 +1001,14 @@
     const qHtml = queueRows();
     if (q && q.innerHTML !== qHtml) q.innerHTML = qHtml;
 
-    // 可产批数随库存每秒变化（结算/派遣/其它队列都在动），同样只在文本真变了才写 DOM。
-    const cap = panel.querySelector(".wb-cap");
-    if (cap) {
-      const capHtml = capText();
-      if (cap.innerHTML !== capHtml) cap.innerHTML = capHtml;
-    }
-
-    let canAdd = !!cur.recipeId && !full;
-    if (isStudy() && cur.recipeId) {
-      const M = I(), b = M && M.blueprintByKey(cur.recipeId);
-      if (!b || !M.isUnlocked(state(), b)) canAdd = false;
-    }
-    const add = panel.querySelector(".wb-add");
-    if (add && !(cur.type === "equip" && cur.tab === "dismantle") && !(cur.type === "manufacture" && cur.tab === "enhance")) {
-      if (add.classList.contains("off") !== !canAdd) add.classList.toggle("off", !canAdd);
-      if (canAdd) { if (add.hasAttribute("disabled")) add.removeAttribute("disabled"); }
-      else { if (!add.hasAttribute("disabled")) add.setAttribute("disabled", ""); }
-      const addTxt = (isStudy() ? "加入研究队列 · " : "加入队列 · ")
-        + (cur.recipeId ? recipeOutName(cur.recipeId) : "未选择");
-      if (add.textContent !== addTxt) add.textContent = addTxt;
-    }
+    // 可产批数随库存每秒变化（结算/派遣/其它队列都在动），加按钮可用态随槽位变化。
+    // 与 patch() 共用同一份同步逻辑，避免两处各写一遍导致文案/门禁漂移。
+    syncCap(panel);
+    syncAdd(panel);
 
     updateRecipeAffordability(panel);
-    panel.scrollTop = scrollTop;
+    syncStock(panel);   // 配方卡「持有量」实时刷新（不动节点，保 hover/滚动）
+    restoreScroll(panel, snap);
   }
 
   // 仅刷新顶部「舱段明细」块（驻舱撤下/安装模块等会改变明细内容）。容器已是 .base-focus-panel 复用样式。
@@ -817,15 +1089,16 @@
     if (!cur) return;
     const p = act.split(":");
     const sub = p[1];
+    let light = null;   // 非 null = 只就地更新受影响的那一小块，不整块重建面板
     // ⚠️ 蓝图 key 自带冒号（"booster:xxx"），sel 的参数要 join 回去。
-    if (sub === "sel") cur.recipeId = p.slice(2).join(":");
+    if (sub === "sel") { cur.recipeId = p.slice(2).join(":"); light = "sel"; }
     else if (sub === "stier") {
       cur.studyTier = Math.max(0, Math.min(5, parseInt(p[2], 10) || 0));
       cur.recipeId = null;
     }
-    else if (sub === "sdir") cur.studyDir = p[2] === "te" ? "te" : "me";
-    else if (sub === "count") cur.count = clampN(cur.count + (parseInt(p[2], 10) || 0));
-    else if (sub === "chip") cur.count = clampN(parseInt(p[2], 10) || 1);
+    else if (sub === "sdir") { cur.studyDir = p[2] === "te" ? "te" : "me"; light = "sdir"; }
+    else if (sub === "count") { cur.count = clampN(cur.count + (parseInt(p[2], 10) || 0)); light = "count"; }
+    else if (sub === "chip") { cur.count = clampN(parseInt(p[2], 10) || 1); light = "count"; }
     else if (sub === "tab") { cur.tab = p[2]; cur.recipeId = null; cur.studyQuery = ""; cur.studyTier = 0; }
     else if (sub === "enhsel") { cur.enhMember = p.slice(2).join(":"); render(); return; }
     // 切分类（反应实验室 / 制造车间共用）：清空已选配方，避免「加入队列」仍指向看不见的另一分类配方
@@ -854,7 +1127,8 @@
       render(); return;
     }
     else if (sub === "close") { close(); return; }
-    render();
+    if (light) { patch(light); return; }
+    render();   // 结构性变化（tab / cat / stier / enhsel / 拆解数量）：整块重画，render() 内部恢复滚动位置
   }
 
   return { init: init, open: open, openEnhance: openEnhance, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };

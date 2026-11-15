@@ -90,7 +90,7 @@ function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return fal
   const wbOpen2=await until(()=>q(".wb-overlay.active"), 8000);
   ok("点击总装船坞弹出工作台", wbOpen2);
   const tabs=qa(".wb-tab");
-  ok("总装船坞含两个页签（部件/造船）", tabs.length===2, tabs.length);
+  ok("总装船坞含三个页签（部件/造船/强化舰船）", tabs.length===3, tabs.length);
   // 切到造船页签
   const shipTab=tabs.find(t=>/造船/.test(t.textContent));
   if(shipTab){ clickEl(shipTab); await wait(200); }

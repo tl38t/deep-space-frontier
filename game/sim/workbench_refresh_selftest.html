@@ -49,7 +49,7 @@ function widthPct(){ const i=q(".wb-job .wb-bar i"); if(!i) return -1; const m=/
 
   const recipes=qa(".wb-recipe");
   ok("精炼配方卡片渲染（≥1）", recipes.length>=1, recipes.length);
-  // 选第一个配方（render 整体重建一次，使网格稳定）
+  // 选第一个配方（2026-11-13 起只就地更新选中态，不再整块重建面板）
   if(recipes.length){ clickEl(recipes[0]); await wait(200); }
 
   // === 核心断言：跨多个 1Hz 刷新周期，配方网格首卡节点身份不变 ===

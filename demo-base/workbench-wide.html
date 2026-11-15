@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段工作台 · PC 宽屏大页面布局（已实装）</title>
+<style>
+  body { margin:0; padding:14px; background:#0b141c; color:#dbe9f5; font:13px/1.5 "Microsoft YaHei",sans-serif; }
+  .bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .bar b { font-size:14px; margin-right:6px; }
+  .bar button { padding:6px 11px; border:1px solid #3c6e82; border-radius:6px; background:#142531; color:#dbe9f5; cursor:pointer; font-size:12px; }
+  .bar button.on { border-color:#4fc4d3; background:#1d4e78; color:#eaf6fa; }
+  .bar .sep { width:1px; height:20px; background:#2c5663; margin:0 4px; }
+  .bar span { color:#8fa6b4; font-size:11.5px; }
+  #stage { width:100%; overflow:hidden; position:relative; border:1px solid #2c5663; border-radius:8px; background:#050b11; }
+  #fr { width:1280px; height:900px; border:0; transform-origin:0 0; display:block; }
+</style></head>
+<body>
+<div class="bar">
+  <b>舱段工作台 · PC 宽屏大页面（已实装）</b>
+  <button id="btnWide" class="on">大页面（左右分栏）</button>
+  <button id="btnOrig">原版（430px 单列）</button>
+  <span class="sep"></span>
+  <button data-slot="smelt" class="slot on">精炼环</button>
+  <button data-slot="manufacture" class="slot">总装船坞</button>
+  <button data-slot="invent" class="slot">发明舱</button>
+  <button data-slot="booster" class="slot">反应实验室</button>
+  <button data-slot="equip" class="slot">制造车间</button>
+  <span>iframe 视口 ≥900px 走产品 CSS 的左右分栏，430px 走窄屏单列；本页零注入、零 DOM 重排，只做视口对照</span>
+</div>
+<div id="stage"><iframe id="fr"></iframe></div>
+<script>
+// 2026-11-13 布局提案已实装到 game/css/main.css + game/js/ui/workbench.js。
+// 本页只负责把真实 index.html 装进不同宽度的 iframe 视口，方便对照宽屏 / 窄屏两套布局。
+var ORIG = /[?&]orig=1/.test(location.search);
+var mSlot = /[?&]slot=([a-z]+)/.exec(location.search);
+var initial = mSlot ? mSlot[1] : "smelt";
+var fr = document.getElementById("fr");
+var stage = document.getElementById("stage");
+var D = function(){ return fr.contentDocument; };
+var W = function(){ return fr.contentWindow; };
+var q = function(s){ try{ return D().querySelector(s); }catch(e){ return null; } };
+var wait = function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
+function until(fn,ms){ ms=ms||20000; var t0=Date.now(); return new Promise(function(res){
+  (function tick(){ var v=false; try{ v=fn(); }catch(e){} if(v) return res(true);
+    if(Date.now()-t0>ms) return res(false); setTimeout(tick,120); })();
+}); }
+
+var VIEW_W = ORIG ? 430 : 1280, VIEW_H = 900;
+function fit(){
+  fr.style.width = VIEW_W + "px";
+  fr.style.height = VIEW_H + "px";
+  var s = Math.min(1, stage.clientWidth / VIEW_W);
+  fr.style.transform = "scale(" + s + ")";
+  stage.style.height = Math.round(VIEW_H * s) + "px";
+}
+window.addEventListener("resize", fit); fit();
+
+function go(orig){
+  var url = location.pathname + "?slot=" + initial + (orig ? "&orig=1" : "");
+  location.href = url;
+}
+document.getElementById("btnWide").onclick = function(){ go(false); };
+document.getElementById("btnOrig").onclick = function(){ go(true); };
+document.getElementById("btnWide").className = ORIG ? "" : "on";
+document.getElementById("btnOrig").className = ORIG ? "on" : "";
+
+async function openSlot(type){
+  var close = q(".wb-close"); if(close) close.click();
+  await wait(180);
+  var btn = q("button.base-" + type);
+  if(!btn) return;
+  btn.click();
+  await until(function(){ return !!q(".wb-overlay.active .wb-panel"); }, 6000);
+}
+document.querySelectorAll(".slot").forEach(function(b){
+  b.onclick = function(){
+    document.querySelectorAll(".slot").forEach(function(x){ x.className = "slot"; });
+    b.className = "slot on";
+    openSlot(b.getAttribute("data-slot"));
+  };
+});
+
+(async function(){
+  fr.src = "../game/index.html?demo=wbwide&t=" + Date.now() + "#base";
+  var booted = await until(function(){ return !!q("#nsk-tabs .tab"); }, 25000);
+  if(!booted) return;
+  await wait(500);
+  var tb = q('[data-act="tab:base"]'); if(tb) tb.click();
+  await until(function(){ return !!q("button.base-smelt"); }, 10000);
+  var b0 = document.querySelector('.slot[data-slot="' + initial + '"]');
+  if(b0){ document.querySelectorAll(".slot").forEach(function(x){ x.className = "slot"; }); b0.className = "slot on"; }
+  await openSlot(initial);
+})();
+</script>
+</body></html>
