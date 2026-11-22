@@ -38,6 +38,14 @@ const realHit=(el)=>{
   return owner===el || el.contains(top);
 };
 const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"); };
+// 开罗化适配：类型 → 当前格位 cellId（旧探针用 baseinfo:<type>，现 UI 为 baseinfo:<x,y>）
+const sid=(type)=>{
+  try{
+    const B=W().NSK.Engine.Base, st=W().NSK.Core.load();
+    const e=st.base.modules.installed.find(x=>{const m=st.base.modules.owned.find(o=>o.id===x.moduleId);return m&&m.type===type;});
+    return e?e.slotId:type;
+  }catch(e){ return type; }
+};
 
 (async function(){
   await nav("../index.html#base");
@@ -73,7 +81,7 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   await until(()=>q('[data-act^="baseinfo:"]'),10000);
 
   // 1) 点精炼环舱段 → 出现驻舱面板
-  const smeltBtn=q('[data-act="baseinfo:smelt"]');
+  const smeltBtn=q('[data-act="baseinfo:'+sid('smelt')+'"]');
   ok("舰基页有舱段入口（精炼环）", !!smeltBtn);
   hit(smeltBtn);
   await wait(400);
@@ -103,7 +111,7 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   ok("撤下后回到「无人」", /无人/.test(txt(q(".base-station-head"))), txt(q(".base-station-head")));
 
   // 5) 演训舱：12 个技能按钮 + 选技能后指派
-  const habBtn=q('[data-act="baseinfo:habitat"]');
+  const habBtn=q('[data-act="baseinfo:'+sid('habitat')+'"]');
   ok("舰基页有演训舱入口", !!habBtn);
   hit(habBtn);
   await wait(400);
@@ -132,10 +140,10 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   //    页面上同时存在 2 个 .base-station（.wb-detail 里一个、.bi-body 里一个）。
   //    全局 q(".base-station") 取文档序靠前的工作台那一份 —— 内容是别的舱段的，
   //    于是断言长期读错元素、假红 22/1（HEAD 起就红，与功能无关；功能本身是好的）。
-  const cmdExists = !!q('[data-act="baseinfo:command"]');
+  const cmdExists = !!q('[data-act="baseinfo:'+sid('command')+'"]');
   ok("指挥塔舱段存在", cmdExists);
   if (cmdExists) {
-    hit(q('[data-act="baseinfo:command"]'));
+    hit(q('[data-act="baseinfo:'+sid('command')+'"]'));
     await until(() => /全队命中/.test(txt(q(".bi-body .base-station"))), 4000);
     ok("指挥塔面板说明全局战斗加成", /全队命中/.test(txt(q(".bi-body .base-station"))), txt(q(".bi-body .base-station-tip")));
   }
@@ -147,10 +155,10 @@ const booted=()=>{ const d=D(); return !!d && !!d.querySelector("#nsk-tabs .tab"
   //    ⚠️ 技能中文名取 SKILL_CN：research 显示为「科研」（不是「研究」）。
   for (const item of [["booster", "科研"], ["equip", "制造"]]) {
     const slotId = item[0], skillCn = item[1];
-    const btn = q('[data-act="baseinfo:' + slotId + '"]');
+    const btn = q('[data-act="baseinfo:' + sid(slotId) + '"]');
     ok("舰基页有舱段入口（" + skillCn + " · " + slotId + "）", !!btn);
     if (!btn) continue;
-    hit(q('[data-act="baseinfo:' + slotId + '"]'));
+    hit(q('[data-act="baseinfo:' + sid(slotId) + '"]'));
     const reSkill = new RegExp(skillCn + " Lv\\.");
     const shown = await until(() => {
       const e = q(".wb-detail .base-station");

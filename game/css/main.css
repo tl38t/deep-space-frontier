@@ -2217,3 +2217,26 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
   .fac-mission-bottom { align-items: stretch; flex-direction: column; }
   .fac-mission-bottom .fac-rewards { padding-top: 5px; border-top: 1px solid rgba(78,119,135,.16); }
 }
+
+/* ===== 舰基开罗化：成套组合 / 特化格 / 建造面板（2026-11-22）===== */
+.base-connections line.combo-line{stroke:rgba(255,196,92,.92);stroke-width:5;stroke-linecap:round;stroke-dasharray:none;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 5px rgba(255,196,92,.75))}
+.base-layout .base-module.combo-active{border-color:rgba(255,196,92,.9)!important;box-shadow:0 0 0 1px rgba(255,196,92,.5) inset,0 0 12px rgba(255,196,92,.3)!important}
+.base-combo-legend{margin-top:10px;padding-top:9px;border-top:1px solid rgba(66,110,139,.28)}
+.combo-chip{display:flex;flex-direction:column;gap:2px;margin:5px 0;padding:6px 8px;border:1px solid rgba(66,110,139,.32);border-left:2px solid rgba(93,119,130,.7);border-radius:6px;background:rgba(9,20,32,.6)}
+.combo-chip b{font-size:11px;color:#9fb4bd}
+.combo-chip span{font-size:10px;color:var(--dim)}
+.combo-chip.on{border-color:rgba(255,196,92,.4);border-left-color:var(--warn);background:rgba(255,196,92,.08)}
+.combo-chip.on b{color:var(--warn)}
+.combo-chip.on span{color:#c8b98f}
+.base-build-panel{margin-top:8px;border-top:1px solid rgba(66,110,139,.3);padding-top:7px}
+.base-build-panel .bb-head{display:flex;flex-direction:column;gap:1px;margin-bottom:6px}
+.base-build-panel .bb-head b{font-size:11px;color:var(--cyan)}
+.base-build-panel .bb-head small{font-size:9px;color:var(--dim);line-height:1.4}
+.bb-row{display:flex;align-items:center;gap:6px;margin:4px 0;padding:4px 5px;border:1px solid rgba(66,110,139,.28);border-radius:6px;background:rgba(10,24,36,.7)}
+.bb-ic{font-size:15px;flex:0 0 18px;text-align:center}
+.bb-tx{display:flex;flex-direction:column;gap:0;min-width:0;flex:1}
+.bb-tx b{font-size:10px;color:#fff;white-space:nowrap}
+.bb-tx small{font-size:9px;color:var(--dim);white-space:nowrap}
+.bb-build{flex:0 0 auto;font-size:9px;padding:3px 5px;line-height:1.2}
+.bb-build:disabled{opacity:.42;cursor:not-allowed}
+@media(max-width:760px){.base-build-panel .bb-head small{white-space:normal}.bb-row{flex-wrap:wrap}.bb-build{width:100%}}

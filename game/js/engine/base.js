@@ -20,14 +20,75 @@
   const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
     ? window.NSK.Data.Ships : require("../data/ships.js");
   const QUEUE_NAMES = { smelt: "精炼", manufacture: "制造", invent: "发明", booster: "增幅剂", equip: "装备" };
-  const LINK_RULES = [
-    { a: "energy", b: "smelt", queue: "smelt", mult: 0.92, name: "能源直供" },
-    { a: "energy", b: "manufacture", queue: "manufacture", mult: 0.94, name: "能源直供" },
-    { a: "energy", b: "equip", queue: "equip", mult: 0.94, name: "能源直供" },
-    { a: "cargo", b: "smelt", queue: "smelt", mult: 0.96, name: "短链物流" },
-    { a: "cargo", b: "manufacture", queue: "manufacture", mult: 0.94, name: "短链物流" },
-    { a: "cargo", b: "equip", queue: "equip", mult: 0.94, name: "短链物流" },
+
+  // ===== 开罗式成套组合（2026-11-22，本作原创，数值均提议待标定）=====
+  // 判定口径：指定的 3 类舱段两两曼哈顿距离 ≤2（聚落口径）。开罗化后纯看实时摆位，无「默认布局」。
+  // kind="duration" 的效果烘进 queueDurationMultiplier（入队锁定）；kind="xp"/"logistics" 运行时生效。
+  const COMBOS = [
+    { id: "foundry",   name: "熔铸总装环", types: ["smelt", "manufacture", "equip"], kind: "duration",
+      queues: ["manufacture", "equip"], mult: 0.90, effect: "制造 / 装备耗时 -10%" },
+    { id: "powergrid", name: "全厂供能网", types: ["energy", "smelt", "manufacture"], kind: "duration",
+      queues: ["smelt", "manufacture"], mult: 0.92, effect: "精炼 / 制造耗时 -8%" },
+    { id: "academy",   name: "指挥演训所", types: ["command", "habitat", "dock"], kind: "xp",
+      queues: [], mult: 1.10, effect: "演训经验 +10%" },
+    { id: "research",  name: "科研闭环",   types: ["energy", "invent", "booster"], kind: "duration",
+      queues: ["invent", "booster"], mult: 0.90, effect: "发明 / 增幅剂耗时 -10%" },
+    { id: "logistics", name: "后勤中枢",   types: ["dock", "command", "energy"], kind: "logistics",
+      queues: [], mult: 1.10, effect: "物流补偿 +10%" },
   ];
+  const MANHATTAN_RADIUS = 2;
+
+  // 当前摆位下所有「已激活」组合。types 任一类型可有多个实例，取距离最近的一组判定。
+  function activeCombos(state) {
+    if (!state || !state.base) return [];
+    // cellId → module type
+    const byCell = new Map();
+    for (const e of (state.base.modules.installed || [])) {
+      const m = state.base.modules.owned.find(x => x.id === e.moduleId);
+      if (m) byCell.set(e.slotId, m.type);
+    }
+    const posOf = cellId => {
+      const [x, y] = cellId.split(",").map(Number);
+      return (Number.isInteger(x) && Number.isInteger(y)) ? [x, y] : null;
+    };
+    const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+    const out = [];
+    for (const combo of COMBOS) {
+      // 每种类型收集其所在格坐标
+      const groups = combo.types.map(t => {
+        const cells = [];
+        for (const [cid, mt] of byCell) if (mt === t) { const p = posOf(cid); if (p) cells.push([cid, p]); }
+        return cells;
+      });
+      if (groups.some(g => !g.length)) continue;
+      // 贪心：固定第一类的每个候选，后两类取距其最近的候选，三者两两 ≤R 即激活
+      let activated = null;
+      for (const a of groups[0]) {
+        for (const b of groups[1]) {
+          if (dist(a[1], b[1]) > MANHATTAN_RADIUS) continue;
+          for (const c of groups[2]) {
+            if (dist(a[1], c[1]) > MANHATTAN_RADIUS || dist(b[1], c[1]) > MANHATTAN_RADIUS) continue;
+            activated = [a[0], b[0], c[0]];
+            break;
+          }
+          if (activated) break;
+        }
+        if (activated) break;
+      }
+      if (activated) out.push({ combo: combo, cells: activated });
+    }
+    return out;
+  }
+  function comboEffectMult(state, kind, queueType) {
+    let mult = 1;
+    for (const a of activeCombos(state)) {
+      const c = a.combo;
+      if (c.kind !== kind) continue;
+      if (kind === "duration" && c.queues.indexOf(queueType) < 0) continue;
+      mult *= c.mult;
+    }
+    return mult;
+  }
 
   function normalize(state) {
     if (!state || !state.base) return state;
@@ -75,40 +136,78 @@
       if (!base.modules.owned.some(m => m && m.id === starter.id)) base.modules.owned.push({ id: starter.id, type: starter.type });
     }
     const hull = Ships.baseHullById(base.hullId);
-    // 舱段布局覆盖（2026-10-29）：玩家拖动交换舱位后的落点，键 = 舱位 id，值 = [x, y]。
-    // 旧档无此字段 → 空对象即「沿用船体蓝图拓扑」，与剧情字段一样靠 ensure 补齐，不升 STATE_VERSION。
-    if (!base.slotPos || typeof base.slotPos !== "object" || Array.isArray(base.slotPos)) base.slotPos = {};
-    const layoutSlots = Ships.baseHullSlots(hull).filter(s => s.type !== "core");
-    const cleanedPos = {};
-    for (const s of layoutSlots) {
-      const p = base.slotPos[s.id];
-      if (!Array.isArray(p) || p.length !== 2) continue;
-      const px = p[0], py = p[1];
-      if (!Number.isInteger(px) || !Number.isInteger(py) || px < 1 || px > 7 || py < 1 || py > 6) continue;
-      if (px === s.x && py === s.y) continue;   // 与默认一致，不必存
-      cleanedPos[s.id] = [px, py];
-    }
-    // 坐标冲突（手改存档 / 跨船体残留）时整套丢弃，回退船体默认布局，避免两张卡叠在同一格。
-    const takenCells = new Set();
-    let layoutConflict = false;
-    for (const s of layoutSlots) {
-      const p = cleanedPos[s.id] || [s.x, s.y];
-      const cell = p[0] + "," + p[1];
-      if (takenCells.has(cell)) { layoutConflict = true; break; }
-      takenCells.add(cell);
-    }
-    base.slotPos = layoutConflict ? {} : cleanedPos;
 
-    const validSlots = new Map(Ships.baseHullSlots(hull).filter(s => s.type !== "core").map(s => [s.id, s.type]));
-    const owned = new Map(base.modules.owned.filter(m => m && m.id && Ships.baseModuleByType(m.type)).map(m => [m.id, m]));
-    const seen = new Set();
-    base.modules.installed = base.modules.installed.filter(entry => {
-      if (!entry || !validSlots.has(entry.slotId) || seen.has(entry.slotId)) return false;
-      const module = owned.get(entry.moduleId);
-      if (!module) return false;   // 折中：任意舱段可装任意格，不再校验 module.type === 槽位原生类型
-      seen.add(entry.slotId);
-      return true;
-    });
+    // ===== 开罗化迁移（2026-11-22，幂等、不升版本）=====
+    // 旧档：installed[].slotId = 舱段类型（"smelt"），另有 base.slotPos 记录玩家换位坐标。
+    // 新档：slotId = 格位坐标（"x,y"），空格自由摆放，slotPos 退役。
+    // 每类型可有多个实例：第 2 个及以后落在同类型的其它可用格（先到先得），无位置则留在库存（installed 中剔除）。
+    const allCells = Ships.hullCells(hull).filter(s => !s.core);
+    const cellIds = new Set(allCells.map(s => s.id));
+    const oldTypeSlot = e => !!(e && typeof e.slotId === "string" && e.slotId.indexOf(",") < 0);
+    const oldPos = (base.slotPos && typeof base.slotPos === "object" && !Array.isArray(base.slotPos)) ? base.slotPos : {};
+    const newOwned = base.modules.owned.filter(m => m && m.id && Ships.baseModuleByType(m.type));
+    const ownedById = new Map(newOwned.map(m => [m.id, m]));
+
+    if (base.modules.installed.some(oldTypeSlot)) {
+      // 旧档迁移：给每个旧 entry 找一个坐标。优先 slotPos[type]，否则该类型在 layout 的默认坐标；
+      // 若该格已被占，按可用格顺序找第一个空格（支持同类多实例）。
+      const usedCells = new Set();
+      const migrated = [];
+      // 先处理有明确 slotPos 的
+      for (const e of base.modules.installed) {
+        if (!oldTypeSlot(e)) continue;
+        const m = ownedById.get(e.moduleId);
+        if (!m) continue;
+        const p = oldPos[e.slotId] || (hull.layout[e.slotId]);
+        let cid = Array.isArray(p) ? p[0] + "," + p[1] : null;
+        if (!cid || !cellIds.has(cid) || usedCells.has(cid)) {
+          cid = allCells.map(s => s.id).find(id => !usedCells.has(id)) || null;
+        }
+        if (cid && !usedCells.has(cid)) { usedCells.add(cid); migrated.push({ slotId: cid, moduleId: e.moduleId }); }
+      }
+      // 保留本来就是新格式的 entry（理论上迁移中途的档）
+      for (const e of base.modules.installed) {
+        if (oldTypeSlot(e)) continue;
+        if (!e || !cellIds.has(e.slotId) || usedCells.has(e.slotId) || !ownedById.has(e.moduleId)) continue;
+        usedCells.add(e.slotId); migrated.push(e);
+      }
+      base.modules.installed = migrated;
+      if (Array.isArray(state.members)) {
+        // 旧档驻舱 slotId 也是类型 → 平移到该类型实例所在格；找不到则撤下。
+        const cellOfType = t => (base.modules.installed.find(e => ownedById.get(e.moduleId) && ownedById.get(e.moduleId).type === t) || {}).slotId;
+        for (const m of state.members) {
+          if (!m || !m.assignment || m.assignment.type !== "station") continue;
+          const a = m.assignment;
+          if (a.slotId && a.slotId.indexOf(",") < 0) {
+            const cid = a.slotType ? cellOfType(a.slotType) : cellOfType(a.slotId);
+            if (cid) a.slotId = cid;
+            else { m.assignment = null; if (m.status === "stationed") m.status = "idle"; }
+          }
+        }
+      }
+    } else {
+      // 已是新格式：只清洗非法 / 重复格位，避免手改存档导致两模块叠同一格。
+      const usedCells = new Set();
+      base.modules.installed = base.modules.installed.filter(e => {
+        if (!e || !cellIds.has(e.slotId) || usedCells.has(e.slotId) || !ownedById.has(e.moduleId)) return false;
+        usedCells.add(e.slotId);
+        return true;
+      });
+    }
+    base.modules.owned = newOwned;
+    delete base.slotPos;   // 自由摆放后不再有「覆盖默认拓扑」概念
+
+    // 舱段被移除后（如 2026-11-22 删除仓储舱），旧档成员可能仍挂 station 派遣到已不存在的格位。
+    // 只清失效 slotId 的 station 派遣，mine / combat / logistics 等其它派遣一律不动。
+    if (Array.isArray(state.members)) {
+      const validSlotIds = new Set(Ships.hullCells(hull).map(s => s.id));
+      for (const m of state.members) {
+        if (!m || !m.assignment || m.assignment.type !== "station") continue;
+        if (validSlotIds.has(m.assignment.slotId)) continue;
+        m.assignment = null;
+        if (m.status === "stationed") m.status = "idle";
+      }
+    }
     return state;
   }
 
@@ -123,56 +222,103 @@
     const module = installation(state, slotId);
     return module ? Ships.baseModuleByType(module.type) : null;
   }
-  // 生效的舱位拓扑 = 船体蓝图默认 layout + 玩家拖拽覆盖（state.base.slotPos）。
-  // 所有「相邻」判定必须走这里：否则界面显示的邻接关系与耗时/增效计算会分叉。
+  // 可用格拓扑 = 船型可用格（静态，含核心 [3,3]）。开罗化后格子是空容器，
+  // 占用状态查 installed[].slotId（= cellId）。所有「相邻 / 组合」判定必须走这里。
   function stateSlots(state) {
-    const slots = Ships.baseHullSlots(hullOf(state));
-    const pos = state && state.base ? state.base.slotPos : null;
-    if (!pos || typeof pos !== "object") return slots;
-    return slots.map(s => {
-      if (s.type === "core") return s;
-      const p = pos[s.id];
-      if (!Array.isArray(p) || p.length !== 2) return s;
-      return { id: s.id, type: s.type, x: p[0], y: p[1], special: s.special };
-    });
+    return Ships.hullCells(hullOf(state));
   }
-  function slotById(state, slotId) { return stateSlots(state).find(s => s.id === slotId) || null; }
+  function slotById(state, slotId) {
+    return stateSlots(state).find(s => s.id === slotId) || null;
+  }
   function adjacentSlots(state, slotId) {
     const slots = stateSlots(state);
     const slot = slots.find(s => s.id === slotId);
-    if (!slot) return [];
-    return slots.filter(other => other.type !== "core" && other.id !== slotId
+    if (!slot || slot.core) return [];
+    return slots.filter(other => !other.core && other.id !== slotId
       && Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) === 1);
   }
 
-  // 拖动换位：交换两个非核心舱位的坐标。唯一核心是舰体中轴锚点，固定不可移动。
-  function swapSlots(state, idA, idB) {
-    if (!idA || !idB || idA === idB) return { ok: false, err: "舱位相同" };
+  // 自由摆放：把某格上的模块实例移动到目标空格。核心不可动、目标须是可用空格。
+  // 若目标已占用则返回失败（不做交换，UI 端应先拆再装；开罗式摆放以空格为主）。
+  function moveModule(state, fromCell, toCell) {
+    if (!fromCell || !toCell || fromCell === toCell) return { ok: false, err: "格位相同" };
+    if (fromCell === "core" || toCell === "core") return { ok: false, err: "唯一核心不可移动" };
     const slots = stateSlots(state);
-    const a = slots.find(s => s.id === idA);
-    const b = slots.find(s => s.id === idB);
-    if (!a || !b) return { ok: false, err: "舱位不存在" };
-    if (a.type === "core" || b.type === "core") return { ok: false, err: "唯一核心不可移动" };
-    if (!state.base.slotPos || typeof state.base.slotPos !== "object") state.base.slotPos = {};
-    state.base.slotPos[idA] = [b.x, b.y];
-    state.base.slotPos[idB] = [a.x, a.y];
-    return { ok: true, a: { id: idA, x: b.x, y: b.y }, b: { id: idB, x: a.x, y: a.y } };
+    if (!slots.some(s => s.id === fromCell) || !slots.some(s => s.id === toCell)) return { ok: false, err: "格位不可用" };
+    const inst = state.base.modules.installed.find(e => e.slotId === fromCell);
+    if (!inst) return { ok: false, err: "来源格位没有模块" };
+    if (state.base.modules.installed.some(e => e.slotId === toCell)) return { ok: false, err: "目标格位已占用" };
+    inst.slotId = toCell;
+    return { ok: true, from: fromCell, to: toCell };
   }
+  // 兼容旧接口：swapSlots 曾用于「交换两插座坐标」。开罗化后若两格都有模块则互换，
+  // 若目标为空则等价于移动。保留此函数让旧 UI 代码/探针不直接报错。
+  function swapSlots(state, idA, idB) {
+    if (!idA || !idB || idA === idB) return { ok: false, err: "格位相同" };
+    if (idA === "core" || idB === "core") return { ok: false, err: "唯一核心不可移动" };
+    const slots = stateSlots(state);
+    if (!slots.some(s => s.id === idA) || !slots.some(s => s.id === idB)) return { ok: false, err: "格位不可用" };
+    const a = state.base.modules.installed.find(e => e.slotId === idA);
+    const b = state.base.modules.installed.find(e => e.slotId === idB);
+    if (a && b) { a.slotId = idB; b.slotId = idA; return { ok: true, swapped: true }; }
+    if (a && !b) return moveModule(state, idA, idB);
+    if (!a && b) return moveModule(state, idB, idA);
+    return { ok: false, err: "两格均为空" };
+  }
+  // 恢复初始摆位：清空后按当前船layout重新落位每类首个实例（多出的实例回库存）。
   function resetSlotPos(state) {
     if (!state || !state.base) return { ok: false, err: "舰基不存在" };
-    state.base.slotPos = {};
+    const hull = hullOf(state);
+    const cellIds = new Set(Ships.hullCells(hull).filter(s => !s.core).map(s => s.id));
+    const used = new Set();
+    const installed = [];
+    for (const type in Ships.BASE_MODULES) {
+      const p = hull.layout[type];
+      let cid = Array.isArray(p) ? p[0] + "," + p[1] : null;
+      if (!cid || !cellIds.has(cid) || used.has(cid)) cid = Array.from(cellIds).find(id => !used.has(id));
+      const m = state.base.modules.owned.find(x => x.type === type);
+      if (cid && m && !used.has(cid)) { used.add(cid); installed.push({ slotId: cid, moduleId: m.id }); }
+    }
+    state.base.modules.installed = installed;
+    clearStationAssignments(state, null);
     return { ok: true };
   }
   function hasCustomLayout(state) {
-    const pos = state && state.base ? state.base.slotPos : null;
-    return !!(pos && typeof pos === "object" && Object.keys(pos).length);
+    // 开罗化后只要有任何模块不在「该类型 layout 默认格」即算自定义（提示可一键复位）。
+    if (!state || !state.base) return false;
+    const hull = hullOf(state);
+    for (const e of state.base.modules.installed) {
+      const m = state.base.modules.owned.find(x => x.id === e.moduleId);
+      if (!m) continue;
+      const p = hull.layout[m.type];
+      const def = Array.isArray(p) ? p[0] + "," + p[1] : null;
+      if (e.slotId !== def) return true;
+    }
+    return false;
   }
   function availableModules(state, slotId) {
+    // 开罗化：任意未安装模块可装任意空格（格子无类型限制）。
     const slot = slotById(state, slotId);
-    if (!slot || slot.type === "core") return [];
+    if (!slot || slot.core) return [];
     const modules = state.base.modules || { owned: [], installed: [] };
     const used = new Set(modules.installed.map(x => x.moduleId));
-    return modules.owned.filter(m => !used.has(m.id));  // 折中：任意未安装的舱段都可装入任意格
+    return modules.owned.filter(m => !used.has(m.id));
+  }
+
+  // 资源建造：花资源造同类第 N 个实例（先入库存，不自动摆放；放置时再校验电力）。
+  function buildModule(state, type) {
+    const def = Ships.baseModuleByType(type);
+    if (!def) return { ok: false, err: "未知舱段类型" };
+    const cost = Ships.moduleBuildCost(type);
+    if (!cost) return { ok: false, err: "该舱段不可建造" };
+    const owned = state.base.modules.owned.filter(m => m.type === type);
+    if (owned.length >= Ships.MODULE_INSTANCE_CAP) return { ok: false, err: "已达同类上限 " + Ships.MODULE_INSTANCE_CAP };
+    for (const k in cost) if ((state.res[k] || 0) < cost[k]) return { ok: false, err: "资源不足" };
+    for (const k in cost) state.res[k] = Math.max(0, (state.res[k] || 0) - cost[k]);
+    const n = owned.length + 1;
+    const inst = { id: "module_" + type + "_" + String(n).padStart(2, "0"), type: type };
+    state.base.modules.owned.push(inst);
+    return { ok: true, module: inst, cost: cost };
   }
 
   function buyBlueprint(state, hullId) {
@@ -197,7 +343,6 @@
     // 舱位布局是船体的物理结构，换船即回落到新船体的默认拓扑。
     // 同步撤下所有驻舱成员：原舱段已全部卸回库存，再挂着 station 派遣会永久卡死（见 clearStationAssignments）。
     state.base.modules.installed = [];
-    state.base.slotPos = {};
     clearStationAssignments(state, null);
     state.base.hullId = hullId;
     return { ok: true, hull: Ships.baseHullById(hullId) };
@@ -205,7 +350,7 @@
 
   function installModule(state, slotId, moduleId) {
     const slot = slotById(state, slotId);
-    if (!slot || slot.type === "core") return { ok: false, err: "舱位不存在" };
+    if (!slot || slot.core) return { ok: false, err: "格位不可用" };
     if (installation(state, slotId)) return { ok: false, err: "请先拆下当前模块" };
     const module = state.base.modules.owned.find(m => m.id === moduleId);
     if (!module) return { ok: false, err: "模块不在库存中" };
@@ -300,7 +445,7 @@
   // 会读 installed 列表，摘掉旧件才能算出正确的替换后负载；所以顺序只能是「摘→装→失败回插」。
   function replaceModule(state, slotId, moduleId) {
     const slot = slotById(state, slotId);
-    if (!slot || slot.type === "core") return { ok: false, err: "舱位不存在" };
+    if (!slot || slot.core) return { ok: false, err: "格位不可用" };
     const prev = state.base.modules.installed.find(x => x.slotId === slotId);
     if (!prev) return installModule(state, slotId, moduleId);
     if (prev.moduleId === moduleId) return { ok: false, err: "该模块已装在此舱位" };
@@ -315,50 +460,42 @@
     return { ok: true, replaced: prevModule, module: r.module, slot: r.slot };
   }
 
+  // 单格效果说明：特化格（放任意舱段生效）+ 该格所属已激活组合。
   function slotEffects(state, slotId) {
     const slot = slotById(state, slotId);
     const current = moduleAt(state, slotId);
-    if (!slot || !current) return [];
+    if (!slot || !current || slot.core) return [];
     const effects = [];
-    if (slot.special && slot.special.id === current.type) effects.push({
-      queue: slot.special.queue, mult: slot.special.speedMult, text: "特化舱位「" + slot.special.name + "」：" + slot.special.effect,
+    if (slot.special) effects.push({
+      queue: slot.special.queue, mult: slot.special.speedMult,
+      text: "✦ 特化格「" + slot.special.name + "」：" + slot.special.effect,
     });
-    for (const neighbor of adjacentSlots(state, slotId)) {
-      const other = moduleAt(state, neighbor.id);
-      if (!other) continue;
-      for (const rule of LINK_RULES) {
-        if ((current.type === rule.a && other.type === rule.b) || (current.type === rule.b && other.type === rule.a)) {
-          effects.push({ queue: rule.queue, mult: rule.mult,
-            text: "相邻" + other.name + "：" + rule.name + "，" + QUEUE_NAMES[rule.queue] + "耗时 -" + Math.round((1 - rule.mult) * 100) + "%" });
-        }
-      }
+    for (const a of activeCombos(state)) {
+      if (a.cells.indexOf(slotId) < 0) continue;
+      const c = a.combo;
+      effects.push({ queue: (c.queues[0] || null), mult: c.mult,
+        text: "成套「" + c.name + "」：" + c.effect, combo: c.id });
     }
     return effects;
   }
 
+  // 队列耗时乘区 = 特化格（该队列模块恰在特化格上） × 已激活 duration 组合。
+  // 制造车间（equip）沿用制造特化格：特化格放任意模块即生效，故只按格位判定、不再按类型。
   function queueDurationMultiplier(state, queueType) {
-    const slots = stateSlots(state).filter(s => s.type !== "core");
+    const slots = stateSlots(state).filter(s => !s.core);
     const installedTypes = new Map(slots.map(s => [s.id, (moduleAt(state, s.id) || {}).type || null]));
-    // 制造车间（equip）沿用总装坞的特化舱位加成（军规装配位 / 战利品快装位…），
-    // 否则独立成舱后舰体特化对装备制造完全失效，等于白送一个负面。相邻增效另由 LINK_RULES 的 equip 条目给。
-    const specialKey = queueType === "equip" ? "manufacture" : queueType;
     let multiplier = 1;
-    for (const slot of slots) {
-      if (!installedTypes.get(slot.id)) continue;
-      const st = installedTypes.get(slot.id);   // 折中：功能跟随已装舱段类型
-      if (slot.special && slot.special.id === st && slot.special.queue === specialKey) multiplier *= slot.special.speedMult;
-      if (st !== "energy" && st !== "cargo") continue;
-      for (const other of slots) {
-        if (Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) !== 1) continue;
-        for (const rule of LINK_RULES) {
-          if (rule.queue !== queueType) continue;
-          const a = installedTypes.get(slot.id), b = installedTypes.get(other.id);
-          if ((a === rule.a && b === rule.b) || (a === rule.b && b === rule.a)) multiplier *= rule.mult;
-        }
-      }
-    }
+    // 特化格：只要格上有模块就吃该船 speedMult（开罗式风水宝地，不再要求类型匹配）。
+    const sp = slots.find(s => s.special && installedTypes.get(s.id));
+    if (sp) multiplier *= sp.special.speedMult;
+    // 成套组合（duration 类）乘区。
+    multiplier *= comboEffectMult(state, "duration", queueType);
     return Math.max(0.65, Math.min(1, multiplier));
   }
+
+  // 运行时增益（不烘进 it.dur）：演训经验 / 物流补偿的组合乘区。
+  function comboXpMult(state) { return comboEffectMult(state, "xp", null); }
+  function comboLogisticsMult(state) { return comboEffectMult(state, "logistics", null); }
 
   function hullStatus(state, hull) {
     if (state.base.ownedHullBlueprints.includes(hull.id)) return { owned: true, available: true, label: state.base.hullId === hull.id ? "当前母舰" : "切换母舰" };
@@ -429,9 +566,9 @@
 
   return {
     normalize, hullOf, stateSlots, slotById, adjacentSlots, moduleAt, availableModules,
-    swapSlots, resetSlotPos, hasCustomLayout,
-    buyBlueprint, switchHull, installModule, uninstallModule, replaceModule, slotEffects,
-    queueDurationMultiplier, hullStatus,
+    swapSlots, moveModule, resetSlotPos, hasCustomLayout, installModule, buildModule,
+    buyBlueprint, switchHull, uninstallModule, replaceModule, slotEffects,
+    queueDurationMultiplier, comboXpMult, comboLogisticsMult, activeCombos, COMBOS, hullStatus,
     energyBudget, energyUsed, powerReport, powerMult, upgradeCore,
     stationedAt, stationedOfType, stationWorker, stationSpeedMult, memberSkillLv,
     QUEUE_MODULE, QUEUE_SKILL, UNMANNED_PENALTY,

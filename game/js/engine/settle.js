@@ -540,7 +540,10 @@
         // 工业经验只在「真的产出一批」时结算（见 production.js → Settle.grantBatchXp）。
         if (a.slotType === "habitat" && a.trainSkill && a.trainSkill !== "train" && m.skills && m.skills[a.trainSkill] !== undefined) {
           const sk = a.trainSkill;
-          m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk);
+          // 开罗化成套「指挥演训所」：演训经验 ×组合乘区（运行时生效，不烘进队列）。
+          const BX = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : (typeof Base !== "undefined" ? Base : null);
+          const comboXp = (BX && BX.comboXpMult) ? BX.comboXpMult(state) : 1;
+          m.skills[sk] = (m.skills[sk] || 0) + XP_RATE.train * dt * passionMult(m, sk) * xpMultOf(state, m, sk) * comboXp;
         }
       }
 

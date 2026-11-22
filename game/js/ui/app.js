@@ -1036,27 +1036,38 @@
   }
 
   function baseConnectionsSvg(hull, allInactive) {
-    const slots = hull ? Data.Ships.baseHullSlots(hull) : Engine.Base.stateSlots(state);
+    const slots = hull ? Data.Ships.hullCells(hull) : Engine.Base.stateSlots(state);
     const lines = [];
     for (let i = 0; i < slots.length; i++) for (let j = i + 1; j < slots.length; j++) {
       const a = slots[i], b = slots[j];
       if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) !== 1) continue;
-      const active = !allInactive && (a.type === "core" || Engine.Base.moduleAt(state, a.id)) && (b.type === "core" || Engine.Base.moduleAt(state, b.id));
+      const active = !allInactive && (a.core || Engine.Base.moduleAt(state, a.id)) && (b.core || Engine.Base.moduleAt(state, b.id));
       const x1 = Math.round((a.x - 0.5) * 1000 / 5), y1 = Math.round((a.y - 0.5) * 1000 / 5);
       const x2 = Math.round((b.x - 0.5) * 1000 / 5), y2 = Math.round((b.y - 0.5) * 1000 / 5);
       lines.push('<line class="' + (active ? "active" : "") + '" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>');
     }
+    // 成套组合连线：激活组合的三个格位用高亮色连接（开罗式「成套点亮」）。
+    if (!allInactive) {
+      for (const a of Engine.Base.activeCombos(state)) {
+        const pts = a.cells.map(cid => {
+          const cell = Engine.Base.slotById(state, cid);
+          return cell ? [Math.round((cell.x - 0.5) * 200), Math.round((cell.y - 0.5) * 200)] : null;
+        }).filter(Boolean);
+        for (let p = 0; p < pts.length; p++) for (let q = p + 1; q < pts.length; q++) {
+          lines.push('<line class="combo-line" x1="' + pts[p][0] + '" y1="' + pts[p][1] + '" x2="' + pts[q][0] + '" y2="' + pts[q][1] + '"/>');
+        }
+      }
+    }
     return '<svg class="base-connections" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">' + lines.join("") + '</svg>';
   }
 
-  // 舱段布局编辑提示条（2026-10-29 拖动换位）
-  // 换位改的是舱位坐标，直接改变「相邻增效」与特化舱位生效位置 → 提供一键回退默认拓扑。
+  // 舱段布局编辑提示条（2026-11-22 开罗化自由摆放）
   function baseDragHint() {
     const custom = Engine.Base.hasCustomLayout(state);
     return '<div class="base-drag-hint">'
-      + '<span class="bdh-grip" aria-hidden="true">⠿</span><b>拖动舱段可交换位置</b>'
-      + '<span class="dim">相邻增效（能源直供 / 短链物流）随布局实时重算；唯一核心为舰体中轴，固定不可移动。</span>'
-      + (custom ? '<button class="sm ghost" data-act="baseSlotReset">恢复默认布局</button>' : '')
+      + '<span class="bdh-grip" aria-hidden="true">⠿</span><b>舱段可在空位自由摆放</b>'
+      + '<span class="dim">拖到空格=移动，特化格（✦）放任意舱段吃该船加成；「成套组合」按实时摆位点亮。</span>'
+      + (custom ? '<button class="sm ghost" data-act="baseSlotReset">恢复初始摆位</button>' : '')
       + '</div>';
   }
 
@@ -1070,22 +1081,41 @@
     const used = new Set(((state.base.modules && state.base.modules.installed) || []).map(x => x.moduleId));
     return mods.filter(m => !used.has(m.id));
   }
+  function baseBuildPanel() {
+    const cap = Data.Ships.MODULE_INSTANCE_CAP;
+    const rows = Object.keys(Data.Ships.BASE_MODULES).map(type => {
+      const d = Data.Ships.BASE_MODULES[type];
+      const cost = Data.Ships.moduleBuildCost(type);
+      const have = (state.base.modules.owned || []).filter(m => m.type === type).length;
+      const full = have >= cap;
+      const afford = cost ? Engine.Production.canAfford(state.res, cost) : false;
+      const costStr = cost ? Object.entries(cost).map(([k, v]) => resIcon(k) + v).join(" ") : "—";
+      return '<div class="bb-row">'
+        + '<span class="bb-ic" style="color:' + esc(d.color) + '">' + d.icon + '</span>'
+        + '<span class="bb-tx"><b>' + esc(d.name) + '</b><small>' + esc(Data.Ships.buildCostLabel(type)) + ' · 已有 ' + have + '/' + cap + '</small></span>'
+        + '<button class="sm bb-build" data-act="moduleBuild:' + type + '"' + (full || !afford ? " disabled" : "") + '>' + (full ? "上限" : "建造 " + costStr) + '</button>'
+        + '</div>';
+    }).join("");
+    return '<div class="base-build-panel"><div class="bb-head"><b>建造舱段</b><small>同类最多 ' + cap + ' 个 · 造好先入库，再拖到甲板空位</small></div><div class="bb-list">' + rows + '</div></div>';
+  }
   function baseStockPanel() {
     const list = baseStockModules();
     const body = list.length
       ? list.map(m => {
           const d = Data.Ships.baseModuleByType(m.type) || {};
           const sel = baseStockPick === m.id ? " sel" : "";
+          const cnt = (state.base.modules.owned || []).filter(x => x.type === m.type).length;
           return '<button class="bs-item' + sel + '" data-act="stockPick:' + esc(m.id) + '" data-module="' + esc(m.id) + '" data-type="' + esc(m.type) + '">'
             + '<span class="bs-ic" style="color:' + esc(d.color || "#79a9ff") + '">' + (d.icon || "▣") + '</span>'
-            + '<span class="bs-tx"><b>' + esc(d.name || m.type) + '</b><small>⚡' + (d.energy || 0) + ' · ' + esc(d.desc || "") + '</small></span>'
+            + '<span class="bs-tx"><b>' + esc(d.name || m.type) + '</b><small>⚡' + (d.energy || 0) + ' · 同类×' + cnt + '</small></span>'
             + '</button>';
         }).join("")
-      : '<div class="bs-empty">所有舱段都已装配。<br>拆下的舱段会回到这里。</div>';
+      : '<div class="bs-empty">所有舱段都已装配。<br>拆下或建造新舱段会回到这里。</div>';
     return '<aside class="mod-stock' + (baseStockPick ? " picking" : "") + '" id="mod-stock">'
       + '<div class="bs-head"><b>舱段库</b><small>待装配 ' + list.length + '</small></div>'
       + '<div class="bs-list">' + body + '</div>'
-      + '<div class="bs-foot">拖到<b>同类型</b>舱位装配<br>拖到已占舱位 = <em>直接交换</em><br>拖回此处 = 拆下</div>'
+      + '<div class="bs-foot">拖到甲板<b>空位</b>=装配<br>拖到已占格 = <em>替换</em><br>拖回此处 = 拆下</div>'
+      + baseBuildPanel()
       + '</aside>';
   }
 
@@ -1093,10 +1123,10 @@
   // 门禁全在引擎里（类型 / 电网 / 唯一核心），这里只负责把 err 变成 toast。
   function applyStockToSlot(moduleId, slotId) {
     const slot = Engine.Base.slotById(state, slotId);
-    if (!slot || slot.type === "core") { toast("唯一核心不可改装"); return false; }
+    if (!slot || slot.core) { toast("唯一核心不可改装"); return false; }
     const m = state.base.modules.owned.find(x => x.id === moduleId);
     if (!m) { toast("模块不在库存中"); return false; }
-    const d = Data.Ships.baseModuleByType(m.type) || {};   // 折中：任意舱段可装任意格，去掉类型不兼容门禁
+    const d = Data.Ships.baseModuleByType(m.type) || {};
     const occupied = !!Engine.Base.moduleAt(state, slotId);
     const r = occupied
       ? Engine.Base.replaceModule(state, slotId, moduleId)
@@ -1121,28 +1151,30 @@
     const def = inst || { name: "空舱位", color: "#5d7782", icon: "◯", energy: 0 };
     const selected = baseFocus === slot.id;
     const stockShips = (state.ships || []).filter(s => !s.memberId && s.status !== "lost").length;
-    const shortDesc = { energy: "能源输出", cargo: "资源库存", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", equip: "装备 / 改装件", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "技能演训", booster: "增强剂瓶身" };
+    const shortDesc = { energy: "能源输出", smelt: "矿石 → 矿材", manufacture: "部件 / 舰船", equip: "装备 / 改装件", invent: "图纸研发", dock: stockShips + " 艘待配属", command: "小队管理", habitat: "技能演训", booster: "增强剂瓶身" };
     let label = installed ? "在线" : "待装配";
     let progress = 0;
     if (installed && t === "smelt") { const q = baseQueueState("smelt", Data.Recipes.SMELT); label = q.count ? q.label : "精炼待命"; progress = q.progress; }
     if (installed && t === "manufacture") { const q = baseQueueState("manufacture", Data.Recipes.COMPONENT); label = q.count ? q.label : "总装待命"; progress = q.progress; }
     if (installed && t === "invent") { const q = baseQueueState("invent", Data.Recipes.INVENT); label = plan.invent <= 0 ? "核心 Lv.2 解锁" : q.count ? q.label : "研发待命"; progress = q.progress; }
     if (installed && t === "equip") { const q = baseQueueState("equip", null); label = q.count ? q.label : "制造待命"; progress = q.progress; }
-    if (installed && t === "cargo") label = "真实库存 · 可用";
     if (installed && t === "dock") label = "待配属 " + stockShips + " 艘";
     if (installed && t === "command") label = "小队容量 " + Engine.Combat.squadCapacity(state);
     const special = slot.special ? " special" : "";
-    return '<button class="base-module ' + (installed ? "base-" + t : "base-" + slot.type) + (selected ? " selected" : "") + special + (!installed ? " empty" : "") + '" style="grid-column:' + slot.x + ';grid-row:' + slot.y + ';--module-color:' + esc(def.color) + '" data-act="baseinfo:' + slot.id + '">'
-      + (slot.special ? '<i class="base-special-mark" title="特化舱位">✦</i>' : "")
-      + '<span class="base-module-icon">' + def.icon + '</span><b>' + (installed ? esc(def.name) : "空舱位") + '</b>'
-      + '<small>' + esc(installed ? (shortDesc[t] || "") : "空舱位 · 待装配") + '</small>'
+    const comboOn = Engine.Base.activeCombos(state).some(a => a.cells.indexOf(slot.id) >= 0);
+    const nativeCls = !installed && slot.nativeType ? (" base-" + slot.nativeType) : "";
+    return '<button class="base-module ' + (installed ? "base-" + t : "base-empty" + nativeCls) + (selected ? " selected" : "") + special + (comboOn ? " combo-active" : "") + (!installed ? " empty" : "") + '" style="grid-column:' + slot.x + ';grid-row:' + slot.y + ';--module-color:' + esc(def.color) + '" data-act="baseinfo:' + esc(slot.id) + '">'
+      + (slot.special ? '<i class="base-special-mark" title="特化格 · 放任意舱段生效">✦</i>' : "")
+      + '<span class="base-module-icon">' + def.icon + '</span><b>' + (installed ? esc(def.name) : (slot.special ? "✦ 特化空位" : "空位")) + '</b>'
+      + '<small>' + esc(installed ? (shortDesc[t] || "") : (slot.special ? esc(slot.special.name) : "拖动舱段至此")) + '</small>'
       + '<span class="base-module-status">' + esc(label) + (progress ? " · " + Math.round(progress * 100) + "%" : "") + '</span></button>';
   }
 
   function baseFocusPanel(plan, hull, vOther) {
     if (baseFocus === "core" || baseFocus === "") {
-      const _sp = Engine.Base.moduleAt(state, hull.specialSlot.id);
-      const specialActive = !!(_sp && _sp.type === hull.specialSlot.id);   // 折中：特化位须装对应类型才激活
+      const _spCell = Data.Ships.hullSpecialCell(hull.id);
+      const _spMod = _spCell ? Engine.Base.moduleAt(state, _spCell.id) : null;
+      const specialActive = !!_spMod;   // 开罗化：特化格放任意舱段即激活
       let html = '<div class="base-core-inspector"><span class="eyebrow">UNIQUE COMMAND CORE</span><h3>唯一舰基核心</h3>';
       if (vOther) {
         // 预览的是「尚未装载核心」的船体：明确提示核心在另一条船上，转移核心才换船。
@@ -1160,37 +1192,44 @@
         }
         return html + '</div>';
       }
+      const _spc = Data.Ships.hullSpecialCell(hull.id);
+      const spName = hull.specialSlot ? hull.specialSlot.name : "特化格";
+      const spEffect = hull.specialSlot ? hull.specialSlot.effect : "";
       html += '<div class="base-focus-title">' + esc(hull.name) + ' · ' + esc(plan.name) + ' Lv.' + plan.lv + '</div>'
-        + '<div class="dim">核心编号 ' + esc(state.base.coreId) + '。更换母舰只改变船体和舱位拓扑，核心等级、燃料、库存与工业队列继续归属本舰基。</div>'
-        + '<div class="base-focus-effect">' + (specialActive ? "已激活" : "待装配") + '特化舱位：' + esc(hull.specialSlot.name) + ' · ' + esc(hull.specialSlot.effect) + '</div>';
+        + '<div class="dim">核心编号 ' + esc(state.base.coreId) + '。更换母舰只改变船体和可用格，核心等级、燃料、库存与工业队列继续归属本舰基。</div>'
+        + '<div class="base-focus-effect">' + (specialActive ? "已激活" : "待装配") + '特化格（' + (_spc ? _spc.x + "," + _spc.y : "—") + '）：' + esc(spName) + ' · ' + esc(spEffect) + '</div>';
+      // 成套组合进度
+      const comboHtml = Engine.Base.COMBOS.map(c => {
+        const on = Engine.Base.activeCombos(state).some(a => a.combo.id === c.id);
+        return '<div class="combo-chip' + (on ? " on" : "") + '"><b>' + (on ? "✓ " : "○ ") + esc(c.name) + '</b><span>' + esc(c.effect) + ' · ' + c.types.map(t => esc(Data.Ships.BASE_MODULES[t] ? Data.Ships.BASE_MODULES[t].name : t)).join("+") + '</span></div>';
+      }).join("");
+      html += '<div class="base-combo-legend"><div class="dim" style="margin-bottom:6px">成套组合（指定舱段聚拢 ≤2 格自动点亮）</div>' + comboHtml + '</div>';
       return html + '</div>';
     }
     const slot = Engine.Base.slotById(state, baseFocus);
     if (!slot) return '<h3>舰基核心</h3><div class="dim">选择舱位查看模块与连接状态。</div>';
     if (vOther) {
-      // 预览船体的普通舱位：都是空的（核心还没转移过来），只展示布局信息，不能装配 / 驻舱。
-      const nativeDef = Data.Ships.baseModuleByType(slot.type);
-      return '<span class="eyebrow">COMPARTMENT / ' + esc(slot.type.toUpperCase()) + '</span><h3>空舱位</h3>'
+      // 预览船体的格位：都是空的（核心还没转移过来），只展示布局信息，不能装配 / 驻舱。
+      return '<span class="eyebrow">CELL / ' + esc(slot.x + "·" + slot.y) + '</span><h3>空位</h3>'
         + '<div class="base-focus-title">预览 · ' + esc(hull.name) + '</div>'
-        + '<div class="dim">该母舰尚未装载核心，所有舱位为空。把核心转移过来（图中 ✦ 舱位）后，可在此装配舱段、派驻成员。</div>'
-        + (slot.special ? '<div class="base-special-card"><b>✦ 势力特化舱位 · ' + esc(slot.special.name) + '</b><span>' + esc(slot.special.effect) + ' · 安装对应模块后生效</span></div>' : '');
+        + '<div class="dim">该母舰尚未装载核心，所有格位为空。把核心转移过来（图中 ✦ 舱位）后，可在空位装配任意舱段、派驻成员。</div>'
+        + (slot.special ? '<div class="base-special-card"><b>✦ 特化格 · ' + esc(slot.special.name) + '</b><span>' + esc(slot.special.effect) + ' · 放任意舱段即生效</span></div>' : '');
     }
-    const inst = Engine.Base.moduleAt(state, slot.id);   // 折中：明细跟随已装舱段类型
+    const inst = Engine.Base.moduleAt(state, slot.id);
     const installed = !!inst;
     const t = inst ? inst.type : null;
-    const nativeDef = Data.Ships.baseModuleByType(slot.type);
-    const def = inst || nativeDef || { name: "空舱位", color: "#3a4a52", icon: "＋", energy: 0 };
+    const def = inst || { name: "空位", color: "#3a4a52", icon: "＋", energy: 0, desc: "空格可装配任意舱段。" };
     const effects = Engine.Base.slotEffects(state, slot.id);
     const energyLine = !inst ? "未装配"
       : (t === "energy" ? '发电输出 +' + Data.Ships.ENERGY_OUTPUT
         : '电力占用 ' + (def.energy || 0));
-    let html = '<span class="eyebrow">COMPARTMENT / ' + esc((t || slot.type).toUpperCase()) + '</span><h3>' + esc(installed ? def.name : "空舱位") + '</h3>';
-    html += '<div class="base-focus-title">' + (installed ? "已装配" : "空舱位") + ' · ' + esc(hull.name) + '</div>';
-    html += '<div class="dim">' + esc(def.desc) + '</div>';
+    let html = '<span class="eyebrow">' + (slot.special ? "✦ SPECIAL CELL" : "CELL") + ' / ' + esc(slot.x + "·" + slot.y) + '</span><h3>' + esc(installed ? def.name : "空位") + '</h3>';
+    html += '<div class="base-focus-title">' + (installed ? "已装配" : "空位") + ' · ' + esc(hull.name) + '</div>';
+    html += '<div class="dim">' + esc(def.desc || "") + '</div>';
     html += '<div class="base-focus-energy">⚡ ' + energyLine + '　·　电网 ' + Engine.Base.energyUsed(state) + ' / ' + Engine.Base.energyBudget(state) + '</div>';
-    if (slot.special) html += '<div class="base-special-card"><b>✦ 势力特化舱位 · ' + esc(slot.special.name) + '</b><span>' + esc(slot.special.effect) + (installed ? ' · 效果已激活' : ' · 安装对应模块后生效') + '</span></div>';
+    if (slot.special) html += '<div class="base-special-card"><b>✦ 特化格 · ' + esc(slot.special.name) + '</b><span>' + esc(slot.special.effect) + (installed ? ' · 效果已激活' : ' · 放任意舱段即生效') + '</span></div>';
     if (effects.length) html += '<div class="base-focus-effect">' + effects.map(x => esc(x.text)).join('<br>') + '</div>';
-    else if (installed) html += '<div class="base-focus-effect muted">暂无相邻增效；可切换母舰布局，或拆装模块改变连接。</div>';
+    else if (installed) html += '<div class="base-focus-effect muted">未点亮成套组合；把指定舱段聚拢到 ≤2 格即可激活。</div>';
     if (installed) {
       const instance = state.base.modules.owned.find(m => m.id === (state.base.modules.installed.find(x => x.slotId === slot.id) || {}).moduleId);
       html += '<div class="base-module-instance">模块编号 <code>' + esc(instance ? instance.id : "—") + '</code></div>';
@@ -1238,7 +1277,7 @@
     invent: QSKILL.invent || "research",
     booster: QSKILL.booster || "research",
     equip: QSKILL.equip || "manufacture",
-    cargo: "piloting", energy: "capacitor", dock: "manufacture",
+    energy: "capacitor", dock: "manufacture",
   };
   let habitatSkill = "combatLaser";   // 演训舱当前选中的技能（UI 态，不入存档）
 
@@ -1315,7 +1354,7 @@
     html += '</div>' + baseDragHint() + baseHullSelector() + baseInventoryStrip();
 
     const slots = vOther ? Data.Ships.baseHullSlots(vh) : Engine.Base.stateSlots(state);
-    const coreSlot = slots.find(s => s.type === "core");
+    const coreSlot = slots.find(s => s.core);
     const smeltMult = Engine.Base.queueDurationMultiplier(state, "smelt");
     const manufactureMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const inventMult = Engine.Base.queueDurationMultiplier(state, "invent");
@@ -1323,12 +1362,12 @@
     if (vOther) {
       // 预览船体：核心还在另一条船上 → 核心舱位（固定位置）显示为「转移核心至此」入口。
       html += '<button class="base-module base-core transfer' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseHullPick:' + esc(vh.id) + '"><span class="base-module-icon">✦</span><b>转移核心至此</b><small>' + esc(hull.name) + '</small><span class="base-module-status">点此装载核心</span></button>';
-      for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan, true);
+      for (const slot of slots) if (!slot.core) html += baseModule(slot, plan, true);
       const installedCount = state.base.modules.installed.length;
       html += '</div><div class="base-stage-foot"><span><b>预览</b><em>该母舰尚未装载核心</em></span><span>当前核心船模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
     } else {
       html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
-      for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
+      for (const slot of slots) if (!slot.core) html += baseModule(slot, plan);
       const installedCount = state.base.modules.installed.length;
       html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
     }
@@ -3419,7 +3458,17 @@
     }
     else if (cmd === "baseSlotReset") {
       const r = Engine.Base.resetSlotPos(state);
-      if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
+      if (r.ok) { baseFocus = "core"; toast("已恢复初始摆位"); }
+    }
+    else if (cmd === "moduleBuild") {
+      const d = Data.Ships.baseModuleByType(a) || {};
+      const r = Engine.Base.buildModule(state, a);
+      if (r.ok) {
+        const costStr = Object.entries(r.cost).map(([k, v]) => resName(k) + " " + v).join(" · ");
+        toast("已建造「" + (d.name || a) + "」· 花费 " + costStr + "，已入舱段库");
+      } else toast(r.err || "建造失败");
+      if (Persistence) Persistence.save(state); else Core.save(state);
+      renderView();
     }
     // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
     else if (cmd === "fleetFit") { openFleetFit(a); }
@@ -3673,9 +3722,7 @@
     const r = Engine.Base.swapSlots(state, d.slotId, toId);
     if (!r.ok) { if (r.err) toast(r.err); renderView(); return; }
     baseFocus = d.slotId;
-    const fromDef = Data.Ships.baseModuleByType(d.slotId);
-    const toDef = Data.Ships.baseModuleByType(toId);
-    toast("已交换 " + (fromDef ? fromDef.name : d.slotId) + " ⇄ " + (toDef ? toDef.name : toId) + " · 相邻增效已重算");
+    toast(r.swapped ? "已交换两格舱段 · 特化与组合按新摆位重算" : "已移动到空位 · 特化与组合按新摆位重算");
     if (Persistence) Persistence.save(state); else Core.save(state);   // 与装配/拆下对齐：换位后立即落档，不依赖 5s 自动存档
     renderView();
   }

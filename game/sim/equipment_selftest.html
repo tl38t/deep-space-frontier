@@ -24,6 +24,7 @@ const q=(sel)=>D().querySelector(sel);
 const qa=(sel)=>D().querySelectorAll(sel);
 const txt=(el)=>el?el.textContent.trim():"";
 
+const sid=(type)=>{ if(type==="core") return "core"; try{ const _w=fr.contentWindow; const st=_w.NSK.Core.load(); const e=st.base.modules.installed.find(function(x){var m=st.base.modules.owned.find(function(o){return o.id===x.moduleId;});return m&&m.type===type;}); return e?e.slotId:type; }catch(e){ return type; } };
 (async function(){
   const errs=[];
   fr.src="../index.html#base";
@@ -33,10 +34,10 @@ const txt=(el)=>el?el.textContent.trim():"";
   try{ fr.contentWindow.addEventListener("error", e=>errs.push(e.message)); }catch(e){}
 
   // 舰基页：制造车间舱段（2026-11-03 内联「装备制造」面板整体撤销，改为独立舱段 + 工作台）
-  const equipCardThere=await until(()=>q('[data-act="baseinfo:equip"]'),12000);
+  const equipCardThere=await until(()=>q('[data-act="baseinfo:'+sid('equip')+'"]'),12000);
   ok("舰基页出现「制造车间」舱段卡片", equipCardThere);
   if(!equipCardThere){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
-  const equipCard=q('[data-act="baseinfo:equip"]');
+  const equipCard=q('[data-act="baseinfo:'+sid('equip')+'"]');
 
   // 点舱段卡片 → 打开舱段工作台（不是旧的舱段明细弹窗）
   equipCard.click();

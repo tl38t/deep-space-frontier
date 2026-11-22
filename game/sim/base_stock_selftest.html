@@ -81,8 +81,19 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
     await wait(420);
   }
   function installedId(st, slotId) {
+    if (slotId && slotId.indexOf(",") < 0) {
+      var cell = W().NSK.Data.Ships.hullCells(st.base.hullId).find(function(c){ return c.nativeType === slotId; });
+      if (cell) {
+        var e2 = st.base.modules.installed.find(function (x) { return x.slotId === cell.id; });
+        return e2 ? e2.moduleId : null;
+      }
+    }
     var e = st.base.modules.installed.find(function (x) { return x.slotId === slotId; });
     return e ? e.moduleId : null;
+  }
+  function cellOf(st, type) {
+    var c = W().NSK.Data.Ships.hullCells(st.base.hullId).find(function(x){ return x.nativeType === type; });
+    return c ? c.id : type;
   }
   function stockIds(st) {
     var used = {};
@@ -107,7 +118,10 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
     var st = LIVE();
 
     // === 0. 归零到「开局全装」：库为空，便于逐条构造 ===
-    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
+    var initInst = Ships.createInitialBase().modules.installed;
+    var cellOfType = {};
+    initInst.forEach(function(e){ var m = Ships.createInitialBase().modules.owned.find(function(o){return o.id===e.moduleId;}); if(m) cellOfType[m.type]=e.slotId; });
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: cellOfType[m.type] || m.type, moduleId: m.id }; });
     st.base.modules.owned = st.base.modules.owned.filter(function (m) { return m.id !== "module_smelt_02"; });
     await toBase();
 
@@ -133,7 +147,7 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
     ok("B4 卡片文案是中文「精炼环」",
       ((q("#mod-stock .bs-item .bs-tx b") || {}).textContent || "") === Ships.baseModuleByType("smelt").name,
       (q("#mod-stock .bs-item .bs-tx b") || {}).textContent);
-    ok("B5 对应的舱位卡变空", !!q(".base-module.base-smelt.empty"));
+    ok("B5 对应的舱位卡变空", !!q(".base-module.empty[data-act^='baseinfo:']"));
 
     // === C1. 库 → 空舱位：点击通道（触屏等价物） ===
     await clickEl(q("#mod-stock .bs-item"));
@@ -143,7 +157,7 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
     await wait(300);
     ok("C2 再点同类型空舱位 = 装回去", installedId(st, "smelt") === "module_smelt_01", installedId(st, "smelt"));
     ok("C3 装回后库清空、选中态清掉", qa("#mod-stock .bs-item").length === 0 && !q("#mod-stock .bs-item.sel"));
-    ok("C4 装回后舱位不再是空舱", !q(".base-module.base-smelt.empty"));
+    ok("C4 装回后 smelt 原生格非空", !q(".base-module.empty.base-smelt"));
 
     // === C2. 库 → 空舱位：拖拽通道 ===
     await dragTo(q(".base-module.base-smelt"), q("#mod-stock"));
@@ -169,37 +183,43 @@ iframe{position:absolute;left:-9999px;top:0;width:1240px;height:1720px;border:0}
     // === E. 折中：异类型不再拒绝，拖到已占用的异类型舱位 = 直接交换 ===
     // 还原「每类 1 件」规范库存（D 段临时补的 smelt_02 要清掉，否则原生重置会出现同槽两位）
     st.base.modules.owned = st.base.modules.owned.filter(function (m) { return m.id !== "module_smelt_02"; });
-    // 重置到原生全装，再只拆 smelt 段（cargo 段仍占 cargo 槽），构造干净的「库里有 smelt_01、cargo 槽占用」状态
-    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
-    B.uninstallModule(st, "smelt");
+    // 重置到原生全装，再只拆 smelt 段（equip 段仍占 equip 槽），构造干净的「库里有 smelt_01、equip 槽占用」状态
+    var initInst = Ships.createInitialBase().modules.installed;
+    var cellOfType = {};
+    initInst.forEach(function(e){ var m = Ships.createInitialBase().modules.owned.find(function(o){return o.id===e.moduleId;}); if(m) cellOfType[m.type]=e.slotId; });
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: cellOfType[m.type] || m.type, moduleId: m.id }; });
+    B.uninstallModule(st, cellOf(st, "smelt"));
     await toBase();
     await wait(200);
-    ok("E0 重置后 cargo 槽=cargo_01、smelt 槽空", installedId(st, "cargo") === "module_cargo_01" && !installedId(st, "smelt"),
-      installedId(st, "cargo") + "/" + installedId(st, "smelt"));
-    var dbgE = await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-cargo"));
-    ok("E1 折中：拖 smelt 段到占用的 cargo 槽 = 交换（不再拒绝）", installedId(st, "cargo") === "module_smelt_01",
-      installedId(st, "cargo") + " | hit=" + dbgE.hit);
-    ok("E2 折中：旧 cargo 段退回库、smelt 槽仍空（占位的旧段回库，不互换）",
-      stockIds(st).indexOf("module_cargo_01") >= 0 && !installedId(st, "smelt"),
+    ok("E0 重置后 equip 槽=equip_01、smelt 槽空", installedId(st, "equip") === "module_equip_01" && !installedId(st, "smelt"),
+      installedId(st, "equip") + "/" + installedId(st, "smelt"));
+    var dbgE = await dragTo(q("#mod-stock .bs-item"), q(".base-module.base-equip"));
+    ok("E1 折中：拖 smelt 段到占用的 equip 槽 = 交换（不再拒绝）", installedId(st, "equip") === "module_smelt_01",
+      installedId(st, "equip") + " | hit=" + dbgE.hit);
+    ok("E2 折中：旧 equip 段退回库、smelt 槽仍空（占位的旧段回库，不互换）",
+      stockIds(st).indexOf("module_equip_01") >= 0 && !installedId(st, "smelt"),
       "stock=" + stockIds(st).join(",") + " smelt=" + installedId(st, "smelt"));
 
     // === F. 引擎层：折中后 replaceModule 不再因类型拒绝；仍拦「已装 / 核心」 ===
-    // 重置回原生全装，再拆 smelt 与 cargo 两段，使 cargo_01 落入库中
-    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: m.type, moduleId: m.id }; });
-    B.uninstallModule(st, "smelt");
-    B.uninstallModule(st, "cargo");
+    // 重置回原生全装，再拆 smelt 与 equip 两段，使 equip_01 落入库中
+    var initInst = Ships.createInitialBase().modules.installed;
+    var cellOfType = {};
+    initInst.forEach(function(e){ var m = Ships.createInitialBase().modules.owned.find(function(o){return o.id===e.moduleId;}); if(m) cellOfType[m.type]=e.slotId; });
+    st.base.modules.installed = st.base.modules.owned.map(function (m) { return { slotId: cellOfType[m.type] || m.type, moduleId: m.id }; });
+    B.uninstallModule(st, cellOf(st, "smelt"));
+    B.uninstallModule(st, cellOf(st, "equip"));
     await wait(50);
-    var r1 = B.replaceModule(st, "smelt", "module_cargo_01");   // cargo_01 在库，装入 smelt 槽（异类型，折中允许）
+    var r1 = B.replaceModule(st, cellOf(st, "smelt"), "module_equip_01");   // equip_01 在库，装入 smelt 槽（异类型，折中允许）
     ok("F1 折中：类型不匹配也能装入（replaceModule 成功）", r1.ok, r1.ok ? "" : r1.err);
-    ok("F1b 装完后 cargo 段落在 smelt 槽", installedId(st, "smelt") === "module_cargo_01", installedId(st, "smelt"));
-    var r2 = B.replaceModule(st, "core", "module_smelt_01");
+    ok("F1b 装完后 equip 段落在 smelt 槽", installedId(st, "smelt") === "module_equip_01", installedId(st, "smelt"));
+    var r2 = B.replaceModule(st, cellOf(st, "core"), "module_smelt_01");
     ok("F4 唯一核心拒绝 replaceModule", !r2.ok, r2.ok ? "ok" : r2.err);
-    var r3 = B.replaceModule(st, "smelt", "module_cargo_01");   // cargo_01 已装在 smelt 槽
+    var r3 = B.replaceModule(st, cellOf(st, "smelt"), "module_equip_01");   // equip_01 已装在 smelt 槽
     ok("F5 同一件已装在该槽 = 拒绝（仍拦重复安装）", !r3.ok, r3.ok ? "ok" : r3.err);
 
     // === G. 舱位详情弹窗：模块库列表退役，改一行指引（决策 ④） ===
     // 腾空发明舱：把它的模块拆下（引擎直调，避免依赖拖拽布局）
-    B.uninstallModule(st, "invent");
+    B.uninstallModule(st, cellOf(st, "invent"));
     await toBase();
     await clickEl(q(".base-module.base-invent"));
     await wait(500);

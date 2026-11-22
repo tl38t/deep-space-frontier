@@ -47,23 +47,22 @@
   }
 
   // 物流补偿累积：统计 logistics 岗成员，线性累积并软顶至 COMP_CAP。
-  // 补偿速率由「驾驶」(piloting) 等级驱动（对回 1 代：驾驶统管物流），并叠加仓储舱车厢成员的驾驶等级加成。
+  // 补偿速率由「驾驶」(piloting) 等级驱动（对回 1 代：驾驶统管物流）。
   // 与燃料/产出同 dt，置于 settle 主循环前，保证当次结算即用最新补偿。
   function accumulate(state, dt) {
     ensure(state);
-    // 仓储舱（cargo）车厢成员的驾驶等级 → 额外 ×(1+pilotingLv×2%)（设计稿：仓储补偿率加成）。
-    let cargoMult = 1;
-    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
-    if (B && B.stationedOfType) {
-      const w = B.stationedOfType(state, "cargo");
-      if (w && w.skills) cargoMult = 1 + skillLvOf(w, "piloting") * 0.02;
-    }
     let rate = 0;
     for (const m of state.members) {
       if (m.destroyed || !m.assignment || m.assignment.type !== "logistics") continue;
-      rate += COMP_RATE * (1 + skillLvOf(m, "piloting") * 0.02) * cargoMult;
+      rate += COMP_RATE * (1 + skillLvOf(m, "piloting") * 0.02);
     }
-    if (rate > 0) state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + rate * dt);
+    if (rate > 0) {
+      // 开罗化成套「后勤中枢」：补偿速率 ×组合乘区（运行时生效）。
+      const E = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+      const B = E && E.Base;
+      const comboLog = (B && B.comboLogisticsMult) ? B.comboLogisticsMult(state) : 1;
+      state.logistics.compensation = Math.min(COMP_CAP, (state.logistics.compensation || 0) + rate * dt * comboLog);
+    }
   }
 
   // 距离惩罚：基础 HOP_PENALTY，受精通点「航线优化」按级下调（惰性取用 Mastery，最低 5pp），

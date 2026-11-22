@@ -38,12 +38,19 @@
     done = "done";
     const d = w.document;
     const st = stateOf(w);
-    ok("引擎 state 可访问(base.slotPos)", !!st && !!st.base && !!st.base.slotPos, st ? JSON.stringify(st.base.slotPos) : "null");
+    ok("引擎 state 可访问(modules.installed)", !!st && !!st.base && Array.isArray(st.base.modules.installed), st ? ("n="+st.base.modules.installed.length) : "null");
     const energy = q(w, ".base-module.base-energy");
     const dock = q(w, ".base-module.base-dock");
     ok("能源舱 / 舰队泊位可定位", !!energy && !!dock);
     if (!energy || !dock) { finish(); return; }
     const blobBefore = (function(){ try { return w.localStorage.getItem(SAVE_KEY); } catch(e){ return null; } })();
+    const cellOfType = function(s, t){
+      var m = s.base.modules.owned.find(function(o){return o.type===t;});
+      var e = s.base.modules.installed.find(function(x){return x.moduleId===(m&&m.id);});
+      return e ? e.slotId : null;
+    };
+    const eCell0 = cellOfType(st, "energy"), dCell0 = cellOfType(st, "dock");
+    window.__eCell1 = null; window.__dCell1 = null;
     energy.scrollIntoView({ block: "center" });
     const ra = energy.getBoundingClientRect();
     const rb = dock.getBoundingClientRect();
@@ -55,8 +62,10 @@
     pev("pointerdown", ax, ay); pev("pointermove", ax+12, ay+12); pev("pointermove", bx, by); pev("pointerup", bx, by);
     setTimeout(function () {
       const st2 = stateOf(w);
-      ok("换位后 slotPos 已写入 state（2 项自定义坐标）",
-        st2.base.slotPos && Object.keys(st2.base.slotPos).length === 2, JSON.stringify(st2.base.slotPos));
+      const eCell1 = cellOfType(st2, "energy"), dCell1 = cellOfType(st2, "dock");
+      window.__eCell1 = eCell1; window.__dCell1 = dCell1;
+      ok("换位后 installed 格位互换落档", eCell1 === dCell0 && dCell1 === eCell0,
+        "energy " + eCell0 + "→" + eCell1 + " | dock " + dCell0 + "→" + dCell1);
       const blobAfter = (function(){ try { return w.localStorage.getItem(SAVE_KEY); } catch(e){ return null; } })();
       ok("换位后 localStorage 立即更新（不等 5s 自动存档）", !!blobAfter && blobAfter !== blobBefore,
         "len " + (blobBefore?blobBefore.length:0) + "→" + (blobAfter?blobAfter.length:0));
@@ -70,9 +79,9 @@
     f2.addEventListener("load", function () {
       setTimeout(function () {
         const st3 = stateOf(f2.contentWindow);
-        ok("重开后 slotPos 仍从存档恢复（2 项）",
-          st3 && st3.base && st3.base.slotPos && Object.keys(st3.base.slotPos).length === 2,
-          st3 ? JSON.stringify(st3.base.slotPos) : "null");
+        const eCell3 = st3 ? cellOfType(st3, "energy") : null, dCell3 = st3 ? cellOfType(st3, "dock") : null;
+        ok("重开后 installed 格位从存档恢复", eCell3 === window.__eCell1 && dCell3 === window.__dCell1,
+          "energy " + eCell3 + " | dock " + dCell3);
         out.push("== " + pass + " PASS / " + fail + " FAIL ==");
         flush();
       }, 2200);

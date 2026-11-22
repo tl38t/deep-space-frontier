@@ -120,7 +120,6 @@ var RES = { credits:"星币", fe_alloy:"标准钛材", ni_alloy:"银镍合金", 
 
 var MODULES = [
   {type:"energy",      name:"能源舱",    ic:"⚡", color:"#e7b45d", cost:{credits:2000,fe_alloy:20}, time:20},
-  {type:"cargo",       name:"仓储舱",    ic:"▣", color:"#79a9ff", cost:{credits:2000,fe_alloy:20}, time:20},
   {type:"smelt",       name:"精炼环",    ic:"⚗", color:"#67d4a1", cost:{credits:4000,fe_alloy:40,integrated_hull:2}, time:30},
   {type:"manufacture", name:"总装船坞",  ic:"⌬", color:"#42d6e8", cost:{credits:6000,fe_alloy:60,power_core:2}, time:40},
   {type:"equip",       name:"制造车间",  ic:"⚒", color:"#e08a5a", cost:{credits:3000,fe_alloy:30,functional_system:2}, time:30},
@@ -132,10 +131,10 @@ var MODULES = [
 ];
 var BY = {}; MODULES.forEach(function(m){ BY[m.type]=m; });
 
-var LAYOUT = { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2], invent:[2,2],
+var LAYOUT = { core:[3,3], energy:[3,1], smelt:[4,4], manufacture:[3,2], invent:[2,2],
   dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5], equip:[4,2] };
 var FLEX = [ {id:"flex_1",x:6,y:1}, {id:"flex_2",x:6,y:2}, {id:"flex_3",x:6,y:3}, {id:"flex_4",x:6,y:4} ];
-var STARTER = ["energy","cargo","smelt","manufacture"];
+var STARTER = ["energy","smelt","manufacture"];
 
 var installed = {};       // slotId -> moduleType
 STARTER.forEach(function(t){ installed[t]=t; });

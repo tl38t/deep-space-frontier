@@ -4,6 +4,7 @@
 <script>
 const out=[];const log=s=>{out.push(s);document.getElementById("log").textContent=out.join("\n");};
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const sid=(type)=>{ if(type==="core") return "core"; try{ const _w=W(); const st=_w.NSK.Core.load(); const e=st.base.modules.installed.find(function(x){var m=st.base.modules.owned.find(function(o){return o.id===x.moduleId;});return m&&m.type===type;}); return e?e.slotId:type; }catch(e){ return type; } };
 const fr=document.getElementById("fr"),D=()=>fr.contentDocument,W=()=>fr.contentWindow;
 const nav=u=>new Promise(r=>{fr.onload=()=>{fr.onload=null;r();};fr.src=u;});
 const q=s=>{try{return D().querySelector(s);}catch(e){return null;}};
@@ -30,7 +31,7 @@ const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
   ok("BOOSTER_CATEGORY_META 可读", !!(W().BOOSTER_CATEGORY_META&&W().BOOSTER_CATEGORY_META.length), (W().BOOSTER_CATEGORY_META||[]).length+" 分类");
 
   // 1) 点击反应实验室舱段卡片 → 工作台弹窗
-  const card=q('[data-act="baseinfo:booster"]');
+  const card=q('[data-act="baseinfo:'+sid('booster')+'"]');
   ok("反应实验室舱段卡片存在", !!card);
   if(card) clickEl(card);
   const ov=await until(()=>q(".wb-overlay.active"),8000);

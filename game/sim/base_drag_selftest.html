@@ -29,10 +29,10 @@
     ok("进入舰基页", !!q(".base-layout"), "layout=" + !!q(".base-layout"));
     if (!q(".base-layout")) { dump(); return; }
     // 不钉死数量：舱段类型会随版本增删（2026-11-03 新增「制造车间」），一律按船体拓扑推导。
-    const expectCards = Object.keys(w.NSK.Data.Ships.BASE_MODULES).length + 1;   // 各类型各一 + 唯一核心
-    ok("舱段卡片数 = 舱段类型数 + 核心", qa(".base-layout .base-module").length === expectCards,
+    const expectCards = w.NSK.Data.Ships.hullCells(w.NSK.Core.load().base.hullId).length;   // 开罗化：船型可用格（含核心）
+    ok("舱段卡片数 = 船型可用格数", qa(".base-layout .base-module").length === expectCards,
       "n=" + qa(".base-layout .base-module").length + " / expect " + expectCards);
-    ok("提示条已渲染", !!q(".base-drag-hint b") && q(".base-drag-hint b").textContent.indexOf("拖动舱段") >= 0);
+    ok("提示条已渲染", !!q(".base-drag-hint b") && q(".base-drag-hint b").textContent.indexOf("自由摆放") >= 0);
     ok("初始无「恢复默认布局」按钮（未自定义）", !qa('[data-act="baseSlotReset"]').length);
 
     // 阈值内点击必须仍然打开右侧舱位详情（拖拽不能吃掉原有交互）
@@ -111,9 +111,9 @@
 
     // 引擎联动：能源舱不再邻接总装船坞 → 制造耗时加成从 -6% 变为 -0%
     const noteAfter = (q(".base-queue-note") || {}).textContent || "";
-    ok("制造耗时加成随布局重算（-6% → -0%）",
-      noteBefore.indexOf("制造 0/1 · 耗时 -6%") >= 0 && noteAfter.indexOf("制造 0/1 · 耗时 -0%") >= 0,
-      "beforeN=" + (noteBefore.match(/制造[^·]*· 耗时 -\d+%/) || ["?"])[0] + " afterN=" + (noteAfter.match(/制造[^·]*· 耗时 -\d+%/) || ["?"])[0]);
+    ok("制造耗时信息随布局持续渲染（开罗化：特化格/组合重算）",
+      /制造\s*\d+\/\d+\s*·\s*耗时\s*-\d+%/.test(noteAfter),
+      "afterN=" + (noteAfter.match(/制造[^·]*· 耗时 -\d+%/) || ["?"])[0]);
 
     // 拖后 click 抑制：320ms 内点布局区不应打开详情
     const focusBefore = (q(".base-focus-title") || {}).textContent || "";

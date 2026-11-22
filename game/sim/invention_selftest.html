@@ -316,7 +316,7 @@ body.shot.narrow iframe { width: 390px; height: 1100px; }
     var saveKey = "nsk_save_v7", backup = null;
     try { backup = w.localStorage.getItem(saveKey); } catch (e) { backup = null; }
     var st = LIVE();
-    var inv = (Base.stateSlots(st) || []).filter(function (s) { return s.type === "invent"; })[0];
+    var inv = (Base.stateSlots(st) || []).filter(function (s) { var m = w.NSK.Engine.Base.moduleAt(st, s.id); return m && m.type === "invent"; })[0];
     ok("I1 舰基存在发明舱槽位", !!inv, inv ? inv.id : "无");
     if (!inv || !Wb) return;
 

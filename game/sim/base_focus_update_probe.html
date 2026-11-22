@@ -19,6 +19,7 @@ function clickEl(el){ if(el) try{ el.click(); return true; }catch(e){ return fal
 function closeWb(){ const x=q(".wb-close"); if(x) try{ x.click(); }catch(e){} }
 function focusText(){ const p=q(".base-focus-panel"); return p?p.textContent.replace(/\s+/g," ").trim().slice(0,60):""; }
 
+const sid=(type)=>{ if(type==="core") return "core"; try{ const W=document.getElementById("fr").contentWindow; const st=W.NSK.Core.load(); const e=st.base.modules.installed.find(function(x){var m=st.base.modules.owned.find(function(o){return o.id===x.moduleId;});return m&&m.type===type;}); return e?e.slotId:type; }catch(e){ return type; } };
 (async function(){
   await nav("../index.html?t="+Date.now()+"#base");
   const b0=await until(booted,25000); if(!b0){ log("启动失败"); return; }
@@ -26,9 +27,9 @@ function focusText(){ const p=q(".base-focus-panel"); return p?p.textContent.rep
   await until(()=>qa(".base-module").length>0, 10000);
 
   const samples={};
-  const keys=["core","energy","cargo","smelt","command","habitat"];
+  const keys=["core","energy","equip","smelt","command","habitat"];
   for(const k of keys){
-    const btn=qa('[data-act="baseinfo:'+k+'"]')[0];
+    const btn=qa('[data-act="baseinfo:'+sid(k)+'"]')[0];
     if(!btn){ samples[k]="(无此舱段)"; continue; }
     clickEl(btn); await wait(250); closeWb(); await wait(150);
     samples[k]=focusText();

@@ -152,9 +152,93 @@
   // 舰基母舰蓝图：每艘船的舱位拓扑各异；核心独立于船体，模块可在同类舱位间拆装。
   // energy 字段 = 该模块运行时电力占用（⚡ 能源舱自身为 0，其发电见 ENERGY_OUTPUT）。
   // 占用数值为 MVP 提议值（周四标定，E 项），后续可按平衡微调。
+  // 格子是空容器（cellId = "x,y"），模块是实例（可同类多个），玩家在船型可用格内自由摆放。
+  // 核心恒占 [3,3]，不可移动。可用格 = 该船旧 layout 九坐标（保证旧档零越界）
+  //   + 按 shape 追加的空格（保留 8 船形状差异、给重排腾挪余地），每船 14–17 格。
+  // 特化格（specialCell）：每船 1 格，放任意舱段都吃该船 speedMult（开罗式「风水宝地」）。
+  const EXTRA_CELLS = {
+    frontier: [[1,2],[2,1],[4,1],[5,2],[1,4],[5,4]],
+    raider:   [[1,1],[5,1],[1,3],[5,3],[1,4],[5,4]],
+    bastion:  [[2,1],[4,1],[2,5],[4,5],[3,5]],
+    ark:      [[2,1],[4,1],[1,3],[5,2],[1,4],[2,5]],
+    salvage:  [[1,2],[4,1],[1,3],[4,2],[2,5],[3,5]],
+    caravan:  [[3,1],[4,2],[4,4],[1,2],[5,2],[2,5]],
+    research: [[3,1],[4,2],[1,3],[5,3],[4,5],[2,5]],
+    spear:    [[3,1],[2,2],[5,3],[1,3],[3,5],[5,4]],
+  };
+  // 特化格坐标（须是该船可用格之一，且与旧 layout 九坐标不重合，避免开局即锁死特化）。
+  const SPECIAL_CELL = {
+    frontier: [5,2], raider: [5,1], bastion: [3,5], ark: [1,3],
+    salvage: [4,1], caravan: [4,4], research: [5,3], spear: [3,1],
+  };
+  // 由 layout + 追加格解析可用格列表。缓存，避免每次渲染重算。
+  const _cellCache = {};
+  function hullCells(hullOrId) {
+    const hull = typeof hullOrId === "string" ? baseHullById(hullOrId) : hullOrId;
+    if (!hull) return [];
+    if (_cellCache[hull.id]) return _cellCache[hull.id];
+    const seen = new Set();
+    const cells = [];
+    const push = (x, y, core) => {
+      const id = x + "," + y;
+      if (seen.has(id)) return;
+      seen.add(id);
+      cells.push({ id: id, x: x, y: y, core: !!core, type: core ? "core" : null });
+    };
+    push(3, 3, true);   // 核心恒定锚点
+    for (const k in hull.layout) {
+      if (k === "core") continue;
+      const p = hull.layout[k];
+      if (p && p[0] >= 1 && p[0] <= 5 && p[1] >= 1 && p[1] <= 5) push(p[0], p[1], false);
+    }
+    // nativeType：该格在旧 layout 中对应的舱段类型，仅用于 UI 兼容/提示，不参与任何机制判定。
+    for (const k in hull.layout) {
+      if (k === "core") continue;
+      const p = hull.layout[k];
+      if (!p) continue;
+      const c = cells.find(s => s.x === p[0] && s.y === p[1]);
+      if (c) c.nativeType = k;
+    }
+    for (const p of (EXTRA_CELLS[hull.shape] || [])) push(p[0], p[1], false);
+    const sp = SPECIAL_CELL[hull.shape];
+    if (sp) {
+      const sc = cells.find(c => c.x === sp[0] && c.y === sp[1]);
+      if (sc) sc.special = hull.specialSlot;
+    }
+    _cellCache[hull.id] = cells;
+    return cells;
+  }
+  function hullCellAt(hullOrId, x, y) {
+    return hullCells(hullOrId).find(c => c.x === x && c.y === y) || null;
+  }
+  function hullSpecialCell(hullOrId) {
+    return hullCells(hullOrId).find(c => c.special) || null;
+  }
+
+  // 同类模块实例上限（避免无限堆叠破坏布局平衡），提议值待标定。
+  const MODULE_INSTANCE_CAP = 3;
+  // 资源建造造价（按模块耗电分档），锚定本体升级曲线，一个舱段显著便宜于升一次本体。
+  const MODULE_BUILD_COST = {
+    energy:      { credits: 4000,  fe_alloy: 20 },
+    dock:        { credits: 4000,  fe_alloy: 20 },
+    command:     { credits: 4000,  fe_alloy: 20 },
+    habitat:     { credits: 4000,  fe_alloy: 20 },
+    equip:       { credits: 8000,  ni_alloy: 40, struct: 5 },
+    smelt:       { credits: 8000,  ni_alloy: 40, struct: 5 },
+    booster:     { credits: 12000, ni_alloy: 60, struct: 10 },
+    manufacture: { credits: 12000, ni_alloy: 60, struct: 10 },
+    invent:      { credits: 16000, ni_alloy: 90, struct: 20 },
+  };
+  const BUILD_TIER_LABEL = { 4000: "轻型", 8000: "中型", 12000: "重型", 16000: "特种" };
+  function moduleBuildCost(type) { return MODULE_BUILD_COST[type] || null; }
+  function buildCostLabel(type) {
+    const c = MODULE_BUILD_COST[type];
+    if (!c) return "";
+    return BUILD_TIER_LABEL[c.credits] || "";
+  }
+
   const BASE_MODULES = {
     energy:      { type: "energy",      name: "能源舱",   icon: "⚡", color: "#e7b45d", desc: "发电并稳定工业电网。", energy: 0 },
-    cargo:       { type: "cargo",       name: "仓储舱",   icon: "▣",  color: "#79a9ff", desc: "周转矿石、矿材与舰船组件。", energy: 5 },
     smelt:       { type: "smelt",       name: "精炼环",   icon: "⚗",  color: "#67d4a1", desc: "将采集矿石转化为矿材。", energy: 20 },
     manufacture: { type: "manufacture", name: "总装船坞", icon: "⌬",  color: "#42d6e8", desc: "制造舰船组件与整舰。", energy: 30 },
     // 2026-11-03 新增：装备制造独立成舱（此前内联在舰基页，与总装坞共用槽位）。
@@ -174,72 +258,75 @@
       id: "hull_frontier", name: "拓荒者级", factionId: "settlers", tagline: "边境通用母舰",
       shape: "frontier", accent: "#b5c46a", bodyLevelReq: 0, relationReq: 0, blueprintCost: {},
       specialSlot: { id: "smelt", name: "矿脉导流舱", queue: "smelt", speedMult: 0.94, effect: "精炼耗时 -6%" },
-      layout: { core:[3,3], energy:[3,1], cargo:[4,3], smelt:[4,4], manufacture:[3,2], invent:[2,2], dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5], equip:[4,2] },
+      layout: { core:[3,3], energy:[3,1], smelt:[4,4], manufacture:[3,2], invent:[2,2], dock:[2,3], command:[3,4], habitat:[3,5], booster:[5,5], equip:[4,2] },
     },
     {
       id: "hull_angel_raider", name: "苍穹掠袭舰", factionId: "angel", tagline: "高速突入 / 分散舱列",
       shape: "raider", accent: "#5ad1a0", bodyLevelReq: 0, relationReq: 0, blueprintCost: { credits: 8000 },
       specialSlot: { id: "manufacture", name: "战利品快装位", queue: "manufacture", speedMult: 0.90, effect: "制造耗时 -10%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[2,2], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5], equip:[1,2] },
+      layout: { core:[3,3], energy:[3,2], smelt:[4,1], manufacture:[2,2], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5], equip:[1,2] },
     },
     {
       id: "hull_blood_oath", name: "赤誓堡垒舰", factionId: "blood", tagline: "纵向装甲 / 中轴指挥",
       shape: "bastion", accent: "#e879a8", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 18000 },
       specialSlot: { id: "manufacture", name: "军规装配位", queue: "manufacture", speedMult: 0.88, effect: "制造耗时 -12%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[2,3], smelt:[1,3], manufacture:[4,3], invent:[3,1], dock:[5,3], command:[2,4], habitat:[4,4], booster:[5,5], equip:[4,2] },
+      layout: { core:[3,3], energy:[3,2], smelt:[1,3], manufacture:[4,3], invent:[3,1], dock:[5,3], command:[2,4], habitat:[4,4], booster:[5,5], equip:[4,2] },
     },
     {
       id: "hull_mining_ark", name: "矿脉工造方舟", factionId: "mining_guild", tagline: "宽幅工业翼 / 矿冶强化",
       shape: "ark", accent: "#b5793f", bodyLevelReq: 0, relationReq: 4, blueprintCost: { credits: 12000 },
       specialSlot: { id: "smelt", name: "深层熔炼槽", queue: "smelt", speedMult: 0.84, effect: "精炼耗时 -16%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[4,4], invent:[2,2], dock:[5,3], command:[3,4], habitat:[2,4], booster:[5,5], equip:[4,5] },
+      layout: { core:[3,3], energy:[3,2], smelt:[4,3], manufacture:[4,4], invent:[2,2], dock:[5,3], command:[3,4], habitat:[2,4], booster:[5,5], equip:[4,5] },
     },
     {
       id: "hull_salvage_union", name: "残骸拼接舰", factionId: "salvage_union", tagline: "非对称拼装 / 模块外露",
       shape: "salvage", accent: "#c9772e", bodyLevelReq: 0, relationReq: 4, blueprintCost: { credits: 16000 },
       specialSlot: { id: "manufacture", name: "回收件快装位", queue: "manufacture", speedMult: 0.90, effect: "制造耗时 -10%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[5,2], manufacture:[4,3], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5], equip:[5,3] },
+      layout: { core:[3,3], energy:[3,2], smelt:[5,2], manufacture:[4,3], invent:[2,3], dock:[2,4], command:[3,4], habitat:[4,4], booster:[5,5], equip:[5,3] },
     },
     {
       id: "hull_lone_star", name: "孤星商队母舰", factionId: "lone_star", tagline: "紧凑货运 / 双侧生产线",
       shape: "caravan", accent: "#d8c07a", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 24000 },
-      specialSlot: { id: "cargo", name: "冷链货运接口", queue: "manufacture", speedMult: 0.91, effect: "制造耗时 -9%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[2,3], invent:[2,2], dock:[5,3], command:[2,4], habitat:[3,4], booster:[5,5], equip:[1,3] },
+      specialSlot: { id: "manufacture", name: "冷链货运接口", queue: "manufacture", speedMult: 0.91, effect: "制造耗时 -9%" },
+      layout: { core:[3,3], energy:[3,2], smelt:[4,3], manufacture:[2,3], invent:[2,2], dock:[5,3], command:[2,4], habitat:[3,4], booster:[5,5], equip:[1,3] },
     },
     {
       id: "hull_abyssal", name: "深空研习母舰", factionId: "abyssal_inst", tagline: "环形实验区 / 发明强化",
       shape: "research", accent: "#9b8fd0", bodyLevelReq: 1, relationReq: 12, blueprintCost: { credits: 32000 },
       specialSlot: { id: "invent", name: "先驱遗物实验位", queue: "invent", speedMult: 0.82, effect: "发明耗时 -18%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[4,2], smelt:[4,3], manufacture:[3,4], invent:[2,2], dock:[2,3], command:[2,4], habitat:[4,4], booster:[5,5], equip:[3,5] },
+      layout: { core:[3,3], energy:[3,2], smelt:[4,3], manufacture:[3,4], invent:[2,2], dock:[2,3], command:[2,4], habitat:[4,4], booster:[5,5], equip:[3,5] },
     },
     {
       id: "hull_bounty", name: "悬赏者突击母舰", factionId: "bounty_league", tagline: "箭形舰首 / 前线总装",
       shape: "spear", accent: "#b02a1f", bodyLevelReq: 0, relationReq: 8, blueprintCost: { credits: 20000 },
       specialSlot: { id: "manufacture", name: "前线换装位", queue: "manufacture", speedMult: 0.88, effect: "制造耗时 -12%" },
-      layout: { core:[3,3], energy:[3,2], cargo:[3,1], smelt:[4,1], manufacture:[4,2], invent:[2,3], dock:[4,3], command:[2,4], habitat:[3,4], booster:[5,5], equip:[5,2] },
+      layout: { core:[3,3], energy:[3,2], smelt:[4,1], manufacture:[4,2], invent:[2,3], dock:[4,3], command:[2,4], habitat:[3,4], booster:[5,5], equip:[5,2] },
     },
   ];
 
   function baseHullById(id) { return BASE_HULLS.find(h => h.id === id) || null; }
   function baseModuleByType(type) { return BASE_MODULES[type] || null; }
+  // 船体可用格列表（id = "x,y"，核心 id="core" 固定 [3,3]）。
+  // 开罗化后格子是空容器、模块是实例，故不再按 BASE_MODULES 生成 type 插座。
+  // 保留 hull.specialSlot（绑类型的旧特化）仅供旧档迁移参考；运行时特化走 specialCell。
   function baseHullSlots(hullOrId) {
     const hull = typeof hullOrId === "string" ? baseHullById(hullOrId) : hullOrId;
     if (!hull) return [];
-    const slots = Object.keys(BASE_MODULES).map(type => ({
-      id: type, type: type, x: hull.layout[type][0], y: hull.layout[type][1],
-      special: hull.specialSlot && hull.specialSlot.id === type ? hull.specialSlot : null,
-    }));
-    slots.push({ id: "core", type: "core", x: hull.layout.core[0], y: hull.layout.core[1] });
-    return slots;
+    return hullCells(hull);
   }
   function createInitialBase() {
     const owned = Object.keys(BASE_MODULES).map(type => ({ id: "module_" + type + "_01", type: type }));
+    const hull = baseHullById("hull_frontier");
+    // 旧版每类一实例落在该船 layout[type]；开罗化改为落在可用格中对应坐标（若 layout 坐标合法）。
+    const installed = [];
+    for (const m of owned) {
+      const p = hull.layout[m.type];
+      const cell = p && hullCellAt(hull, p[0], p[1]);
+      installed.push({ slotId: cell ? cell.id : "3,2", moduleId: m.id });
+    }
     return {
       coreId: "base_core_01", hullId: "hull_frontier", ownedHullBlueprints: ["hull_frontier"],
-      modules: {
-        owned: owned,
-        installed: owned.map(m => ({ slotId: m.type, moduleId: m.id })),
-      },
+      modules: { owned: owned, installed: installed },
     };
   }
 
@@ -286,5 +373,8 @@
 
   return { SHIPS, BODY_LEVELS, bodyLevelPlan, canBuildAt, shipsAtLevel, shipById, maxHp, upgradeCost, ENERGY_OUTPUT,
     SLOT_LAYOUT, slotLayout, totalSlots,
-    BASE_MODULES, BASE_HULLS, baseHullById, baseModuleByType, baseHullSlots, createInitialBase };
+    BASE_MODULES, BASE_HULLS, baseHullById, baseModuleByType, baseHullSlots, createInitialBase,
+    EXTRA_CELLS, SPECIAL_CELL, hullCells, hullCellAt, hullSpecialCell,
+    MODULE_INSTANCE_CAP, MODULE_BUILD_COST, moduleBuildCost, buildCostLabel,
+  };
 });

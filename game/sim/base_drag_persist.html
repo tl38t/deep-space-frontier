@@ -58,21 +58,27 @@
       try { decoded = w.NSK.Core.decodeLocalSave(raw); } catch (e) { out.push("decode error: " + e.message); }
       ok("存档可解码（NSK2 校验通过）", !!decoded);
       if (!decoded) { dump(); return; }
-      const pos = (decoded.base || {}).slotPos || {};
-      ok("存档写入 base.slotPos.energy=[2,3]", JSON.stringify(pos.energy) === "[2,3]", JSON.stringify(pos));
-      ok("存档写入 base.slotPos.dock=[3,1]", JSON.stringify(pos.dock) === "[3,1]");
+      const cellOfTypeDecoded = function(s, t){
+        var m = (s.base.modules.owned||[]).find(function(o){return o.type===t;});
+        var e = (s.base.modules.installed||[]).find(function(x){return x.moduleId===(m&&m.id);});
+        return e ? e.slotId : null;
+      };
+      const eCell = cellOfTypeDecoded(decoded, "energy"), dCell = cellOfTypeDecoded(decoded, "dock");
+      ok("存档 installed 写入 energy 新格位 2,3", eCell === "2,3", "energy=" + eCell);
+      ok("存档 installed 写入 dock 新格位 3,1", dCell === "3,1", "dock=" + dCell);
       ok("存档版本仍为 v8（未升版）", decoded.version === 8, "v=" + decoded.version);
 
       // 模拟「冷启动」：走 boot 同款 load → normalize → 生效拓扑
       const reloaded = w.NSK.Core.load();
       ok("冷启动 Core.load 成功", !!reloaded);
       if (reloaded) {
-        ok("Core.load 自带 slotPos（无需外部回填）", !!(reloaded.base && reloaded.base.slotPos && reloaded.base.slotPos.energy), JSON.stringify(reloaded.base && reloaded.base.slotPos));
+        ok("Core.load 自带 installed 格位（无需外部回填）", !!(reloaded.base && (reloaded.base.modules.installed||[]).length), "n="+((reloaded.base.modules.installed||[]).length));
         w.NSK.Engine.Base.normalize(reloaded);
         const slots = w.NSK.Engine.Base.stateSlots(reloaded);
-        const e2 = slots.find(s => s.id === "energy"), d2 = slots.find(s => s.id === "dock");
-        ok("冷启动后 energy 仍在 (2,3)", e2.x === 2 && e2.y === 3, JSON.stringify([e2.x, e2.y]));
-        ok("冷启动后 dock 仍在 (3,1)", d2.x === 3 && d2.y === 1, JSON.stringify([d2.x, d2.y]));
+        const eCellR = cellOfTypeDecoded(reloaded, "energy"), dCellR = cellOfTypeDecoded(reloaded, "dock");
+        const e2 = slots.find(s => s.id === eCellR), d2 = slots.find(s => s.id === dCellR);
+        ok("冷启动后 energy 仍在 (2,3)", eCellR === "2,3" && !!e2, "cell=" + eCellR);
+        ok("冷启动后 dock 仍在 (3,1)", dCellR === "3,1" && !!d2, "cell=" + dCellR);
         ok("冷启动后自定义布局标志为真", w.NSK.Engine.Base.hasCustomLayout(reloaded) === true);
         ok("冷启动后制造倍率仍为 1（能源已离开总装邻位）", Math.abs(w.NSK.Engine.Base.queueDurationMultiplier(reloaded, "manufacture") - 1) < 1e-9);
       }

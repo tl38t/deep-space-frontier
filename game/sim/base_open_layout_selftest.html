@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舰基开罗化自由布局 · 回归</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1240px;height:900px;border:1px solid #ccc"></iframe>
+<script>
+// 2026-11-22 舰基开罗化实装后的真实 DOM + 引擎回归。
+// 覆盖：格位模型/自由摆放/同类多实例/特化格/成套组合/资源建造/旧档迁移/无运行时错误。
+const out=[]; let PASS=0, FAIL=0;
+const log=s=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument, W=()=>fr.contentWindow;
+const q=s=>{ try{ return D().querySelector(s); }catch(e){ return null; } };
+const qa=s=>{ try{ return [...D().querySelectorAll(s)]; }catch(e){ return []; } };
+async function until(fn,ms){ ms=ms||20000; const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(120); } return false; }
+const click=s=>{ const el=q(s); if(el){ el.click(); return true; } return false; };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error",e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection",e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+
+(async function(){
+  fr.src="../index.html?t="+Date.now()+"#base";
+  const booted=await until(()=>!!q("#nsk-tabs .tab"),25000);
+  ok("游戏启动完成", booted);
+  if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  hookErrors();
+  await wait(300);
+  click('[data-act="tab:base"]'); await wait(700);
+  await until(()=>qa(".base-module").length>0,10000);
+
+  const B=()=>W().NSK.Engine.Base, S=()=>W().NSK.Data.Ships;
+
+  // ===== UI 渲染 =====
+  const cells=qa(".base-layout .base-module:not(.base-core)");
+  ok("U1 甲板渲染全部可用格（>9 含空格）", cells.length>9, "cells="+cells.length);
+  ok("U2 存在空格卡", qa(".base-layout .base-module.empty").length>0, "empty="+qa(".base-layout .base-module.empty").length);
+  ok("U3 存在特化格标记 ✦", qa(".base-layout .base-module.special").length===1, "special="+qa(".base-layout .base-module.special").length);
+  ok("U4 舱段库含建造面板", !!q(".mod-stock .base-build-panel"));
+  const buildBtns=qa('.mod-stock [data-act^="moduleBuild:"]');
+  ok("U5 每类舱段有建造按钮（9 类）", buildBtns.length===9, "btns="+buildBtns.length);
+
+  // 打开核心面板看组合图鉴
+  const core=q('[data-act="baseinfo:core"]'); if(core) core.click(); await wait(400);
+  const legend=q(".base-combo-legend");
+  ok("U6 核心面板含成套组合图鉴", !!legend);
+  ok("U7 图鉴列出 5 套组合", qa(".base-combo-legend .combo-chip").length===5, "chips="+qa(".base-combo-legend .combo-chip").length);
+
+  // ===== 引擎 API（构造独立 state，不动游戏存档）=====
+  const ships=S(), base=B();
+  const st={res:{credits:999999,fe_alloy:9999,ni_alloy:9999,struct:9999},members:[],factions:[],logistics:{compensation:0}};
+  st.base=ships.createInitialBase(); st.base.bodyLevel=0; st.base.industry={};
+  base.normalize(st);
+  ok("E1 初始 9 模块 slotId 均为坐标", st.base.modules.installed.length===9 && st.base.modules.installed.every(e=>/^\d+,\d+$/.test(e.slotId)));
+  ok("E2 slotPos 退役", st.base.slotPos===undefined);
+
+  const empty=ships.hullCells(st.base.hullId).filter(c=>!c.core && !st.base.modules.installed.some(e=>e.slotId===c.id));
+  const inst=st.base.modules.installed[0], fromCell=inst.slotId;
+  const mv=base.moveModule(st,fromCell,empty[0].id);
+  ok("E3 自由移动到空格", mv.ok && !!base.moduleAt(st,empty[0].id) && !base.moduleAt(st,fromCell));
+  ok("E4 核心不可移动", !base.moveModule(st,fromCell,"core").ok);
+
+  const b0=base.buildModule(st,"smelt"), b1=base.buildModule(st,"smelt"), b2=base.buildModule(st,"smelt");
+  ok("E5 同类上限 3 个", b0.ok && b1.ok && !b2.ok);
+  const empty2=ships.hullCells(st.base.hullId).filter(c=>!c.core && !st.base.modules.installed.some(e=>e.slotId===c.id));
+  ok("E6 新实例可装配", base.installModule(st,empty2[0].id,b0.module.id).ok);
+
+  const sp=ships.hullSpecialCell(st.base.hullId);
+  const st2={res:{},members:[],factions:[],base:ships.createInitialBase()}; st2.base.bodyLevel=0; base.normalize(st2);
+  const any=st2.base.modules.installed[0]; base.moveModule(st2,any.slotId,sp.id);
+  const spMult=ships.baseHullById(st2.base.hullId).specialSlot.speedMult;
+  ok("E7 特化格放任意舱段→乘区=特化值", Math.abs(base.queueDurationMultiplier(st2,"manufacture")-spMult)<1e-9,
+     "mult="+base.queueDurationMultiplier(st2,"manufacture")+" exp="+spMult);
+
+  // 熔铸总装环：smelt/manufacture/equip 两两≤2
+  const st3={res:{},members:[],factions:[],base:ships.createInitialBase()}; st3.base.bodyLevel=0; base.normalize(st3);
+  ok("E8 默认未激活熔铸环", !base.activeCombos(st3).some(a=>a.combo.id==="foundry"));
+  const sm=st3.base.modules.installed.find(e=>st3.base.modules.owned.find(m=>m.id===e.moduleId).type==="smelt");
+  base.moveModule(st3,sm.slotId,"4,1");
+  ok("E9 聚拢后熔铸环激活", base.activeCombos(st3).some(a=>a.combo.id==="foundry"),
+     "active="+base.activeCombos(st3).map(a=>a.combo.id).join(","));
+
+  // 旧档迁移
+  const old={res:{},members:[{id:"m1",assignment:{type:"station",slotId:"smelt",slotType:"smelt"},status:"stationed"}],factions:[],
+    base:{hullId:"hull_frontier",bodyLevel:0,modules:{
+      owned:Object.keys(ships.BASE_MODULES).map(t=>({id:"module_"+t+"_01",type:t})),
+      installed:Object.keys(ships.BASE_MODULES).map(t=>({slotId:t,moduleId:"module_"+t+"_01"})),
+    },slotPos:{smelt:[4,4],energy:[3,1]}}};
+  base.normalize(old);
+  ok("E10 旧档 slotId 转坐标", old.base.modules.installed.every(e=>/^\d+,\d+$/.test(e.slotId)));
+  ok("E11 旧档 slotPos 删除", old.base.slotPos===undefined);
+  ok("E12 旧档驻舱 slotId 平移", /^\d+,\d+$/.test(old.members[0].assignment.slotId));
+  const snap=JSON.stringify(old); base.normalize(old);
+  ok("E13 迁移幂等", snap===JSON.stringify(old));
+
+  ok("E14 无未捕获运行时错误", ERRS.length===0, ERRS.join(" | "));
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})().catch(e=>{ log("\n[FATAL] "+e.stack); log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); });
+</script>
+</body></html>
