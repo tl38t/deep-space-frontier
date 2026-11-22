@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段工作台 · 二级配方详情弹窗回归</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1200px;height:900px;border:1px solid #ccc"></iframe>
+<script>
+// 2026-11-15：二级配方详情弹窗实装后的真实 DOM 回归。
+// 视口 1200px → 宽屏布局；验证点卡弹窗、材料完整、批量同步、加后保持、上/下一个、三条关闭路径。
+const out=[]; let PASS=0, FAIL=0;
+const log=s=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const skip=(name,why)=>log("[SKIP] "+name+"  → "+why);
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument, W=()=>fr.contentWindow;
+const q=s=>{ try{ return D().querySelector(s); }catch(e){ return null; } };
+const qa=s=>{ try{ return [...D().querySelectorAll(s)]; }catch(e){ return []; } };
+const cs=(el,p)=>{ try{ return W().getComputedStyle(el)[p]; }catch(e){ return ""; } };
+async function until(fn,ms){ ms=ms||20000; const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(120); } return false; }
+const click=s=>{ const el=q(s); if(el){ el.click(); return true; } return false; };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error",e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection",e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+function saveKey(){ try{ return Object.keys(W().localStorage).find(k=>/^nsk_save/i.test(k)); }catch(e){ return null; } }
+const modal=()=>q(".wb-rd-overlay.active .wb-rd-panel");
+const isOpen=()=>({ present: !!modal() });
+
+(async function(){
+  fr.src="../index.html?t="+Date.now()+"#base";
+  const booted=await until(()=>!!q("#nsk-tabs .tab"),25000);
+  ok("游戏启动完成", booted);
+  if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  hookErrors();
+  const KEY=saveKey(); const BACKUP=KEY?W().localStorage.getItem(KEY):null;
+  await wait(300);
+  click('[data-act="tab:base"]'); await wait(650);
+  await until(()=>qa(".base-module").length>0,10000);
+
+  // 打开制造车间（equip）——用户报的就是这个舱段详情被挤没
+  const eq=q("button.base-equip");
+  ok("找到制造车间舱段卡", !!eq);
+  if(eq) eq.click();
+  const opened=await until(()=>!!q(".wb-overlay.active .wb-panel"),8000);
+  ok("制造车间工作台已打开", opened);
+  if(!opened){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 主台右栏：详情面板已移除，改留引导条
+  ok("主台右栏不再塞详情面板（改引导条）", !q(".wb-col-right .wb-recipe-detail") && !!q(".wb-rd-hint"));
+
+  const cards=qa(".wb-recipes .wb-recipe[data-act^='workbench:sel:']");
+  ok("存在可点的配方卡", cards.length>0, "cards="+cards.length);
+  if(!cards.length){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  // 点第一张卡 → 弹窗出现
+  const firstId=cards[0].getAttribute("data-act").slice("workbench:sel:".length);
+  cards[0].click();
+  const shown=await until(()=>!!modal(),5000);
+  ok("点配方卡弹出详情窗", shown,
+     "rdOpen="+(W().NSK&&W().NSK.UI&&W().NSK.UI.Workbench&&W().NSK.UI.Workbench.rdIsOpen&&W().NSK.UI.Workbench.rdIsOpen())
+     +" overlay="+(!!q(".wb-rd-overlay"))+" active="+(!!q(".wb-rd-overlay.active"))+" errs="+(ERRS.slice(0,2).join("|")||"无"));
+  if(!shown){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+
+  ok("详情窗显示配方名", !!modal().querySelector(".wb-rd-head b"), (modal().querySelector(".wb-rd-head b")||{}).textContent||"");
+  ok("详情窗含制造材料表", !!modal().querySelector(".wb-mats .wb-mat"));
+  ok("详情窗含实时库存「持 N」", /\d/.test((modal().querySelector(".wb-mat-have")||{}).textContent||""),
+     (modal().querySelector(".wb-mat-have")||{}).textContent||"");
+  ok("详情窗含批量步进器 + 加入队列按钮", !!modal().querySelector(".wb-stepper") && !!modal().querySelector(".wb-add"));
+  // 空间核验：弹窗高度显著大于旧右栏 46%（约 350px）
+  ok("详情窗高度 > 旧右栏上限（空间问题已解）", modal().clientHeight>380, "h="+modal().clientHeight);
+
+  // 上/下一个：至少两张卡时验证切换
+  if(cards.length>=2){
+    const posBefore=(modal().querySelector(".wb-rd-pos")||{}).textContent||"";
+    ok("导航显示位置 1 / N", /^1\s*\/\s*/.test(posBefore), posBefore);
+    click('[data-act="workbench:rdnext"]'); await wait(160);
+    const posAfter=(modal().querySelector(".wb-rd-pos")||{}).textContent||"";
+    ok("点「下一个」切换配方", posAfter!==posBefore && /^2\s*\/\s*/.test(posAfter), posBefore+" → "+posAfter);
+    click('[data-act="workbench:rdprev"]'); await wait(160);
+    ok("点「上一个」切回", ((modal().querySelector(".wb-rd-pos")||{}).textContent||"")===posBefore);
+  } else skip("上/下一个切换", "配方不足两张");
+
+  // 批量：点 + 后详情窗计数变化（与主台共用 patch）
+  const cntBefore=((modal().querySelector(".wb-count")||{}).textContent||"").trim();
+  click('.wb-rd-panel .wb-step[data-act="workbench:count:1"]'); await wait(160);
+  const cntAfter=((modal().querySelector(".wb-count")||{}).textContent||"").trim();
+  ok("详情窗步进器计数变化", cntAfter!==cntBefore && cntAfter==="2", cntBefore+" → "+cntAfter);
+  click('.wb-rd-panel .wb-chip[data-act="workbench:chip:10"]'); await wait(160);
+  ok("×10  chip 生效", ((modal().querySelector(".wb-count")||{}).textContent||"").trim()==="10",
+     ((modal().querySelector(".wb-count")||{}).textContent||"").trim());
+
+  // 加入队列后保持打开
+  const addBtn=modal().querySelector(".wb-add");
+  ok("加入队列按钮可用", !!addBtn && !addBtn.hasAttribute("disabled"));
+  if(addBtn && !addBtn.hasAttribute("disabled")){
+    addBtn.click(); await wait(420);
+    ok("加入队列后详情窗仍打开", !!modal());
+    ok("加入后弹出 toast 反馈", !!q("#nsk-toast, .toast, [class*=toast]"));
+  }
+
+  // 关闭路径 1：×
+  click('[data-act="workbench:rdclose"]'); await wait(160);
+  ok("点 × 关闭详情窗", !modal());
+  // 再开
+  qa(".wb-recipes .wb-recipe[data-act^='workbench:sel:']")[0].click(); await wait(180);
+  ok("关闭后可重新打开", !!modal());
+  // 关闭路径 2：点遮罩
+  const ov=q(".wb-rd-overlay"); if(ov) ov.click(); await wait(160);
+  ok("点遮罩关闭详情窗", !modal());
+  // 关闭路径 3：Esc
+  qa(".wb-recipes .wb-recipe[data-act^='workbench:sel:']")[0].click(); await wait(180);
+  const KEv = W().KeyboardEvent;
+  W().document.dispatchEvent(new KEv("keydown",{key:"Escape",bubbles:true})); await wait(160);
+  ok("Esc 关闭详情窗", !modal());
+
+  // 结构性变化：切 tab 应收掉详情窗，避免悬空
+  qa(".wb-recipes .wb-recipe[data-act^='workbench:sel:']")[0].click(); await wait(180);
+  ok("切 tab 前详情窗打开", !!modal());
+  click('[data-act="workbench:tab:dismantle"]'); await wait(260);
+  ok("切到拆解页后详情窗已收走", !modal());
+
+  ok("全程无未捕获错误", ERRS.length===0, ERRS.slice(0,3).join(" | ")||"无");
+  if(KEY && BACKUP!==null){ try{ W().localStorage.setItem(KEY,BACKUP); }catch(e){} }
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})();
+</script>
+</body></html>

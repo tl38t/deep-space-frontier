@@ -920,6 +920,23 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .base-hull-card{position:relative;display:flex;flex:0 0 158px;min-height:88px;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 9px 7px;border:1px solid var(--line);border-top:2px solid var(--hull-accent,#5a8de8);border-radius:7px;background:linear-gradient(145deg,rgba(23,43,62,.9),rgba(10,21,34,.96));text-align:left;color:var(--fg);transition:.15s}
 .base-hull-card:not(:disabled):hover{border-color:var(--hull-accent);transform:translateY(-1px)}.base-hull-card.current{border-color:var(--warn);box-shadow:inset 0 0 0 1px rgba(232,180,90,.2),0 0 12px rgba(232,180,90,.1)}.base-hull-card:disabled:not(.current){opacity:.5;cursor:not-allowed}
 .base-hull-card-faction{font-size:9px;line-height:1.3}.base-hull-card b{font-size:12px;color:#fff;white-space:nowrap}.base-hull-card small{font-size:9px;color:var(--dim);white-space:nowrap}.base-hull-card em{font-style:normal;font-size:10px;color:var(--good);margin-top:auto}.base-hull-card .base-hull-cost{color:var(--dim);font-size:9px}
+.base-hull-card.pending{border-color:var(--good);box-shadow:inset 0 0 0 1px rgba(108,192,122,.25),0 0 12px rgba(108,192,122,.12)}
+.base-hull-card.pending em{color:var(--good)}
+.base-hull-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:8px 10px;border:1px solid var(--good);border-radius:8px;background:rgba(108,192,122,.07)}
+.base-hull-confirm.core{margin-top:10px}
+.base-hull-confirm .warn{color:#f0b46a;font-size:11px;max-width:560px}
+.base-hull-confirm-btns{display:flex;gap:6px;flex:0 0 auto}
+@media(max-width:450px){.base-hull-confirm{flex-direction:column;align-items:stretch}.base-hull-confirm-btns{justify-content:flex-end}}
+/* 预览视图：点船体卡只是「看」，尚未装载核心的空壳船体 */
+.base-hull-card.viewing{border-color:var(--cyan);box-shadow:inset 0 0 0 1px rgba(106,214,232,.28),0 0 12px rgba(106,214,232,.14)}
+.base-hull-card.viewing em{color:var(--cyan)}
+.base-stage.preview{opacity:.92;filter:saturate(.85)}
+.base-stage.preview .base-hull{border-style:dashed}
+.base-module.base-core.transfer{cursor:pointer;background:radial-gradient(circle,rgba(38,102,124,.5),rgba(8,35,51,.7));border:1px dashed var(--cyan);animation:pulseTransfer 1.6s ease-in-out infinite}
+.base-module.base-core.transfer .base-module-status{color:var(--cyan)}
+.base-module.base-core.transfer:hover{box-shadow:0 0 14px rgba(106,214,232,.3)}
+@keyframes pulseTransfer{0%,100%{box-shadow:0 0 0 rgba(106,214,232,0)}50%{box-shadow:0 0 14px rgba(106,214,232,.35)}}
+
 .base-stage .base-hull{border-width:2px;border-color:color-mix(in srgb,var(--hull-accent,#79a9ff) 70%,transparent);background:rgba(16,38,56,.4);box-shadow:inset 0 0 55px color-mix(in srgb,var(--hull-accent,#79a9ff) 12%,transparent),0 0 24px color-mix(in srgb,var(--hull-accent,#79a9ff) 8%,transparent);transition:clip-path .2s,border-color .2s}.base-hull.hull-raider{clip-path:polygon(23% 0,79% 8%,100% 40%,82% 56%,93% 100%,34% 87%,0 59%,14% 34%);transform:rotate(7deg)}
 .base-hull.hull-bastion{clip-path:polygon(35% 0,65% 0,78% 18%,91% 18%,100% 38%,88% 56%,88% 80%,67% 100%,32% 100%,12% 80%,12% 57%,0 38%,11% 18%,24% 18%)}
 .base-hull.hull-ark{clip-path:polygon(50% 2%,67% 14%,100% 24%,88% 46%,100% 66%,65% 76%,50% 100%,35% 76%,0 66%,12% 46%,0 24%,33% 14%);transform:scaleX(1.08)}
@@ -1479,6 +1496,50 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
   .wb-recipes { grid-template-columns: 1fr; }
   .wb-cats { gap: 5px; padding: 6px; }
   .wb-cat { padding: 4px 7px; font-size: 11px; }
+}
+
+/* ===== 二级「配方详情」弹窗（2026-11-15）=====
+   盖在工作台之上（z 比 .wb-overlay 高一层），独立承载材料表 / 批量控制，
+   解决宽屏主台右栏详情被限高挤没的问题。样式全部限定在 .wb-rd-overlay 内，
+   不与 sim/invention_ui_demo.html 复用的 .wb-* 发生污染。沿用项目既有 token。 */
+.wb-rd-overlay { position: fixed; inset: 0; z-index: 10003; display: none; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(3,8,13,.72); backdrop-filter: blur(7px); }
+.wb-rd-overlay.active { display: flex; }
+.wb-rd-panel { position: relative; width: 100%; max-width: 620px; max-height: 88vh; overflow-y: auto;
+  padding: 18px 20px 20px; border-radius: 14px;
+  background: radial-gradient(ellipse at 50% 12%, #10212c, #060d13 82%);
+  border: 1px solid rgba(88,190,206,.42);
+  box-shadow: 0 0 70px rgba(0,0,0,.86), inset 0 0 34px rgba(87,200,224,.04);
+  animation: foRise .2s ease-out; scrollbar-width: thin; scrollbar-color: #2c5663 transparent; }
+.wb-rd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid rgba(60,110,130,.4); }
+.wb-rd-head .eyebrow { display: block; color: var(--cyan); letter-spacing: 1.6px; font-size: 10px; margin-bottom: 5px; }
+.wb-rd-head b { font: 700 18px/1.3 var(--font-tech); color: #eaf6fa; }
+.wb-rd-close { flex: 0 0 auto; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(88,190,206,.35); border-radius: 7px; background: rgba(30,50,62,.7);
+  color: #cdd8e3; font-size: 18px; line-height: 1; cursor: pointer; }
+.wb-rd-close:hover { background: rgba(88,190,206,.2); color: #fff; }
+.wb-rd-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 4px; }
+.wb-rd-navbtn { padding: 6px 12px; border: 1px solid var(--btn-border); border-radius: var(--btn-radius);
+  background: linear-gradient(180deg,var(--btn-neutral-top),var(--btn-neutral-bottom));
+  color: #b7cbd0; font-size: 12px; cursor: pointer; transition: background .15s,border-color .15s,color .15s; }
+.wb-rd-navbtn:hover:not([disabled]) { border-color: var(--btn-hover-border); color: #eaf6fa;
+  background: linear-gradient(180deg,var(--btn-hover-top),var(--btn-hover-bottom)); }
+.wb-rd-navbtn[disabled] { opacity: .35; cursor: not-allowed; }
+.wb-rd-pos { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.wb-rd-body { margin-top: 8px; }
+.wb-rd-body .wb-mats { gap: 7px; }
+.wb-rd-body .wb-mat { padding: 9px 12px; }
+.wb-rd-body .wb-mat-name { font-size: 13px; }
+.wb-rd-body .wb-stepper { margin-top: 4px; }
+.wb-rd-body .wb-add { margin-top: 16px; padding: 12px; font-size: 14px; }
+/* 主台右栏：详情改由弹窗承载后，仅留一行引导 */
+.wb-rd-hint { margin-top: 10px; padding: 9px 12px; font-size: 11.5px; line-height: 1.5; color: #9fd6e2;
+  border: 1px dashed rgba(88,190,206,.35); border-radius: 8px; background: rgba(9,20,28,.5); }
+@media (max-width: 640px) {
+  .wb-rd-overlay { padding: 0; align-items: flex-end; }
+  .wb-rd-panel { max-width: 100%; max-height: 90vh; border-radius: 14px 14px 0 0; padding-bottom: 24px; }
+  .wb-rd-head b { font-size: 16px; }
 }
 
 /* 舱段明细弹窗（非工业舱段 / 工作台顶部明细共用样式） */

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-uninstall-frees-station-selftest</title>
+<style>body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}#log{white-space:pre-wrap}.f{position:absolute;left:-9999px;top:0;width:1240px;height:1000px;border:0}</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f1" class="f"></iframe>
+<script>
+(function () {
+  const logEl = document.getElementById("log");
+  const out = [];
+  let pass = 0, fail = 0;
+  function flush() { logEl.textContent = out.join("\n"); document.title = pass + "PASS-" + fail + "FAIL"; }
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+    flush();
+  }
+  window.onerror = function (m) { out.push("ERR " + m); flush(); };
+  const SAVE_KEY = "nsk_save_v7";
+  const f1 = document.getElementById("f1");
+
+  function stateOf(w) {
+    try {
+      return ((w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state)
+           || (w.Persistence && w.Persistence.state) || null);
+    } catch (e) { return null; }
+  }
+
+  function run(w) {
+    const NSK = w.NSK;
+    const st = stateOf(w);
+    ok("引擎 + 状态可访问", !!(NSK && NSK.Engine && NSK.Engine.Base && NSK.Engine.Dispatch && st),
+      st ? "members=" + st.members.length : "null");
+    if (!st) { finish(); return; }
+    const Base = NSK.Engine.Base, Dispatch = NSK.Engine.Dispatch;
+
+    // 找一个有已装模块的舱位；若没有则现场装一个
+    let installed = (st.base.modules && st.base.modules.installed) || [];
+    let testSlot;
+    if (installed.length) {
+      testSlot = installed[0].slotId;
+    } else {
+      const slots = Base.stateSlots(st).filter(s => s.type !== "core");
+      const owned = (st.base.modules && st.base.modules.owned) || [];
+      const slot = slots[0], mod = owned[0];
+      const ir = Base.installModule(st, slot.id, mod.id);
+      ok("现场安装一个模块用于测试", ir.ok, ir.err || slot.id);
+      testSlot = ir.ok ? slot.id : null;
+    }
+    ok("存在用于测试的已装舱位", !!testSlot, String(testSlot));
+
+    // 找一个待命成员
+    const idle = (st.members || []).find(m => !m.destroyed && !m.assignment && m.status !== "repairing");
+    ok("存在待命成员可驻舱", !!idle, idle ? idle.name : "无");
+    if (!testSlot || !idle) { finish(); return; }
+
+    // 派该成员驻舱到该舱位
+    const ar = Dispatch.assign(st, idle.id, "station", { slotId: testSlot });
+    ok("驻舱派遣成功", ar.ok, ar.err || "");
+    ok("派遣后 assignment 指向该舱位",
+      !!(idle.assignment && idle.assignment.type === "station" && idle.assignment.slotId === testSlot));
+    ok("stationedAt 能找回该成员", Base.stationedAt(st, testSlot) === idle);
+
+    // —— 核心回归：拆下该舱段，驻舱成员必须被一并撤下 ——
+    const ur = Base.uninstallModule(st, testSlot);
+    ok("拆下模块成功", ur.ok, ur.err || "");
+    ok("拆下返回 freed=1（撤下 1 名驻舱者）", ur.freed === 1, "freed=" + ur.freed);
+    ok("成员 assignment 已清空（不再卡在驻舱中）", idle.assignment === null);
+    ok("成员 status 回到 idle", idle.status === "idle");
+    ok("stationedAt 已查无此人", Base.stationedAt(st, testSlot) === null);
+
+    // —— 防御回归：换船(switchHull)应清空全部驻舱派遣 ——
+    // 重新装回一个模块并驻舱，再尝试换到另一艘已拥有母舰
+    const ownedHulls = st.base.ownedHullBlueprints || [];
+    const altHull = ownedHulls.find(h => h !== st.base.hullId);
+    const installed2 = (st.base.modules && st.base.modules.installed) || [];
+    let slot2 = installed2.length ? installed2[0].slotId : null;
+    if (!slot2) {
+      const slots = Base.stateSlots(st).filter(s => s.type !== "core");
+      const owned = (st.base.modules && st.base.modules.owned) || [];
+      const ir2 = Base.installModule(st, slots[0].id, owned[0].id);
+      slot2 = ir2.ok ? slots[0].id : null;
+    }
+    const idle2 = (st.members || []).find(m => !m.destroyed && !m.assignment && m.status !== "repairing");
+    if (altHull && slot2 && idle2) {
+      Dispatch.assign(st, idle2.id, "station", { slotId: slot2 });
+      const hr = Base.switchHull(st, altHull);
+      ok("换船成功", hr.ok, hr.err || "");
+      if (hr.ok) {
+        ok("换船后全部驻舱派遣已清空", idle2.assignment === null, "assignment=" + (idle2.assignment ? idle2.assignment.type : "null"));
+      }
+    } else {
+      out.push("SKIP 换船清空测试（当前存档未拥有第二艘母舰或缺少待命成员，不阻塞）");
+    }
+
+    finish();
+  }
+
+  function finish() {
+    out.push("== " + pass + " PASS / " + fail + " FAIL ==");
+    flush();
+  }
+
+  try { f1.contentWindow.localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  f1.addEventListener("load", function () { setTimeout(function () { run(f1.contentWindow); }, 2200); });
+  setTimeout(function () { if (!out.length || out[out.length-1].indexOf("==") < 0) run(f1.contentWindow); }, 6000); // 兜底
+  f1.src = "../index.html#base";
+})();
+</script>
+</body>
+</html>

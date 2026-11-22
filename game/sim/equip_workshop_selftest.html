@@ -98,10 +98,12 @@ const LIVE=()=>W().NSK.Core.Persistence&&W().NSK.Core.Persistence.state;
   ok("点击装备后高亮", !!q(".wb-overlay.active .wb-recipe.sel"));
 
   const mUsed0=P.manufactureUsed(st);
-  clickEl(q('.wb-overlay.active [data-act="workbench:add"]'));
+  // 明细/加入按钮已移到二级详情弹窗 .wb-rd-overlay，不再是主台 .wb-overlay 内
+  clickEl(q('.wb-rd-overlay.active [data-act="workbench:add"]'));
   await wait(300);
   const qn=(st.base.industry.equipQueue||[]).length;
   ok("加入队列后 equipQueue +1", qn===1, "len="+qn);
+  ok("加入队列后详情窗保持打开", !!q(".wb-rd-overlay.active"));
   ok("总装船坞占用未变（独立产线）", P.manufactureUsed(st)===mUsed0, "manuUsed="+mUsed0+"→"+P.manufactureUsed(st));
   ok("队列项 outType=equipment", st.base.industry.equipQueue[0].outType==="equipment", st.base.industry.equipQueue[0].outType);
   ok("槽位上限来自 plan.equip", S.bodyLevelPlan(st.base.bodyLevel).equip===1, "plan.equip="+S.bodyLevelPlan(st.base.bodyLevel).equip);

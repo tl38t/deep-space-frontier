@@ -41,6 +41,10 @@
   let factionSubtab = "factions";
   let curSystem = null;      // 星系视图当前选中系统（独立 Tab）
   let baseFocus = "core";   // 舰基可视化当前选中的舱段
+  let pendingHullId = null;  // 待装载母舰：在预览船体上点核心舱段才选中、需显式「装载母舰核心」确认
+  let baseViewHullId = null; // 预览视图：仅切换「看哪条船」，不改动基地状态、不卸舱段；null=看当前母舰
+  function viewHull() { return baseViewHullId ? (Data.Ships.baseHullById(baseViewHullId) || Engine.Base.hullOf(state)) : Engine.Base.hullOf(state); }
+  function isViewingOther() { return !!baseViewHullId && baseViewHullId !== state.base.hullId; }
   // 舱段拖拽换位（2026-10-29）：active=true 期间 renderView 必须跳过重绘，
   // 否则 1Hz 定时器会把正在跟随手指的卡片连同 innerHTML 一起销毁。
   let baseDragState = null;
@@ -1009,34 +1013,35 @@
   }
 
   function baseHullSelector() {
-    let html = '<section class="base-hull-selector"><div class="base-hull-selector-head"><div><b>母舰蓝图</b><small>向势力购入船体蓝图；核心与工业队列随舰基保留</small></div><span class="tag">已拥有 ' + state.base.ownedHullBlueprints.length + ' / ' + Data.Ships.BASE_HULLS.length + '</span></div><div class="base-hull-cards">';
+    let html = '<section class="base-hull-selector"><div class="base-hull-selector-head"><div><b>母舰蓝图</b><small>点船体卡只是「查看」该船体布局，不卸载舱段；把核心转移到它身上才真正换船</small></div><span class="tag">已拥有 ' + state.base.ownedHullBlueprints.length + ' / ' + Data.Ships.BASE_HULLS.length + '</span></div><div class="base-hull-cards">';
     for (const hull of Data.Ships.BASE_HULLS) {
       const faction = Data.Factions.factionById(hull.factionId) || { name: "未知势力", color: "#7893aa" };
       const status = Engine.Base.hullStatus(state, hull);
       const current = state.base.hullId === hull.id;
-      const action = status.owned ? "baseHull:" + hull.id : "baseBlueprint:" + hull.id;
-      const disabled = current || !status.available;
+      const isViewing = baseViewHullId === hull.id;
+      // 已拥有的船体：点卡只是「查看布局」(baseHullView)，纯视角、不卸舱段、不改基地状态；
+      // 真正「转移核心 / 换船」是在预览船体上的点核心舱段（baseHullPick），需二次确认。未拥有的仍走购买流程。
+      const action = status.owned ? "baseHullView:" + hull.id : "baseBlueprint:" + hull.id;
+      const disabled = !status.owned && !status.available;
       const cost = Object.entries(hull.blueprintCost || {}).map(([k, v]) => resIcon(k) + " " + fmt(v)).join(" ");
       const rel = (state.factions.find(f => f.id === hull.factionId) || {}).relation || 0;
-      html += '<button class="base-hull-card' + (current ? " current" : "") + '" style="--hull-accent:' + esc(hull.accent) + '" data-act="' + action + '"' + (disabled ? " disabled" : "") + '>'
+      html += '<button class="base-hull-card' + (current ? " current" : "") + (isViewing ? " viewing" : "") + '" style="--hull-accent:' + esc(hull.accent) + '" data-act="' + action + '"' + (disabled ? " disabled" : "") + '>'
         + '<span class="base-hull-card-faction" style="color:' + esc(faction.color) + '">' + esc(faction.name) + '</span>'
         + '<b>' + esc(hull.name) + '</b><small>' + esc(hull.tagline) + '</small>'
-        + '<em>' + (status.owned ? (current ? "核心已搭载" : "切换船体") : status.label) + '</em>'
+        + '<em>' + (status.owned ? (current ? "核心已搭载" : (isViewing ? "查看中" : "查看布局")) : status.label) + '</em>'
         + (!status.owned ? '<small class="base-hull-cost">关系 ' + rel + '/' + hull.relationReq + (cost ? " · " + cost : " · 免费") + '</small>' : "")
         + '</button>';
     }
     return html + '</div></section>';
   }
 
-  function baseConnectionsSvg() {
-    const slots = Engine.Base.stateSlots(state);
+  function baseConnectionsSvg(hull, allInactive) {
+    const slots = hull ? Data.Ships.baseHullSlots(hull) : Engine.Base.stateSlots(state);
     const lines = [];
     for (let i = 0; i < slots.length; i++) for (let j = i + 1; j < slots.length; j++) {
       const a = slots[i], b = slots[j];
       if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) !== 1) continue;
-      const activeA = a.type === "core" || Engine.Base.moduleAt(state, a.id);
-      const activeB = b.type === "core" || Engine.Base.moduleAt(state, b.id);
-      const active = activeA && activeB;
+      const active = !allInactive && (a.type === "core" || Engine.Base.moduleAt(state, a.id)) && (b.type === "core" || Engine.Base.moduleAt(state, b.id));
       const x1 = Math.round((a.x - 0.5) * 1000 / 5), y1 = Math.round((a.y - 0.5) * 1000 / 5);
       const x2 = Math.round((b.x - 0.5) * 1000 / 5), y2 = Math.round((b.y - 0.5) * 1000 / 5);
       lines.push('<line class="' + (active ? "active" : "") + '" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>');
@@ -1108,8 +1113,8 @@
     return true;
   }
 
-  function baseModule(slot, plan) {
-    const inst = Engine.Base.moduleAt(state, slot.id);   // 折中：功能跟随「已装舱段」类型，而非槽位原生类型
+  function baseModule(slot, plan, forceEmpty) {
+    const inst = forceEmpty ? null : Engine.Base.moduleAt(state, slot.id);   // 折中：功能跟随「已装舱段」类型，而非槽位原生类型
     const installed = !!inst;
     const t = inst ? inst.type : null;
     // 折中（通用槽）：空槽不再展示原生舱段类型的图标/配色，统一为「通用接口」外观，避免暗示槽位专属
@@ -1134,17 +1139,42 @@
       + '<span class="base-module-status">' + esc(label) + (progress ? " · " + Math.round(progress * 100) + "%" : "") + '</span></button>';
   }
 
-  function baseFocusPanel(plan, hull) {
+  function baseFocusPanel(plan, hull, vOther) {
     if (baseFocus === "core" || baseFocus === "") {
       const _sp = Engine.Base.moduleAt(state, hull.specialSlot.id);
       const specialActive = !!(_sp && _sp.type === hull.specialSlot.id);   // 折中：特化位须装对应类型才激活
-      return '<div class="base-core-inspector"><span class="eyebrow">UNIQUE COMMAND CORE</span><h3>唯一舰基核心</h3>'
-        + '<div class="base-focus-title">' + esc(hull.name) + ' · ' + esc(plan.name) + ' Lv.' + plan.lv + '</div>'
+      let html = '<div class="base-core-inspector"><span class="eyebrow">UNIQUE COMMAND CORE</span><h3>唯一舰基核心</h3>';
+      if (vOther) {
+        // 预览的是「尚未装载核心」的船体：明确提示核心在另一条船上，转移核心才换船。
+        const activeHull = Engine.Base.hullOf(state);
+        html += '<div class="base-focus-title">' + esc(hull.name) + ' · 尚未装载核心</div>'
+          + '<div class="dim">核心当前在「' + esc(activeHull.name) + '」身上。该母舰的核心舱位是固定位置（图中 ✦），把核心转移过来才会真正换船；转移前不会卸载任何已装舱段。</div>';
+        // 选中转移（在预览图上点核心舱段才置 pendingHullId）后，这里出现二次确认。
+        if (pendingHullId && pendingHullId === baseViewHullId) {
+          html += '<div class="base-hull-confirm core">'
+            + '<div class="warn">⚠ 把核心转移到「' + esc(hull.name) + '」会卸下「' + esc(activeHull.name) + '」当前全部已装舱段（退回模块库），驻舱成员一并撤下。核心等级 / 燃料 / 库存 / 工业队列保留。</div>'
+            + '<div class="base-hull-confirm-btns">'
+            + '<button class="sm" data-act="baseHullConfirm">装载母舰核心</button>'
+            + '<button class="sm ghost" data-act="baseHullCancel">取消</button>'
+            + '</div></div>';
+        }
+        return html + '</div>';
+      }
+      html += '<div class="base-focus-title">' + esc(hull.name) + ' · ' + esc(plan.name) + ' Lv.' + plan.lv + '</div>'
         + '<div class="dim">核心编号 ' + esc(state.base.coreId) + '。更换母舰只改变船体和舱位拓扑，核心等级、燃料、库存与工业队列继续归属本舰基。</div>'
-        + '<div class="base-focus-effect">' + (specialActive ? "已激活" : "待装配") + '特化舱位：' + esc(hull.specialSlot.name) + ' · ' + esc(hull.specialSlot.effect) + '</div></div>';
+        + '<div class="base-focus-effect">' + (specialActive ? "已激活" : "待装配") + '特化舱位：' + esc(hull.specialSlot.name) + ' · ' + esc(hull.specialSlot.effect) + '</div>';
+      return html + '</div>';
     }
     const slot = Engine.Base.slotById(state, baseFocus);
     if (!slot) return '<h3>舰基核心</h3><div class="dim">选择舱位查看模块与连接状态。</div>';
+    if (vOther) {
+      // 预览船体的普通舱位：都是空的（核心还没转移过来），只展示布局信息，不能装配 / 驻舱。
+      const nativeDef = Data.Ships.baseModuleByType(slot.type);
+      return '<span class="eyebrow">COMPARTMENT / ' + esc(slot.type.toUpperCase()) + '</span><h3>空舱位</h3>'
+        + '<div class="base-focus-title">预览 · ' + esc(hull.name) + '</div>'
+        + '<div class="dim">该母舰尚未装载核心，所有舱位为空。把核心转移过来（图中 ✦ 舱位）后，可在此装配舱段、派驻成员。</div>'
+        + (slot.special ? '<div class="base-special-card"><b>✦ 势力特化舱位 · ' + esc(slot.special.name) + '</b><span>' + esc(slot.special.effect) + ' · 安装对应模块后生效</span></div>' : '');
+    }
     const inst = Engine.Base.moduleAt(state, slot.id);   // 折中：明细跟随已装舱段类型
     const installed = !!inst;
     const t = inst ? inst.type : null;
@@ -1185,8 +1215,8 @@
   // 供弹窗复用：用当前 baseFocus 重建右侧明细 HTML（工业舱段的工作台 / 非工业的 BaseInfo 共用）。
   function moduleDetailHtml() {
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    const hull = Engine.Base.hullOf(state);
-    return baseFocusPanel(plan, hull);
+    const hull = viewHull();
+    return baseFocusPanel(plan, hull, isViewingOther());
   }
 
   // 驻舱 / 拆装舱段后，刷新当前打开的舱段弹窗（工作台明细或 BaseInfo），避免明细与真实状态脱节。
@@ -1266,29 +1296,42 @@
 
   function viewBase() {
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    const hull = Engine.Base.hullOf(state);
+    const vh = viewHull();                 // 预览视图：可能是一条非当前母舰（纯查看，不改状态）
+    const vOther = isViewingOther();
+    const activeHull = Engine.Base.hullOf(state);
+    const hull = vh;
     const up = Data.Ships.upgradeCost(state.base.bodyLevel);
     const smelt = baseQueueState("smelt", Data.Recipes.SMELT);
     const manufacture = baseQueueState("manufacture", Data.Recipes.COMPONENT);
     const invent = baseQueueState("invent", Data.Recipes.INVENT);
-    let html = '<div class="base-view-head"><div><h2>舰基 · ' + esc(hull.name) + '</h2><div class="dim">唯一舰基核心 · ' + esc(plan.name) + ' Lv.' + plan.lv + ' · ' + esc((Data.Factions.factionById(hull.factionId) || {}).name || "独立") + '</div></div>';
-    if (up) {
+    let html = '<div class="base-view-head"><div><h2>舰基 · ' + esc(hull.name) + (vOther ? ' <span class="tag warn">预览 · 核心在「' + esc(activeHull.name) + '」</span>' : '') + '</h2><div class="dim">唯一舰基核心 · ' + esc(plan.name) + ' Lv.' + plan.lv + ' · ' + esc((Data.Factions.factionById(hull.factionId) || {}).name || "独立") + '</div></div>';
+    if (vOther) {
+      html += '<button class="sm ghost" data-act="baseHullView:' + esc(activeHull.id) + '">返回「' + esc(activeHull.name) + '」</button>';
+    } else if (up) {
       const costStr = Object.entries(up).map(([k, v]) => resIcon(k) + resName(k) + " " + v).join("  ");
       const can = Engine.Production.canAfford(state.res, up);
       html += '<button class="sm base-upgrade" data-act="upgrade"' + (can ? "" : " disabled") + '">升级本体 · ' + costStr + '</button>';
     } else html += '<span class="tag good">已达终级</span>';
     html += '</div>' + baseDragHint() + baseHullSelector() + baseInventoryStrip();
 
-    const slots = Engine.Base.stateSlots(state);
+    const slots = vOther ? Data.Ships.baseHullSlots(vh) : Engine.Base.stateSlots(state);
     const coreSlot = slots.find(s => s.type === "core");
     const smeltMult = Engine.Base.queueDurationMultiplier(state, "smelt");
     const manufactureMult = Engine.Base.queueDurationMultiplier(state, "manufacture");
     const inventMult = Engine.Base.queueDurationMultiplier(state, "invent");
-    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + ' has-stock" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg();
-    html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
-    for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
-    const installedCount = state.base.modules.installed.length;
-    html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
+    html += '<div class="base-layout-panel"><div class="base-stage hull-' + esc(hull.shape) + (vOther ? ' preview' : ' has-stock') + '" style="--hull-accent:' + esc(hull.accent) + '"><div class="base-blueprint-title"><b>SHIPYARD / DECK PLAN</b><span>' + esc(hull.name) + '</span></div><div class="base-blueprint-meta"><b>TOP VIEW</b><span>GRID 05 × 05</span><span>FRAME 00—24</span></div><div class="base-hull hull-' + esc(hull.shape) + '"><img class="base-blueprint-art" src="assets/base-hull-blueprint.svg?v=2" alt="" aria-hidden="true"></div><div class="base-layout">' + baseConnectionsSvg(vOther ? vh : null, vOther);
+    if (vOther) {
+      // 预览船体：核心还在另一条船上 → 核心舱位（固定位置）显示为「转移核心至此」入口。
+      html += '<button class="base-module base-core transfer' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseHullPick:' + esc(vh.id) + '"><span class="base-module-icon">✦</span><b>转移核心至此</b><small>' + esc(hull.name) + '</small><span class="base-module-status">点此装载核心</span></button>';
+      for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan, true);
+      const installedCount = state.base.modules.installed.length;
+      html += '</div><div class="base-stage-foot"><span><b>预览</b><em>该母舰尚未装载核心</em></span><span>当前核心船模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
+    } else {
+      html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
+      for (const slot of slots) if (slot.type !== "core") html += baseModule(slot, plan);
+      const installedCount = state.base.modules.installed.length;
+      html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
+    }
     html += '</div>';
     html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>装备 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
     // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
@@ -3353,9 +3396,27 @@
         ["核心升至 Lv." + r.plan.lv + "（" + r.plan.name + "）。",
          "电网预算 +" + (r.plan.energy) + "，工业槽 精炼 " + r.plan.smelt + " / 制造 " + r.plan.manufacture + " / 发明 " + r.plan.invent + "。"]);
     } else if (cmd === "baseBlueprint") Engine.Base.buyBlueprint(state, a);
-    else if (cmd === "baseHull") { Engine.Base.switchHull(state, a); baseFocus = "core"; }
+    else if (cmd === "baseHullView") { baseViewHullId = (a === state.base.hullId) ? null : a; baseFocus = "core"; const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.close(); renderView(); }   // 纯视角：切换看哪条船，不卸载、不改基地状态
+    else if (cmd === "baseHullPick") { pendingHullId = a; baseFocus = "core"; renderView(); const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.open("core", moduleDetailHtml); }   // 预览船上点核心舱位 → 打开明细弹窗并请求转移确认
+    else if (cmd === "baseHullConfirm") {
+      const target = pendingHullId || baseViewHullId;
+      if (!target || target === state.base.hullId) { pendingHullId = null; renderView(); }
+      else {
+        const ph = Data.Ships.baseHullById(target);
+        const r = Engine.Base.switchHull(state, target);
+        if (r.ok) { toast("已装载母舰核心 · " + (ph ? ph.name : target)); pendingHullId = null; baseViewHullId = null; baseFocus = "core"; const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.close(); }
+        else { toast(r.err || "装载失败"); }
+        renderView();
+      }
+    }
+    else if (cmd === "baseHullCancel") { pendingHullId = null; const Bi = window.NSK.UI && NSK.UI.BaseInfo; if (Bi) Bi.close(); renderView(); }
     else if (cmd === "moduleInstall") { Engine.Base.installModule(state, a, b); baseFocus = a; refreshOpenModuleModal(); }
-    else if (cmd === "moduleRemove") { Engine.Base.uninstallModule(state, a); baseFocus = a; refreshOpenModuleModal(); }
+    else if (cmd === "moduleRemove") {
+      const rd = Engine.Base.uninstallModule(state, a);
+      baseFocus = a;
+      refreshOpenModuleModal();
+      if (rd.ok && rd.freed) toast("已拆下 · 同步撤下 " + rd.freed + " 名驻舱成员（岗位已消失）");
+    }
     else if (cmd === "baseSlotReset") {
       const r = Engine.Base.resetSlotPos(state);
       if (r.ok) { baseFocus = "core"; toast("已恢复船体默认舱段布局"); }
@@ -3529,6 +3590,7 @@
   }
   function onBaseDragDown(e) {
     if (tab !== "base") return;
+    if (isViewingOther()) return;   // 预览船体是空壳，不允许拖拽装配
     if (e.button != null && e.button > 0) return;
     const stockEl = e.target && e.target.closest ? e.target.closest(".bs-item") : null;
     if (stockEl) {
@@ -3614,6 +3676,7 @@
     const fromDef = Data.Ships.baseModuleByType(d.slotId);
     const toDef = Data.Ships.baseModuleByType(toId);
     toast("已交换 " + (fromDef ? fromDef.name : d.slotId) + " ⇄ " + (toDef ? toDef.name : toId) + " · 相邻增效已重算");
+    if (Persistence) Persistence.save(state); else Core.save(state);   // 与装配/拆下对齐：换位后立即落档，不依赖 5s 自动存档
     renderView();
   }
 

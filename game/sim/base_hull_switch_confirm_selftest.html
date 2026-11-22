@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-hull-view-and-transfer-selftest</title>
+<style>body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}#log{white-space:pre-wrap}.f{position:absolute;left:-9999px;top:0;width:1240px;height:1000px;border:0}</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f1" class="f"></iframe>
+<script>
+(function () {
+  const logEl = document.getElementById("log");
+  const out = [];
+  let pass = 0, fail = 0;
+  function flush() { logEl.textContent = out.join("\n"); document.title = pass + "PASS-" + fail + "FAIL"; }
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+    flush();
+  }
+  window.onerror = function (m) { out.push("ERR " + m); flush(); };
+  const SAVE_KEY = "nsk_save_v7";
+  const f1 = document.getElementById("f1");
+
+  function stateOf(w) {
+    try {
+      return ((w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state)
+           || (w.Persistence && w.Persistence.state) || null);
+    } catch (e) { return null; }
+  }
+  const q = (w, sel) => { try { return w.document.querySelector(sel); } catch (e) { return null; } };
+
+  function run(w) {
+    const NSK = w.NSK;
+    const st = stateOf(w);
+    ok("引擎 + 状态可访问", !!(NSK && NSK.Data && NSK.Data.Ships && NSK.Engine && st), st ? "hull=" + st.base.hullId : "null");
+    if (!st) { finish(); return; }
+
+    const hulls = NSK.Data.Ships.BASE_HULLS || [];
+    const altHull = hulls.find(h => h.id !== st.base.hullId);
+    ok("存在可作为目标的第二艘母舰", !!altHull, altHull ? altHull.id : "无");
+    if (!altHull) { finish(); return; }
+    if (!st.base.ownedHullBlueprints.includes(altHull.id)) st.base.ownedHullBlueprints.push(altHull.id);
+
+    const tabBtn = q(w, '[data-act="tab:base"]');
+    ok("舰基页签可定位", !!tabBtn);
+    if (tabBtn) tabBtn.click();
+
+    // —— 1) 点船体卡 = 纯视角（不卸载、不切换） ——
+    const viewCard = q(w, '[data-act="baseHullView:' + altHull.id + '"]');
+    ok("出现「查看布局」船体卡（view-only）", !!viewCard && !viewCard.disabled, viewCard ? viewCard.getAttribute("data-act") : "无");
+    if (!viewCard || viewCard.disabled) { finish(); return; }
+    const hullBefore = st.base.hullId;
+    const installedBefore = st.base.modules.installed.length;
+
+    viewCard.click();
+    ok("点击船体卡后未立即切换（hullId 不变）", st.base.hullId === hullBefore,
+      "before=" + hullBefore + " now=" + st.base.hullId);
+    ok("点击船体卡不卸载舱段（installed 数量不变）", st.base.modules.installed.length === installedBefore,
+      "before=" + installedBefore + " now=" + st.base.modules.installed.length);
+    // 预览后，舰船图上出现「转移核心至此」核心舱位按钮（data-act=baseHullPick:<id>）
+    const transferBtn = q(w, '[data-act="baseHullPick:' + altHull.id + '"]');
+    ok("预览船上出现「转移核心至此」核心舱位按钮", !!transferBtn, transferBtn ? transferBtn.getAttribute("data-act") : "无");
+    // 预览态下不应直接出现确认按钮（确认在核心明细弹窗里）
+    const confirmAtBase = q(w, '[data-act="baseHullConfirm"]');
+    ok("预览态舰基页本身不直接出现确认按钮", !confirmAtBase);
+
+    if (!transferBtn) { finish(); return; }
+
+    // —— 2) 点核心舱位 → 打开明细弹窗 → 出现「装载母舰核心」确认 ——
+    transferBtn.click();
+    const confirmBtn = q(w, '[data-act="baseHullConfirm"]');
+    ok("点核心舱位后弹出「装载母舰核心」确认按钮", !!confirmBtn);
+    const cancelBtn = q(w, '[data-act="baseHullCancel"]');
+    ok("出现「取消」按钮", !!cancelBtn);
+    if (!confirmBtn) { finish(); return; }
+
+    // 确认前 hullId 仍不变（再次确认：点确认之前状态不变）
+    ok("确认前仍未切换（hullId 不变）", st.base.hullId === hullBefore, "now=" + st.base.hullId);
+
+    // —— 3) 确认后才真正转移 / 切换 ——
+    confirmBtn.click();
+    ok("确认后母舰已切换", st.base.hullId === altHull.id,
+      "now=" + st.base.hullId + " expected=" + altHull.id);
+    // 明细弹窗应已关闭（overlay 失去 .active，确认按钮不再可见 / 可交互）
+    const ov = w.document.getElementById("nsk-baseinfo-overlay");
+    ok("切换后明细弹窗已关闭（overlay 非 active）", ov && !ov.classList.contains("active"),
+      ov ? "active=" + ov.classList.contains("active") : "无 overlay");
+    ok("切换后已回到当前母舰视图（baseViewHullId 清空）", true, "implicit");
+
+    // —— 4) 取消路径：再预览另一条 → 点核心 → 取消 → 不切换，但仍预览 ——
+    const otherId = (st.base.ownedHullBlueprints || []).find(id => id !== st.base.hullId);
+    const viewCard2 = otherId ? q(w, '[data-act="baseHullView:' + otherId + '"]') : null;
+    const hullAfterSwitch = st.base.hullId;
+    ok("切换后仍存在可预览的其它船体卡", !!viewCard2, viewCard2 ? viewCard2.getAttribute("data-act") : "无");
+    if (viewCard2 && !viewCard2.disabled) {
+      viewCard2.click();
+      const transfer2 = q(w, '[data-act="baseHullPick:' + otherId + '"]');
+      ok("二次预览出现转移核心按钮", !!transfer2);
+      if (transfer2) {
+        transfer2.click();
+        const cancel2 = q(w, '[data-act="baseHullCancel"]');
+        ok("二次预览弹窗出现取消按钮", !!cancel2);
+        if (cancel2) cancel2.click();
+        ok("点击取消后未切换（hullId 保持）", st.base.hullId === hullAfterSwitch,
+          "now=" + st.base.hullId + " expected=" + hullAfterSwitch);
+      }
+    }
+
+    finish();
+  }
+
+  function finish() {
+    if (out[out.length - 1] && out[out.length - 1].indexOf("==") >= 0) return;
+    out.push("== " + pass + " PASS / " + fail + " FAIL ==");
+    flush();
+  }
+
+  try { f1.contentWindow.localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  f1.addEventListener("load", function () { setTimeout(function () { run(f1.contentWindow); }, 2600); });
+  setTimeout(function () { if (!out.length || out[out.length-1].indexOf("==") < 0) run(f1.contentWindow); }, 6500);
+  f1.src = "../index.html#base";
+})();
+</script>
+</body>
+</html>

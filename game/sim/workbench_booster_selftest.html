@@ -66,7 +66,7 @@ const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
     ok("切换后仅该分类高亮", sel0.length===1 && sel0[0].getAttribute("data-act")==="workbench:cat:"+tgt.id, sel0[0]?sel0[0].textContent.trim():"无");
     rc=qa(".wb-overlay.active .wb-recipe");
     ok("切换后卡片数 = 新分类配方数", rc.length===tgt.n, rc.length+" vs "+tgt.n);
-    ok("切换分类后清空已选配方", !q(".wb-overlay.active .wb-recipe.sel") && !!q('.wb-overlay.active .wb-detail-empty'));
+    ok("切换分类后清空已选配方并收起详情窗", !q(".wb-overlay.active .wb-recipe.sel") && !q(".wb-rd-overlay.active") && !!q('.wb-overlay.active .wb-rd-hint'));
 
     // 4) 选中 + 连续 + 加入队列 + 取消
     const first=rc[0];
@@ -83,17 +83,19 @@ const CATS=()=>{const M=W().BOOSTER_CATEGORY_META||[],R=W().BOOSTER_RECIPES||[];
     clickEl(first);
     ok("点击配方后高亮(.wb-recipe.sel)", !!q(".wb-overlay.active .wb-recipe.sel"));
 
-    const cont=q('.wb-overlay.active [data-act="workbench:chip:9999"]');
+    // 明细/批量面板已移到二级详情弹窗 .wb-rd-overlay，不再是主台 .wb-overlay 内
+    const cont=q('.wb-rd-overlay.active [data-act="workbench:chip:9999"]');
     if(cont) clickEl(cont);
-    const cnt=q(".wb-overlay.active .wb-count");
+    const cnt=q(".wb-rd-overlay.active .wb-count");
     ok("点「连续」后数量=9999", cnt && cnt.textContent.replace(/[^\d]/g,"")==="9999", cnt?cnt.textContent:"无");
 
     const QLEN=()=>((LIVE().base.industry.boosterQueue)||[]).length;
     const q0=QLEN();
-    clickEl(q('.wb-overlay.active [data-act="workbench:add"]'));
+    clickEl(q('.wb-rd-overlay.active [data-act="workbench:add"]'));
     await wait(300);
     const q1=QLEN();
     ok("点加入队列后 boosterQueue +1", q1===q0+1, "before="+q0+" after="+q1);
+    ok("加入队列后详情窗保持打开", !!q(".wb-rd-overlay.active"));
 
     const x=q('.wb-overlay.active [data-act="workbench:cancel:boosterQueue:0"]');
     if(x) clickEl(x);

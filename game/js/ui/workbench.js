@@ -21,11 +21,19 @@
 
   let CTX = null;            // { getState, renderView, toast, resIcon, resName, esc, fmt }
   let cur = null;            // { slotId, type, tab, recipeId, count, overlay }
+  let rdOverlay = null;      // 二级「配方详情」弹窗 DOM：盖在工作台之上，独立承载材料表+批量控制，解决右栏详情被挤没
+  const RD_PREFIX = "workbench:rd";
   const MAX_CONTINUOUS = 9999;
   // 工业舱段（点击弹出工作台）：精炼环 / 总装船坞 / 发明舱 / 反应实验室（增强剂制造）
   const INDUSTRIAL = { smelt: 1, manufacture: 1, invent: 1, booster: 1, equip: 1 };
 
-  function init(ctx) { CTX = ctx; }
+  function init(ctx) {
+    CTX = ctx;
+    // Esc 关闭详情弹窗（优先于主台）；详情窗未开时不拦截，交给 app.js 的其它面板处理。
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && rdIsOpen()) { closeRecipeDetail(); ev.preventDefault(); }
+    });
+  }
   function state() { return CTX && CTX.getState(); }
   function Engine() { return window.NSK.Engine; }
   function Data() { return window.NSK.Data; }
@@ -44,6 +52,9 @@
   function isStudy() { return !!cur && cur.type === "invent" && cur.tab === "study"; }
 
   function isOpen() { return !!cur; }
+  function rdIsOpen() { return !!(rdOverlay && rdOverlay.classList.contains("active")); }
+  // 详情弹窗 panel（供 patch/refresh 同步步进器/库存/可负担态），未开返回 null。
+  function rdPanel() { return rdIsOpen() ? rdOverlay.querySelector(".wb-rd-panel") : null; }
 
   // 供 app.js 判定：该舱位是否工业类且已装配（决定是否弹工作台）
   function slotIfIndustrial(st, slotId) {
@@ -107,6 +118,7 @@
   }
 
   function close() {
+    closeRecipeDetail();   // 主台关闭时详情弹窗一并收走，杜绝悬空
     if (cur && cur.overlay && cur.overlay.parentNode) cur.overlay.parentNode.removeChild(cur.overlay);
     cur = null;
   }
@@ -454,6 +466,89 @@
       + '<div class="wb-mats">' + mats + '</div>'
       + '<div class="wb-detail-foot">' + dur + ' · 最多制造 <b>' + mx + '</b> 批</div>'
       + batchControlsHtml();
+  }
+
+  // ---------- 二级「配方详情」弹窗（2026-11-15）----------
+  // 背景：PC 宽屏主台右栏把配方网格 + 详情 + 批量控制塞在同一列，详情区被限到
+  // max-height:46%，材料多的配方「加入队列」被顶出可视区，必须滚动才够得着。
+  // 方案：点配方卡 → 弹出独立详情窗（z 高于主台），材料表/步进器/加按钮独占整窗；
+  // 主台右栏回归纯列表 + 队列。加入队列后**保持打开**（可连续调批量），toast 反馈。
+  // 关闭：× / ESC / 点遮罩；详情窗随主台 close() 一并收走。
+
+  // 当前可见配方的 id 序列（用于「上一个/下一个」），直接读主台已渲染的卡片，
+  // 与各分类/页签筛选口径天然一致，无需另算一份。
+  function rdRecipeIds() {
+    if (!cur || !cur.overlay) return [];
+    return [].map.call(cur.overlay.querySelectorAll(".wb-recipe[data-act^='workbench:sel:']"), function (n) {
+      return (n.getAttribute("data-act") || "").slice("workbench:sel:".length);
+    });
+  }
+
+  function ensureRdOverlay() {
+    if (rdOverlay && rdOverlay.parentNode) return;
+    rdOverlay = document.createElement("div");
+    rdOverlay.className = "wb-rd-overlay";
+    rdOverlay.setAttribute("data-wb-rd", "1");
+    // 骨架必须有 .wb-rd-panel 容器：renderRecipeDetail() 往它 innerHTML 写内容，缺了就永远空白。
+    const panel = document.createElement("div");
+    panel.className = "wb-rd-panel";
+    panel.setAttribute("role", "dialog");
+    rdOverlay.appendChild(panel);
+    rdOverlay.addEventListener("click", function (e) { if (e.target === rdOverlay) closeRecipeDetail(); });
+    document.body.appendChild(rdOverlay);
+  }
+
+  function renderRecipeDetail() {
+    // ⚠️ 首次打开时 active 类尚未加上，不能用 rdPanel()（它检查 active），
+    //    直接取 overlay 内 panel；否则首次渲染被跳过，弹窗空白。
+    const rp = rdOverlay ? rdOverlay.querySelector(".wb-rd-panel") : null;
+    if (!rp || !cur || !cur.recipeId) return;
+    const ids = rdRecipeIds();
+    const idx = ids.indexOf(cur.recipeId);
+    const hasPrev = idx > 0, hasNext = idx >= 0 && idx < ids.length - 1;
+    const nav = '<div class="wb-rd-nav">'
+      + '<button class="wb-rd-navbtn" data-act="workbench:rdprev"' + (hasPrev ? "" : " disabled") + '>‹ 上一个</button>'
+      + '<span class="wb-rd-pos">' + (idx >= 0 ? (idx + 1) + ' / ' + ids.length : '—') + '</span>'
+      + '<button class="wb-rd-navbtn" data-act="workbench:rdnext"' + (hasNext ? "" : " disabled") + '>下一个 ›</button>'
+      + '</div>';
+    rp.innerHTML =
+      '<div class="wb-rd-head"><div><span class="eyebrow">RECIPE DETAIL · 配方明细</span>'
+      + '<b>' + CTX.esc(recipeOutName(cur.recipeId)) + '</b></div>'
+      + '<span class="wb-rd-close" data-act="workbench:rdclose" aria-label="关闭" title="关闭（Esc）">×</span></div>'
+      + nav
+      + '<div class="wb-rd-body">' + recipeDetailHtml() + '</div>';
+  }
+
+  function openRecipeDetail() {
+    if (!cur || !cur.recipeId || !isRecipeDetailType()) return;
+    ensureRdOverlay();
+    renderRecipeDetail();
+    rdOverlay.classList.add("active");
+  }
+
+  function closeRecipeDetail() {
+    if (!rdOverlay) return;
+    rdOverlay.classList.remove("active");
+    // 关闭即清空内容：避免隐藏的详情弹窗残留旧配方按钮（data-act）污染全局 DOM 查询/事件命中。
+    const panel = rdOverlay.querySelector(".wb-rd-panel");
+    if (panel) panel.innerHTML = "";
+  }
+
+  // 详情窗内切换配方：更新 cur.recipeId + 卡片选中态 + 详情主体，不做整面板重建。
+  function rdNav(dir) {
+    const ids = rdRecipeIds();
+    const i = ids.indexOf(cur.recipeId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    cur.recipeId = ids[j];
+    const panel = cur.overlay && cur.overlay.querySelector(".wb-panel");
+    if (panel) {
+      const prefix = "workbench:sel:";
+      panel.querySelectorAll(".wb-recipe[data-act^='workbench:sel:']").forEach(function (node) {
+        node.classList.toggle("sel", (node.getAttribute("data-act") || "").slice(prefix.length) === cur.recipeId);
+      });
+    }
+    renderRecipeDetail();
   }
 
   // ---------- 发明舱 · 效率研究（66 张蓝图，由真实配方派生） ----------
@@ -808,7 +903,9 @@
         ? '<div class="wb-enh-wrap">' + enhanceCards() + '</div>'
         : '<div class="wb-recipes' + (isStudy() ? " iv-list" : "") + '">' + recipeCards() + '</div>')
       + (isRecipeDetailType()
-        ? '<div class="wb-recipe-detail base-focus-panel">' + recipeDetailHtml() + '</div>'
+        ? '<div class="wb-rd-hint">' + (cur.recipeId
+            ? '已选「' + CTX.esc(selName) + '」· 材料与批量见详情弹窗，可继续调数量或加入队列'
+            : '点上方配方卡 → 弹出材料明细与批量面板') + '</div>'
         : "")
       + (isStudy()
         ? ('<div class="wb-sec">' + (isStudy() ? "连续研究次数" : "连续生产数量") + '</div>'
@@ -856,6 +953,8 @@
 
   function render() {
     if (!cur || !cur.overlay) return;
+    // 结构性变化（切页签/分类/研究档位）会清空 recipeId，此时详情弹窗失去主体，一并收走避免悬空。
+    if (!cur.recipeId && rdIsOpen()) closeRecipeDetail();
     // 整块重建会替换 .wb-panel 及内部所有滚动容器，滚动位置随之归零。
     // 结构性动作（切页签 / 分类 / 蓝图档位 / 装拆数量）仍需整块重建，这里统一记住位置再还原；
     // 轻量动作改走 patch()，根本不进这里。
@@ -938,6 +1037,7 @@
     if (!cur || !cur.overlay || !cur.overlay.classList.contains("active")) { render(); return; }
     const panel = cur.overlay.querySelector(".wb-panel");
     if (!panel) { render(); return; }
+    const rp = rdPanel();   // 详情弹窗（标准配方且已开）也跟着就地同步，避免两处状态漂移
     try {
       if (kind === "sel") {
         const prefix = "workbench:sel:";
@@ -950,10 +1050,15 @@
           const dh = studyDetailHtml();
           if (slot.innerHTML !== dh) slot.innerHTML = dh;
         }
-        const det = panel.querySelector(".wb-recipe-detail");
-        if (det && isRecipeDetailType()) {   // 标准配方：换明细（材料 + 库存 + 批量控制），不丢滚动/焦点
-          const dh = recipeDetailHtml();
-          if (det.innerHTML !== dh) det.innerHTML = dh;
+        if (isRecipeDetailType()) {   // 主台右栏详情已移到弹窗，这里只更新提示条
+          const hint = panel.querySelector(".wb-rd-hint");
+          if (hint) {
+            const selName = cur.recipeId ? recipeOutName(cur.recipeId) : "未选择";
+            const hh = cur.recipeId
+              ? '已选「' + CTX.esc(selName) + '」· 材料与批量见详情弹窗，可继续调数量或加入队列'
+              : '点上方配方卡 → 弹出材料明细与批量面板';
+            if (hint.innerHTML !== hh) hint.innerHTML = hh;
+          }
         }
       }
       if (kind === "sdir") {
@@ -966,13 +1071,16 @@
       }
       if (kind === "count") {
         const txt = CTX.fmt(cur.count);
-        panel.querySelectorAll(".wb-count").forEach(function (el) {
-          if (el.textContent !== txt) el.textContent = txt;
+        const panels = rp ? [panel, rp] : [panel];
+        panels.forEach(function (pl) {
+          pl.querySelectorAll(".wb-count").forEach(function (el) {
+            if (el.textContent !== txt) el.textContent = txt;
+          });
         });
         syncEnhanceAdd(panel);
       }
-      syncCap(panel);
-      syncAdd(panel);
+      syncCap(panel); syncAdd(panel);
+      if (rp) { syncCap(rp); syncAdd(rp); syncStock(rp); }
     } catch (e) {
       render();   // 就地更新万一失败就退回整块重建：宁可闪一下，也不能显示错状态
     }
@@ -1005,9 +1113,13 @@
     // 与 patch() 共用同一份同步逻辑，避免两处各写一遍导致文案/门禁漂移。
     syncCap(panel);
     syncAdd(panel);
-
     updateRecipeAffordability(panel);
     syncStock(panel);   // 配方卡「持有量」实时刷新（不动节点，保 hover/滚动）
+
+    // 详情弹窗与主台共用同一份同步：加入队列后弹窗保持打开，材料「持 N」与可产批数必须跟着结算走。
+    const rp = rdPanel();
+    if (rp) { syncCap(rp); syncAdd(rp); syncStock(rp); }
+
     restoreScroll(panel, snap);
   }
 
@@ -1091,7 +1203,17 @@
     const sub = p[1];
     let light = null;   // 非 null = 只就地更新受影响的那一小块，不整块重建面板
     // ⚠️ 蓝图 key 自带冒号（"booster:xxx"），sel 的参数要 join 回去。
-    if (sub === "sel") { cur.recipeId = p.slice(2).join(":"); light = "sel"; }
+    // 标准配方类：点卡 → 选中并弹出详情窗（材料/批量独立承载）；研究页仍就地 patch 保留搜索框上下文。
+    if (sub === "sel") {
+      cur.recipeId = p.slice(2).join(":");
+      if (isRecipeDetailType()) {
+        light = "sel";        // 主台卡片高亮 + 提示条就地更新
+        openRecipeDetail();   // 打开/刷新详情弹窗
+      } else light = "sel";
+    }
+    else if (sub === "rdprev") { rdNav(-1); return; }
+    else if (sub === "rdnext") { rdNav(1); return; }
+    else if (sub === "rdclose") { closeRecipeDetail(); return; }
     else if (sub === "stier") {
       cur.studyTier = Math.max(0, Math.min(5, parseInt(p[2], 10) || 0));
       cur.recipeId = null;
@@ -1131,5 +1253,5 @@
     render();   // 结构性变化（tab / cat / stier / enhsel / 拆解数量）：整块重画，render() 内部恢复滚动位置
   }
 
-  return { init: init, open: open, openEnhance: openEnhance, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle };
+  return { init: init, open: open, openEnhance: openEnhance, close: close, refresh: refresh, refreshDetail: refreshDetail, isOpen: isOpen, slotIfIndustrial: slotIfIndustrial, handle: handle, rdIsOpen: rdIsOpen };
 });

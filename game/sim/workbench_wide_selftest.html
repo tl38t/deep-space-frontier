@@ -57,12 +57,14 @@ const overflowCards=()=>cards().filter(el=>el.scrollHeight>el.clientHeight+2).le
   ok("panel 定高且不整体滚动", cs(p0,"overflowY")==="hidden" && p0.scrollHeight-p0.clientHeight<=2,
       "overflow="+cs(p0,"overflowY")+" diff="+(p0.scrollHeight-p0.clientHeight));
   ok("左栏含舱段明细与队列", !!L0.querySelector(".wb-detail") && !!L0.querySelector(".wb-queue"));
-  // 1 代式：批量控制（步进器 / 加按钮）位于「选中配方后的明细面板」内，需先选食谱才出现
+  // 2026-11-15：批量控制已从右栏移到「二级配方详情弹窗」，点配方卡弹出，右栏回归纯列表。
   const firstCard=q(".wb-recipe");
   if(firstCard) firstCard.click();
   await wait(240);
-  ok("选中配方后右栏含配方区 / 明细面板(步进器+加按钮)",
-     !!R0.querySelector(".wb-recipes") && !!q(".wb-recipe-detail .wb-stepper") && !!q(".wb-recipe-detail .wb-add"));
+  ok("选中配方后右栏为纯列表 + 引导条",
+     !!R0.querySelector(".wb-recipes") && !!q(".wb-rd-hint"));
+  ok("选中配方弹出详情窗(步进器+加按钮)",
+     !!q(".wb-rd-overlay.active .wb-rd-panel .wb-stepper") && !!q(".wb-rd-overlay.active .wb-rd-panel .wb-add"));
   ok("右栏配方为 3 列网格", cs(box(),"gridTemplateColumns").split(" ").length===3, cs(box(),"gridTemplateColumns"));
   ok("配方卡均未被压扁", overflowCards()===0, "cards="+cards().length+" overflow="+overflowCards());
   const topL=L0.getBoundingClientRect().top, topR=R0.getBoundingClientRect().top;

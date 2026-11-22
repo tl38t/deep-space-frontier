@@ -195,8 +195,10 @@
     if (state.base.hullId === hullId) return { ok: false, err: "这就是当前母舰" };
     // 船体离坞时所有已装模块回到玩家库存；核心与工业队列留在唯一舰基状态上。
     // 舱位布局是船体的物理结构，换船即回落到新船体的默认拓扑。
+    // 同步撤下所有驻舱成员：原舱段已全部卸回库存，再挂着 station 派遣会永久卡死（见 clearStationAssignments）。
     state.base.modules.installed = [];
     state.base.slotPos = {};
+    clearStationAssignments(state, null);
     state.base.hullId = hullId;
     return { ok: true, hull: Ships.baseHullById(hullId) };
   }
@@ -267,11 +269,29 @@
     return { ok: true, level: state.base.bodyLevel, plan: Ships.bodyLevelPlan(state.base.bodyLevel) };
   }
 
+  // 撤下指向某舱位（或全体驻舱）的成员。舱段被拆下 / 换船后该岗已不存在，
+  // 必须同步清掉成员的 station 派遣，否则成员会永久卡在「驻舱中」且无界面入口可撤回
+  // （撤回按钮只在该舱位已装模块时显示）。slotId 为 null = 清空全部驻舱派遣。
+  function clearStationAssignments(state, slotId) {
+    if (!state || !Array.isArray(state.members)) return 0;
+    let n = 0;
+    for (const m of state.members) {
+      if (m.destroyed || !m.assignment || m.assignment.type !== "station") continue;
+      if (slotId !== null && m.assignment.slotId !== slotId) continue;
+      m.assignment = null;
+      m.status = "idle";
+      n++;
+    }
+    return n;
+  }
+
   function uninstallModule(state, slotId) {
     const index = state.base.modules.installed.findIndex(x => x.slotId === slotId);
     if (index < 0) return { ok: false, err: "该舱位没有安装模块" };
     const [removed] = state.base.modules.installed.splice(index, 1);
-    return { ok: true, module: state.base.modules.owned.find(m => m.id === removed.moduleId) || null };
+    // 根因修复：拆下舱段 = 该舱位失去模块，驻舱者的岗位随之消失，必须一并撤下。
+    const freed = clearStationAssignments(state, slotId);
+    return { ok: true, module: state.base.modules.owned.find(m => m.id === removed.moduleId) || null, freed: freed };
   }
 
   // 顶替（2026-11-03 用户决策 ③：舱段库拖到「已占用」舱位 = 直接交换，不再要求先拆）。

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>base-slotpos-save-selftest</title>
+<style>body{font:13px/1.6 monospace;background:#0b1420;color:#cfe;margin:0;padding:10px}#log{white-space:pre-wrap}.f{position:absolute;left:-9999px;top:0;width:1240px;height:1000px;border:0}</style>
+</head>
+<body>
+<div id="log">running…</div>
+<iframe id="f1" class="f"></iframe>
+<iframe id="f2" class="f"></iframe>
+<script>
+(function () {
+  const logEl = document.getElementById("log");
+  const out = [];
+  let pass = 0, fail = 0, done = false;
+  function flush() { logEl.textContent = out.join("\n"); document.title = pass + "PASS-" + fail + "FAIL"; }
+  function ok(name, cond, extra) {
+    if (cond) { pass++; out.push("PASS " + name + (extra ? " :: " + extra : "")); }
+    else { fail++; out.push("FAIL " + name + (extra ? " :: " + extra : "")); }
+    flush();
+  }
+  window.onerror = function (m) { out.push("ERR " + m); flush(); };
+  const SAVE_KEY = "nsk_save_v7";
+  const f1 = document.getElementById("f1");
+  const f2 = document.getElementById("f2");
+
+  function stateOf(w) {
+    try {
+      return ((w.NSK && w.NSK.Core && w.NSK.Core.Persistence && w.NSK.Core.Persistence.state)
+           || (w.Persistence && w.Persistence.state) || null);
+    } catch (e) { return null; }
+  }
+  const q = (w, sel) => w.document.querySelector(sel);
+
+  function swapCheck(w, done) {
+    if (done === "done") return;
+    done = "done";
+    const d = w.document;
+    const st = stateOf(w);
+    ok("引擎 state 可访问(base.slotPos)", !!st && !!st.base && !!st.base.slotPos, st ? JSON.stringify(st.base.slotPos) : "null");
+    const energy = q(w, ".base-module.base-energy");
+    const dock = q(w, ".base-module.base-dock");
+    ok("能源舱 / 舰队泊位可定位", !!energy && !!dock);
+    if (!energy || !dock) { finish(); return; }
+    const blobBefore = (function(){ try { return w.localStorage.getItem(SAVE_KEY); } catch(e){ return null; } })();
+    energy.scrollIntoView({ block: "center" });
+    const ra = energy.getBoundingClientRect();
+    const rb = dock.getBoundingClientRect();
+    const ax = Math.round(ra.left + ra.width/2), ay = Math.round(ra.top + ra.height/2);
+    const bx = Math.round(rb.left + rb.width/2), by = Math.round(rb.top + rb.height/2);
+    function pev(type, x, y) {
+      energy.dispatchEvent(new w.PointerEvent(type, { pointerId:7, pointerType:"mouse", isPrimary:true, bubbles:true, cancelable:true, clientX:x, clientY:y, button:0, buttons: type==="pointerup"?0:1 }));
+    }
+    pev("pointerdown", ax, ay); pev("pointermove", ax+12, ay+12); pev("pointermove", bx, by); pev("pointerup", bx, by);
+    setTimeout(function () {
+      const st2 = stateOf(w);
+      ok("换位后 slotPos 已写入 state（2 项自定义坐标）",
+        st2.base.slotPos && Object.keys(st2.base.slotPos).length === 2, JSON.stringify(st2.base.slotPos));
+      const blobAfter = (function(){ try { return w.localStorage.getItem(SAVE_KEY); } catch(e){ return null; } })();
+      ok("换位后 localStorage 立即更新（不等 5s 自动存档）", !!blobAfter && blobAfter !== blobBefore,
+        "len " + (blobBefore?blobBefore.length:0) + "→" + (blobAfter?blobAfter.length:0));
+      finish();
+    }, 600);
+  }
+
+  function finish() {
+    if (done && done !== "done") return;
+    // 用 f2 独立加载验证「重开后仍从存档恢复」
+    f2.addEventListener("load", function () {
+      setTimeout(function () {
+        const st3 = stateOf(f2.contentWindow);
+        ok("重开后 slotPos 仍从存档恢复（2 项）",
+          st3 && st3.base && st3.base.slotPos && Object.keys(st3.base.slotPos).length === 2,
+          st3 ? JSON.stringify(st3.base.slotPos) : "null");
+        out.push("== " + pass + " PASS / " + fail + " FAIL ==");
+        flush();
+      }, 2200);
+    });
+    f2.src = "../index.html#base";
+  }
+
+  // 先清旧档，再起 f1
+  try { f1.contentWindow.localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  f1.addEventListener("load", function () { setTimeout(function () { swapCheck(f1.contentWindow); }, 1800); });
+  setTimeout(function () { swapCheck(f1.contentWindow); }, 5000); // 兜底：若 load 未触发
+  f1.src = "../index.html#base";
+})();
+</script>
+</body>
+</html>
