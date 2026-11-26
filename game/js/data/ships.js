@@ -230,7 +230,15 @@
     invent:      { credits: 16000, ni_alloy: 90, struct: 20 },
   };
   const BUILD_TIER_LABEL = { 4000: "轻型", 8000: "中型", 12000: "重型", 16000: "特种" };
+  // 舱段建造耗时（2026-11-25：从即时建造改为走总装船坞队列，与造船同管线）。
+  // 按造价四档锚定：45 / 60 / 75 / 90 秒，落在造船 30~120 秒区间内，
+  // Light < 驱逐 60s、特种 < 巡洋 90s，保证「造舱段快于造舰」的直觉。
+  const MODULE_BUILD_TIME = { 4000: 45, 8000: 60, 12000: 75, 16000: 90 };
   function moduleBuildCost(type) { return MODULE_BUILD_COST[type] || null; }
+  function moduleBuildTime(type) {
+    const c = MODULE_BUILD_COST[type];
+    return c ? (MODULE_BUILD_TIME[c.credits] || 45) : 0;
+  }
   function buildCostLabel(type) {
     const c = MODULE_BUILD_COST[type];
     if (!c) return "";
@@ -334,6 +342,7 @@
   // booster = 反应实验室制造队列槽位（增强剂制造）。起步 1 槽可用（与精炼/总装同级），随本体升级扩容。
   // equip = 制造车间队列槽位（装备制造，2026-11-03 从总装坞独立出来）。曲线与 booster 一致（1/1/2/3）。
   const BODY_LEVELS = [
+    // 燃料池不设容量上限（2026-11-26 定案）：可随时间回复、可制造囤积，本体升级不再改变燃料容量。
     { lv: 1, name: "空间站",   smelt: 1, manufacture: 1, invent: 0, booster: 1, equip: 1, energy: 80 },
     { lv: 2, name: "星堡",     smelt: 2, manufacture: 2, invent: 1, booster: 1, equip: 1, energy: 180 },
     { lv: 3, name: "星城",     smelt: 3, manufacture: 3, invent: 2, booster: 2, equip: 2, energy: 320 },
@@ -375,6 +384,6 @@
     SLOT_LAYOUT, slotLayout, totalSlots,
     BASE_MODULES, BASE_HULLS, baseHullById, baseModuleByType, baseHullSlots, createInitialBase,
     EXTRA_CELLS, SPECIAL_CELL, hullCells, hullCellAt, hullSpecialCell,
-    MODULE_INSTANCE_CAP, MODULE_BUILD_COST, moduleBuildCost, buildCostLabel,
+    MODULE_INSTANCE_CAP, MODULE_BUILD_COST, moduleBuildCost, buildCostLabel, moduleBuildTime,
   };
 });

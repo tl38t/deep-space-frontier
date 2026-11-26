@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>舱段走总装队列 · 回归</title></head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="fr" style="width:1280px;height:900px;border:1px solid #ccc"></iframe>
+<script>
+// 2026-11-25 实装：舱段建造从右栏即时建造改为走总装船坞队列。
+// 覆盖：页签/卡片/详情弹窗真 DOM、入队扣费、结算入库、同类上限含队列、共享总装槽、旧档无队列字段兼容。
+const out=[]; let PASS=0, FAIL=0;
+const log=s=>{ out.push(s); document.getElementById("log").textContent=out.join("\n"); };
+const ok=(name,cond,extra)=>{ cond?PASS++:FAIL++; log((cond?"[PASS] ":"[FAIL] ")+name+(extra!==undefined?("  → "+extra):"")); };
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const fr=document.getElementById("fr");
+const D=()=>fr.contentDocument, W=()=>fr.contentWindow;
+const q=s=>{ try{ return D().querySelector(s); }catch(e){ return null; } };
+const qa=s=>{ try{ return [...D().querySelectorAll(s)]; }catch(e){ return []; } };
+async function until(fn,ms){ ms=ms||20000; const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(fn()) return true; }catch(e){} await wait(120); } return false; }
+const click=s=>{ const el=q(s); if(el){ el.click(); return true; } return false; };
+let ERRS=[];
+function hookErrors(){ ERRS=[]; try{ W().addEventListener("error",e=>ERRS.push(String(e.message||e.error))); }catch(e){}
+  try{ W().addEventListener("unhandledrejection",e=>ERRS.push("promise:"+String(e.reason))); }catch(e){} }
+
+(async function(){
+  fr.src="../index.html?t="+Date.now()+"#base";
+  const booted=await until(()=>!!q("#nsk-tabs .tab"),25000);
+  ok("游戏启动完成", booted);
+  if(!booted){ log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); return; }
+  hookErrors();
+  await wait(300);
+
+  // ===== UI：右栏引导 + 工作台舱段页签 =====
+  click('[data-act="tab:base"]'); await wait(600);
+  ok("U1 右栏不再有即时建造面板", !q(".mod-stock .base-build-panel"));
+  ok("U2 右栏有船坞建造引导", /总装船坞/.test(q(".mod-stock .bs-build-hint")?.textContent||""));
+  // 点已装的制造舱段打开工作台（默认布局 manufacture 在格位上）
+  const man=q('.base-module.base-manufacture');
+  ok("U3 甲板存在总装船坞舱段", !!man);
+  if(man) man.click();
+  await wait(500);
+  const tabModule=q('[data-act="workbench:tab:module"]');
+  ok("U4 工作台出现「舱段」子页签", !!tabModule);
+  if(tabModule) tabModule.click();
+  await wait(450);
+  const cards=qa(".wb-panel .wb-recipe");
+  ok("U5 舱段页列出 9 种舱段", cards.length===9, "cards="+cards.length);
+  const tabOn=q('[data-act="workbench:tab:module"].on');
+  ok("U6 舱段页签高亮", !!tabOn);
+  // 选一张卡 → 详情弹窗
+  const first=cards.find(c=>/能源舱/.test(c.textContent));
+  ok("U7 舱段卡含中文名与成本", !!first && /credits|星币|4,?000/.test(first.textContent), first?first.textContent.slice(0,60):"");
+  if(first) first.click();
+  await wait(450);
+  ok("U8 点卡片弹出详情弹窗", !!q(".wb-rd-overlay.active"));
+  ok("U9 详情弹窗含加入队列按钮", !!q(".wb-rd-panel .wb-add"));
+  // 关闭详情
+  const closeBtn=q(".wb-rd-panel .wb-rd-close") || q(".wb-rd-overlay .wb-x") || q('[data-act="workbench:rdclose"]');
+  if(closeBtn) closeBtn.click();
+  await wait(250);
+
+  // ===== 引擎：构造独立 state，不动存档 =====
+  const S=()=>W().NSK.Data.Ships, P=()=>W().NSK.Engine.Production, B=()=>W().NSK.Engine.Base;
+  function mk(){
+    const ships=S();
+    const st={res:{credits:999999,fe_alloy:9999,ni_alloy:9999,struct:9999},members:[],factions:[],logistics:{compensation:0}};
+    st.base=ships.createInitialBase(); st.base.bodyLevel=0; st.base.industry={};
+    B().normalize(st);
+    return st;
+  }
+  const st=mk();
+  ok("E1 初始 moduleQueue 存在且为空", Array.isArray(st.base.industry.moduleQueue) && st.base.industry.moduleQueue.length===0);
+
+  // 入队：能源舱当前 1 个（初始自带），可再排 2 个
+  const before={...st.res};
+  const r1=P().enqueueModule(st,"energy",2);
+  ok("E2 入队成功且数量受同类上限约束", r1.ok && r1.count===2, JSON.stringify(r1));
+  ok("E3 队列项写入 moduleType/repeat", st.base.industry.moduleQueue.length===1 && st.base.industry.moduleQueue[0].moduleType==="energy" && st.base.industry.moduleQueue[0].repeat===2);
+  const cost=S().moduleBuildCost("energy");
+  ok("E4 入队即扣费（credits ×2）", st.res.credits===before.credits-cost.credits*2, before.credits+"->"+st.res.credits+" cost="+cost.credits);
+  ok("E5 入队即扣合金 ×2", st.res.fe_alloy===before.fe_alloy-cost.fe_alloy*2, before.fe_alloy+"->"+st.res.fe_alloy);
+
+  // 同类上限含队列：已有 1 + 队列 2 = 3 → 再入队应拒
+  const r2=P().enqueueModule(st,"energy",1);
+  ok("E6 同类上限计入队列中未完成的", !r2.ok && /上限/.test(r2.err||""), JSON.stringify(r2));
+
+  // 结算：把 startedAt 推到过去，触发完成
+  const it=st.base.industry.moduleQueue[0];
+  it.startedAt -= 100000;
+  const logDone=P().processModuleQueue(st,Date.now());
+  ok("E7 结算产出 2 个舱段", logDone.length===2, JSON.stringify(logDone));
+  const owned=st.base.modules.owned.filter(m=>m.type==="energy").length;
+  ok("E8 完成后入库（初始1 + 新建2 = 3）", owned===3, "owned="+owned);
+  ok("E9 队列清空", st.base.industry.moduleQueue.length===0);
+
+  // 共享总装槽：plan.manufacture 由 bodyLevel 决定，先塞满其它队列
+  const st2=mk();
+  const plan=S().bodyLevelPlan(st2.base.bodyLevel);
+  for(let i=0;i<plan.manufacture;i++) st2.base.industry.buildQueue.push({shipId:"rookie_corvette",dur:1,startedAt:Date.now(),repeat:1,done:0});
+  const r3=P().enqueueModule(st2,"smelt",1);
+  ok("E10 总装槽满时舱段入队被拒", !r3.ok && /槽位/.test(r3.err||""), JSON.stringify(r3));
+
+  // 旧档无 moduleQueue 字段：normalize 不补也能工作（enqueue 内自建）
+  const st3=mk(); delete st3.base.industry.moduleQueue;
+  const r4=P().enqueueModule(st3,"command",1);
+  ok("E11 旧档无 moduleQueue 字段仍可入队", r4.ok && Array.isArray(st3.base.industry.moduleQueue));
+
+  // 耗时档位：轻45 / 中60 / 重75 / 特90（提议值）
+  ok("E12 耗时按造价分档递增", S().moduleBuildTime("energy")===45 && S().moduleBuildTime("smelt")===60
+     && S().moduleBuildTime("manufacture")===75 && S().moduleBuildTime("invent")===90);
+
+  ok("E13 无未捕获运行时错误", ERRS.length===0, ERRS.join(" | "));
+  log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========");
+})().catch(e=>{ log("\n[FATAL] "+e.stack); log("\n======== RESULT: PASS="+PASS+" FAIL="+FAIL+" ========"); });
+</script>
+</body></html>

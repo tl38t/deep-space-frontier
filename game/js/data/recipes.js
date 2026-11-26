@@ -107,11 +107,23 @@
     { id: "inv_bp", in: { integrated_hull: 4, fe_alloy: 10 }, out: "bp", qty: 1, dur: 40, xp: 12 },
   ];
 
+  // 燃料制造（2026-11-26）：1 代 ammunition.js 的 fuel_t1/t2/t3 三条真值配方，
+  // 只把中文输入键映射为本作 ASCII 资源键（粗制富勒烯→crude_fullerene、稳定富勒烯→stable_fullerene、
+  // 高纯富勒烯→high_purity_fullerene、稀有气体→planet_gas），时长 / 产量 / xp 一律不动。
+  // 1 代产出是「消耗品燃料单元」；本作燃料是唯一池、同样无容量上限，
+  // 故队列项 outType:"fuel"，结算走 Engine.Base.setFuel 而不是 gain(state.res, ...)。
+  const FUEL = [
+    { id: "fuel_t1", name: "标准燃料单元", in: { crude_fullerene: 3 },                              out: "fuel", qty: 100, dur: 15, xp: 10 },
+    { id: "fuel_t2", name: "强化燃料单元", in: { stable_fullerene: 2 },                              out: "fuel", qty: 250, dur: 25, xp: 25 },
+    { id: "fuel_t3", name: "超纯燃料单元", in: { high_purity_fullerene: 2, planet_gas: 50 },          out: "fuel", qty: 550, dur: 50, xp: 150 },
+  ];
+
   // 按 id 查
   function find(type, id) {
-    const tbl = type === "smelt" ? SMELT : type === "component" ? COMPONENT : type === "invent" ? INVENT : null;
+    const tbl = type === "smelt" ? SMELT : type === "component" ? COMPONENT
+      : type === "invent" ? INVENT : type === "fuel" ? FUEL : null;
     return tbl ? tbl.find(r => r.id === id) || null : null;
   }
 
-  return { SMELT, COMPONENT, INVENT, find };
+  return { SMELT, COMPONENT, INVENT, FUEL, find };
 });

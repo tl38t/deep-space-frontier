@@ -239,6 +239,18 @@
       }
     } catch (e) { /* 资源清洗失败不阻断读档 */ }
 
+    // 燃料口径统一（2026-11-26）：base.fuel 为唯一真相源，res.fuel 退为镜像；燃料无容量上限。
+    // 旧档两本账开局同为 100、之后只有 base.fuel 随回复/消耗变化 → 取 base.fuel 为准，
+    // 并清掉历史 fuelMax 字段，避免旧 UI / 探针误读成容量墙。幂等，不升 STATE_VERSION。
+    if (s.base) {
+      const mirror = Number(s.res && s.res.fuel);
+      let v = Number(s.base.fuel);
+      if (!isFinite(v)) v = isFinite(mirror) ? mirror : 100;
+      s.base.fuel = Math.max(0, v);
+      if (s.res) s.res.fuel = s.base.fuel;
+      if (s.base.fuelMax !== undefined) delete s.base.fuelMax;
+    }
+
     // 战斗状态字段补齐（不升 STATE_VERSION：旧字段 combatCarry 语义已废弃，直接丢弃即可）
     if (!s.combatWaveHp || typeof s.combatWaveHp !== "object") s.combatWaveHp = {};
     if (s.combatFocus === undefined) s.combatFocus = null;

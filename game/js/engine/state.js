@@ -30,8 +30,9 @@
 
     // 起始 6 名成员（名册上限 20，见 §13/§14）
     const members = [];
+    const usedNames = [];  // 起始 6 人也走名册去重（同名同姓在同一个军团里太假）
     for (let i = 0; i < 6; i++) {
-      members.push(makeMember(Data, rng, "node_0"));
+      members.push(makeMember(Data, rng, "node_0", usedNames));
     }
 
     // 势力任务板（每势力 1 个初始任务）
@@ -57,9 +58,9 @@
       base: Object.assign(baseIdentity, {
         nodeId: map.startId,
         fuel: 100,
-        fuelMax: 200,
         bodyLevel: 0,          // 0=空间站(Lv1 本体)，见 ships.BODY_LEVELS
-        industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [] },
+        // 2026-11-25 舱段建造改为走总装队列：moduleQueue 与部件/造船/强化共享 manufacture 槽位。
+        industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [], buildQueue: [], boosterQueue: [], equipQueue: [], moduleQueue: [], enhanceQueue: [] },
       }),
       starMap: map,
       starMapDone: false,          // ④ 泰坦子系统门禁：需完成星图主线（星图进度系统设置 true）
@@ -285,7 +286,8 @@
     return { childhood: childhood, adulthood: adulthood };
   }
 
-  function makeMember(Data, rng, nodeId) {
+  // usedNames（可选）：名册已有名字数组，用于同团去重（makeName 会就地追加本次结果）
+  function makeMember(Data, rng, nodeId, usedNames) {
     const pid = Data.Names.PERSONALITIES[Math.floor(rng() * Data.Names.PERSONALITIES.length)].id;
     const pool = originPool(Data);
     const origin = pool[Math.floor(rng() * pool.length)];
@@ -311,7 +313,10 @@
     const hp = Data.Ships.maxHp(shipId);
     return {
       id: "m_" + Date.now().toString(36) + "_" + Math.floor(rng() * 1e6).toString(36),
-      name: Data.Names.makeName(rng),
+      name: Data.Names.makeName(rng, {
+        childhood: bs.childhood ? bs.childhood.id : null,  // 出身决定命名制度（中文/罗马/西/法/德/日/部落/无籍代号）
+        used: usedNames,
+      }),
       personalityId: pid,
       origin: origin,                               // 招募来源（星域/势力/人才市场）
       skills: skills,                              // 经验累加器（升级通道）
@@ -340,7 +345,7 @@
   // 招募一名新成员（名册 < 20）。cost 暂为 0（经济平衡待架构跑通后标定）
   function recruitMember(state, Data, rng) {
     if (state.members.length >= 20) return { ok: false, err: "名册已满（20）" };
-    const m = makeMember(Data, rng, state.base.nodeId);
+    const m = makeMember(Data, rng, state.base.nodeId, state.members.map(x => x.name));
     state.members.push(m);
     state.counters.recruited = (state.counters.recruited || 0) + 1;
     return { ok: true, member: m };

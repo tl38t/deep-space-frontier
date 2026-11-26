@@ -66,6 +66,14 @@
   // 闭式分段的 guard 上限：3 层推进 + 1 次整波跳 + 3 层推进 + 3 次弹尽 = 10，取 14 留余量。
   // 这个常数是「O(1) 与 dt 无关」的硬保证，不要按 dt 调大。
   const SEG_GUARD = 14;
+  // 燃料唯一写入口（2026-11-26）：与 settle / 剧情 / 燃料制造共用 Base.setFuel，保证 res.fuel 镜像同步。
+  function setCombatFuel(state, v) {
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+    if (B && B.setFuel) return B.setFuel(state, v);
+    if (!state || !state.base) return 0;
+    state.base.fuel = Math.max(0, Number(v) || 0);   // 无容量上限，仅钳非负
+    return state.base.fuel;
+  }
 
   const AMMO_TYPES = ["laser", "missile", "cannon"];
   const AMMO_OF = { laser: "ammo_laser", missile: "ammo_missile", cannon: "ammo_cannon" };
@@ -748,11 +756,11 @@
         dmg *= ratio;
         fireSec = fuelMaxSec;
         if (ammoUsed) for (const k in ammoUsed) ammoUsed[k] *= ratio;
-        state.base.fuel = 0;          // 烧光（1 代 clamp 到 0 后门禁停火）
+        setCombatFuel(state, 0);      // 烧光（1 代 clamp 到 0 后门禁停火）
         fuelStarved = true;
         allDry = false;
       } else {
-        state.base.fuel = Math.max(0, state.base.fuel - perSec * fireSec);
+        setCombatFuel(state, fuelPool - perSec * fireSec);
       }
     }
 

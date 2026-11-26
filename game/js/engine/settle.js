@@ -38,6 +38,17 @@
 
   // ---- 标定常量（§13 默认，待平衡） ----
   const FUEL_REGEN = 0.02;       // 跃迁燃料 /秒
+  // 燃料唯一写入口（2026-11-26）：浏览器走 Engine.Base.setFuel 同步镜像 res.fuel，
+  // Node 探针无 Base 时保持同口径（无上限，仅钳非负），不依赖 base.fuelMax。
+  function _setFuel(st, v) {
+    const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Base : null;
+    if (B && B.setFuel) return B.setFuel(st, v);
+    if (!st || !st.base) return 0;
+    const fuel = Math.max(0, Number(v) || 0);
+    st.base.fuel = fuel;
+    if (st.res) st.res.fuel = fuel;
+    return fuel;
+  }
   const BASE_MINE = 0.5;         // 矿石基础速率 /秒（abundance=1, lv=0）
   // ① 异地采集衰减（考古版）：远处遗址解析周期放大的下限。jobEfficiency 在远距可趋近 0，
   //   其倒数会发散，故用 max(FLOOR, je) 兜底；FLOOR=0.4 ⇒ 最远解析周期 ≤ 2.5×。
@@ -170,7 +181,7 @@
     const fuelMult = (T && T.fuelMult) ? T.fuelMult(state) : 1;
     const need = edge.fuelCost * fuelMult;   // 科技树·跃迁增效：校验与扣减同一值（电容管理只减战斗燃料，不影响跃迁 warpFuel）
     if (state.base.fuel < need) return { ok: false, err: "跃迁燃料不足" };
-    state.base.fuel -= need;
+    _setFuel(state, state.base.fuel - need);
     state.base.nodeId = toNodeId;
     if (node && !node.discovered) { node.discovered = true; state.starMap.discovered.push(toNodeId); }
     return { ok: true, fuelCost: need };
@@ -390,7 +401,7 @@
     }
 
     // 1) 燃料回复（基础再生，与电容管理无关；电容管理效果为降战斗/考古燃料消耗，见 Combat.advance / archaeologyFuelCost）
-    state.base.fuel = Math.min(state.base.fuelMax, state.base.fuel + FUEL_REGEN * dt);
+    _setFuel(state, state.base.fuel + FUEL_REGEN * dt);
 
     // 1.5) 物流补偿累积（由 logistics 岗成员持续产生，软顶 70pp）
     if (Logistics) Logistics.accumulate(state, dt);
@@ -489,7 +500,7 @@
               const fuelPool = (state.base && typeof state.base.fuel === "number") ? state.base.fuel : 0;
               const fuelCost = archaeologyFuelCost(state, m);
               if (fuelPool < fuelCost) break;
-              state.base.fuel = Math.max(0, state.base.fuel - fuelCost);
+              _setFuel(state, fuelPool - fuelCost);
               a.exploreProgress -= 1;
               if (!Arch) break;
               const res = Arch.cycle(state, m, ebody, focus, fit);
@@ -625,7 +636,10 @@
         const r = (Data.Recipes && Data.Recipes.SMELT) ? Data.Recipes.SMELT.find(x => x.id === it.recipeId) : null;
         rxp = r ? r.xp : null;
       } else if (queueType === "manufacture") {
-        const r = Data.Recipes.COMPONENT.find(x => x.id === it.recipeId); rxp = r ? r.xp : null;
+        // 燃料单元占同一总装队列，但配方表不同（1 代 fuel_t1/t2/t3 真值 xp）
+        const r = Data.Recipes.COMPONENT.find(x => x.id === it.recipeId)
+          || ((Data.Recipes.FUEL || []).find(x => x.id === it.recipeId));
+        rxp = r ? r.xp : null;
       } else if (queueType === "equip") {
         const r = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(it.recipeId) : null; rxp = r ? r.xp : null;
       } else if (queueType === "build" || queueType === "ship") {

@@ -159,10 +159,10 @@ ok("① 全链路主循环零异常（48步×1h=2天）", thrown === 0, lastErr 
 const oreNow = mine ? (st.res[mine.ore] || 0) : 0;
 ok("② 采矿真实产出（"+ (mine ? mine.ore : "?") +" > 0）", oreNow > 0, "res="+oreNow.toFixed(1));
 
-const fuelNow = st.base.fuel, fuelMax = st.base.fuelMax || 200;
-ok("③ 燃料系统合法（终值在 [0,fuelMax] 且 regen 已顶满）",
-   fuelNow >= 0 && fuelNow <= fuelMax && fuelNow === fuelMax,
-   "now="+fuelNow.toFixed(1)+" max="+fuelMax);
+const fuelNow = st.base.fuel;
+ok("③ 燃料系统合法（终值非负，无容量上限时持续累积）",
+   fuelNow >= 0 && fuelNow > 100,
+   "now="+fuelNow.toFixed(1));
 // ③b 隔离验证：扣燃料管线函数本身正常（不经 settle regen，FUEL_REGEN=0.02/s 会把扣減淹没）
 const archCost = Settle.archaeologyFuelCost(st, m1);
 const fittedFuel = (Combat.fittedFuelCost ? Combat.fittedFuelCost(m1) : 0);

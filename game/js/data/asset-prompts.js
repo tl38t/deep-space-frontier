@@ -469,6 +469,100 @@
     return NPC_TACTICAL_OPTICS[i] || { name: "无（常规）", text: "" };
   }
 
+  // —— 随机姿势神态（生成期修饰，对所有变体生效）——
+  // 与挑染同理：替换 NPC_BASE 里写死的「正面微侧 + 中性表情」；不影响落盘 combo、不改文件名。
+  // 索引 0 = 无（规格默认）。后台「姿势神态」下拉给中文标签，🎲 随机抽一款（跳过「无」）。
+  const NPC_POSES = [
+    { name: "无（规格默认）", text: "" },
+    { name: "抱臂自信", text: "subject turned about 45 degrees with arms crossed over the chest, one shoulder closer to the camera, calm self-assured stance with a faint confident smirk" },
+    { name: "侧身回望", text: "subject torso angled about 45 degrees away from the camera while looking back over one shoulder toward the viewer, alert keen expression" },
+    { name: "前倾专注", text: "subject leaning slightly forward with both forearms resting on an unseen ledge at the bottom of the frame, shoulders squared to camera, intent focused expression" },
+    { name: "扶腰随性", text: "subject with one hand resting on the hip, weight shifted to one leg, opposite shoulder slightly dropped, relaxed confident contrapposto with a small wry smile" },
+    { name: "整理装备", text: "subject with one hand raised near the temple adjusting a strap, head tilted a few degrees, candid in-the-moment concentration" },
+    { name: "交叠站立", text: "subject with hands loosely clasped in front at waist level, upright disciplined posture, composed neutral expression" },
+    { name: "单手撑颊", text: "subject with one hand raised to support the cheek, elbow resting just below the frame, thoughtful pensive expression with slightly narrowed eyes" },
+    { name: "回身行走", text: "subject caught mid-stride turning toward the camera with one shoulder advanced, dynamic candid motion, alert lively expression" },
+    { name: "低头抬眼", text: "subject with chin slightly lowered and eyes lifted toward the viewer through the lashes, quiet intense gaze, lips faintly parted" },
+    { name: "手插口袋", text: "subject with one hand tucked into a pocket at the waistline, opposite shoulder tilted, relaxed easy half-smile" },
+    { name: "手抚头侧", text: "subject with one hand lightly brushing the side of the head, head inclined a few degrees, soft absent-minded expression" },
+    { name: "侧身倚靠", text: "subject leaning with one shoulder against an unseen surface at the frame edge, one knee bent, detached composed expression" },
+  ];
+  function npcPose(idx) {
+    const i = Math.max(0, Math.min((idx | 0), NPC_POSES.length - 1));
+    return NPC_POSES[i] || NPC_POSES[0];
+  }
+
+  // —— 随机发色（生成期修饰，覆盖变体自带发色）——
+  // 与挑染区别：挑染是叠加高光条，本项是整体替换主发色。生成同 combo 多张不同发色的图、
+  // 存进同一 stem 的不同 draw，运行时 Portraits.pick() 随机抽，即「随机发色」池。
+  // 索引 0 = 无（保持规格发色）。后台「发色」下拉给中文标签，🎲 随机抽一款（跳过「无」）。
+  const NPC_HAIR_COLORS = [
+    { name: "无（保持规格发色）", text: "" },
+    { name: "银白", text: "platinum-silver hair" },
+    { name: "青碧", text: "tidewave teal hair" },
+    { name: "玫瑰金", text: "rose-gold hair" },
+    { name: "樱桃红", text: "deep cherry-red hair" },
+    { name: "紫罗兰", text: "violet-purple hair" },
+    { name: "麦金", text: "sunlit wheat-blonde hair" },
+    { name: "冰蓝", text: "icy pale-blue hair" },
+    { name: "栗褐", text: "chestnut-brown hair" },
+  ];
+  function npcHairColor(idx) {
+    const i = Math.max(0, Math.min((idx | 0), NPC_HAIR_COLORS.length - 1));
+    return NPC_HAIR_COLORS[i] || NPC_HAIR_COLORS[0];
+  }
+  // 覆盖 variant 里的发色段：保留 hair 前的长度/质地修饰词（short practical / wind-blown / clean-cut…），
+  // 去掉 "with … streaks/tips" 后缀避免新旧颜色互相冲突（挑染仍可单独叠加）。
+  function applyNpcHairColor(subject, colorText) {
+    if (!colorText) return subject;
+    return String(subject || "").replace(/(^|, )([^,]*\bhair\b[^,]*)/, (m, sep, seg) => {
+      const pm = /^(.*?)([A-Za-z][A-Za-z-]*)\s+hair/i.exec(seg);
+      const prefix = pm && pm[1] ? pm[1].trim() : "";
+      return sep + (prefix ? prefix + " " : "") + colorText;
+    });
+  }
+
+  // —— 随机发型（生成期修饰，覆盖变体自带的长度/造型词，保留发色）——
+  // 与发色互补：发色换主色，发型换长度/造型（short practical / swept-back / clean-cut…）。
+  // 用「发型词白名单」只剥离段首已知的发型词，其余（发色 + with … tips/streaks 后缀）原样保留，
+  // 这样不会像正则贪心那样误伤 soft pastel-peach / dusty-peach and lilac 这类多词发色。
+  // 索引 0 = 无（保持规格发型）。后台「发型」下拉给中文标签，🎲 随机抽一款（跳过「无」）。
+  const NPC_HAIR_STYLES = [
+    { name: "无（保持规格发型）", text: "" },
+    { name: "利落短发", text: "short cropped" },
+    { name: "蓬松乱发", text: "messy wind-blown" },
+    { name: "长直发", text: "long straight" },
+    { name: "长卷发", text: "long flowing wavy" },
+    { name: "高马尾", text: "high ponytail" },
+    { name: "编发", text: "braided" },
+    { name: "波波头", text: "sleek chin-length bob" },
+    { name: "半扎发", text: "half-up tied back" },
+    { name: "双麻花辫", text: "twin braids" },
+    { name: "低马尾", text: "low ponytail" },
+    { name: "丸子头", text: "topknot bun" },
+    { name: "蓬松短卷", text: "short curly" },
+  ];
+  // 段首可剥离的发型词（长词在前，避免 short practical 被 short 先截断）
+  const NPC_HAIR_STYLE_PREFIXES = [
+    "short practical", "closely cropped", "swept-back", "wind-blown", "half-up tied back",
+    "clean-cut", "sleek", "short", "long", "messy", "cropped",
+  ];
+  function npcHairStyle(idx) {
+    const i = Math.max(0, Math.min((idx | 0), NPC_HAIR_STYLES.length - 1));
+    return NPC_HAIR_STYLES[i] || NPC_HAIR_STYLES[0];
+  }
+  function applyNpcHairStyle(subject, styleText) {
+    if (!styleText) return subject;
+    return String(subject || "").replace(/(^|, )([^,]*\bhair\b[^,]*)/, (m, sep, seg) => {
+      let rest = seg.trim();
+      for (const p of NPC_HAIR_STYLE_PREFIXES) {
+        const re = new RegExp("^" + p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+", "i");
+        if (re.test(rest)) { rest = rest.replace(re, ""); break; }
+      }
+      return sep + styleText + " " + rest;
+    });
+  }
+
   // —— 义体改造生图需求（义眼 / 义肢；用户 2026-10-23 要求：加进词条 + 生图需求）——
   const AUGMENT_BASE =
     "Stylized sci-fi cyberware hero shot, clean concept-art style, semi-realistic painterly rendering, extreme close-up of a single cybernetic augmentation on a human subject, dramatic colored rim light, plain dark gradient background, game-key-art quality, polished, cinematic.";
@@ -598,6 +692,16 @@
       look = pool[idx].text;
     }
     let subj = v || "";
+    // 随机发型：覆盖变体自带的长度/造型词，保留发色（生成期修饰，先定型→再上色→再挑染）
+    if (opts && opts.hairStyle) {
+      const hs = npcHairStyle(opts.hairStyle).text;
+      if (hs) subj = applyNpcHairStyle(subj, hs);
+    }
+    // 随机发色：覆盖变体自带发色（生成期修饰，先覆盖再叠加挑染）
+    if (opts && opts.hairColor) {
+      const hc = npcHairColor(opts.hairColor).text;
+      if (hc) subj = applyNpcHairColor(subj, hc);
+    }
     if (opts && opts.hairHighlight) {
       const hl = npcHairHighlight(opts.hairHighlight).text;
       if (hl) subj = subj + ", " + hl;
@@ -612,7 +716,13 @@
       const to = npcTacticalOptic(opts.tacticalOptic).text;
       if (to) subj = subj + ", " + to;
     }
-    const parts = [NPC_BASE, look, subj];
+    // 随机姿势神态：替换 NPC_BASE 里写死的站姿+表情（生成期修饰，对所有变体生效）
+    let base = NPC_BASE;
+    if (opts && opts.pose) {
+      const po = npcPose(opts.pose).text;
+      if (po) base = base.replace("subject facing camera with slight three-quarter turn, neutral expressive face", po);
+    }
+    const parts = [base, look, subj];
     if (opts && opts.augment === "eye") parts.push(NPC_AUG_EYE);
     else if (opts && opts.augment === "limb") parts.push(NPC_AUG_LIMB);
     else if (opts && opts.augment === "both") { parts.push(NPC_AUG_EYE); parts.push(NPC_AUG_LIMB); }
@@ -738,6 +848,9 @@
     line("**挑染（发色高光）**：每个变体的发色描述可叠加一款挑染（`NPC_HAIR_HIGHLIGHTS`，如银白 / 霓虹青紫 / 暖金 / 暗紫 / 冰蓝 / 玫瑰），后台「挑染」下拉选款或 🎲 随机抽一款。纯生成期修饰，不影响落盘 combo（与服装池、义体同级）。");
     line("**男性特征（墨镜 / 光头）**：仅对男性变体（V2 年长男 / V4 年轻男）生效，叠加到发色描述之后（`NPC_MALE_FACIALS`）。后台切到男性变体时会出现「男性特征」下拉，选墨镜或光头、或 🎲 随机抽一款，右侧 Prompt 即时重拼。生成多张带不同男性特征的同变体图、存进同一 combo 的不同 draw（`_2`/`_3`…），即「男性随机词条」随机池。⚠ 光头会覆盖变体自带发色，生图前以光头条为准。");
     line("**战术目镜（电子作战目镜）**：对所有变体（V1–V4）生效，叠加到变体描述之后（`NPC_TACTICAL_OPTICS`：单眼战术目镜 / 双眼全息护目 / 战术面甲目镜）。后台「战术目镜」下拉选款或 🎲 随机抽一款，纯生成期修饰，不影响落盘 combo（与挑染同级）。生成多张带不同目镜的同变体图、存进同一 combo 的不同 draw，即随机池。");
+    line("**发色（覆盖变体自带）**：对所有变体生效（`NPC_HAIR_COLORS`：银白 / 青碧 / 玫瑰金 / 樱桃红 / 紫罗兰 / 麦金 / 冰蓝 / 栗褐）。与「挑染」不同——挑染是叠加高光条，本项是**整体替换主发色**（保留 short practical / weathered 等长度质地修饰，去掉原有 with … streaks/tips 后缀避免撞色；仍可再叠加挑染）。后台「发色」下拉选款或 🎲 随机抽一款，纯生成期修饰，不影响落盘 combo。生成多张不同发色的同变体图、存进同一 combo 的不同 draw，即随机池。");
+    line("**发型（覆盖变体自带）**：对所有变体生效（`NPC_HAIR_STYLES`：利落短发 / 蓬松乱发 / 长直发 / 长卷发 / 高马尾 / 编发 / 波波头 / 半扎发 / 双麻花辫 / 低马尾 / 丸子头 / 蓬松短卷，共 12 款）。与「发色」互补——发色换主色，本项换长度/造型（用发型词白名单只替换段首的 short practical / swept-back / clean-cut 等，保留发色与 with … tips/streaks 后缀；多词发色如 soft pastel-peach 不会被误伤）。可单独用，也可与发色、挑染叠加（先定型→再上色→再挑染）。后台「发型」下拉选款或 🎲 随机抽一款，纯生成期修饰，不影响落盘 combo。生成多张不同发型的同变体图、存进同一 combo 的不同 draw，即随机池。");
+    line("**姿势神态**：对所有变体生效（`NPC_POSES`：抱臂自信 / 侧身回望 / 前倾专注 / 扶腰随性 / 整理装备 / 交叠站立 / 单手撑颊 / 回身行走 / 低头抬眼 / 手插口袋 / 手抚头侧 / 侧身倚靠，共 12 款）。后台「姿势神态」下拉选款或 🎲 随机抽一款，替换基底里写死的「正面微侧 + 中性表情」，纯生成期修饰，不影响落盘 combo。生成多张不同姿势的同变体图、存进同一 combo 的不同 draw，即随机池。");
     line("游戏运行时读取 `assets/portraits/npc/manifest.json`（由可视化后台 `game/asset-admin.html` 在每次存图后自动维护；也可用后台「重建清单」按钮从磁盘恢复），键为 `<原型id>/<comboStem>`、值为相对路径数组；在同 combo 已存的若干张里**随机抽一张**显示，避免同一原型千篇一律。");
     line("");
     NPC_ARCHETYPES.forEach(a=>{
@@ -824,6 +937,8 @@
   return {
     CONTACT_BASE, CONTACT_NEGATIVE, CONTACT_OUT_DIR, NPC_BASE, NPC_NEGATIVE, NPC_REVEALING,
     NPC_AUG_EYE, NPC_AUG_LIMB, NPC_VARIANT_LABELS, NPC_VARIANT_COUNT, NPC_OUT_DIR, NPC_DRAW_MAX,
+    NPC_POSES, npcPose, NPC_HAIR_COLORS, npcHairColor, applyNpcHairColor,
+    NPC_HAIR_STYLES, npcHairStyle, applyNpcHairStyle, NPC_HAIR_STYLE_PREFIXES,
     FACTION_CONTACTS, NPC_ARCHETYPES,
     AUGMENT_BASE, AUGMENT_NEGATIVE, AUGMENT_OUT_DIR, AUGMENT_PROMPTS,
     GUIDE_OUT_DIR, GUIDE_BASE, GUIDE_HOLO_BASE, GUIDE_NEGATIVE, GUIDE_CHARACTERS,

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>势力商店 · 可交互 Demo</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1f2430;--sub:#5c6472;--line:#e2e5ea;--accent:#2f6fd0;--ok:#1a8754;--warn:#b25a00}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line);padding:10px 16px}
+h1{font-size:17px;margin:0 0 8px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px}
+.pill{background:#eef2f8;border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;color:var(--ink)}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;padding:12px 16px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:20px;padding:5px 12px;cursor:pointer;font-size:13px}
+.tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+main{padding:0 16px 40px}
+.sec{margin:14px 0 6px;font-weight:600;color:var(--sub);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;position:relative}
+.card.owned{background:#f0f7f2;border-color:#bfe0cc}
+.card h3{margin:0 0 4px;font-size:14px}
+.meta{color:var(--sub);font-size:12px}
+.eff{font-size:12px;color:#33405a;margin:6px 0;max-height:36px;overflow:hidden}
+.buy{margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.price{font-weight:600}
+.state{font-size:12px;padding:2px 7px;border-radius:999px;background:#eef2f8;color:var(--sub)}
+.state.ok{background:#e4f5ea;color:var(--ok)}
+.state.warn{background:#fff1df;color:var(--warn)}
+.info-btn{display:none;margin-left:6px;border:0;background:#eef2f8;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:16px;padding:0;cursor:pointer;color:var(--sub)}
+@media (hover:none){.info-btn{display:inline-block}}
+.pop{position:fixed;z-index:20;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;max-width:290px;box-shadow:0 8px 24px #0002;font-size:12px;white-space:pre-line;display:none}
+.note{background:#fff;border:1px dashed var(--line);border-radius:8px;padding:10px 12px;color:var(--sub);font-size:13px;margin:8px 0}
+.mom{background:#fbf7ee;border-color:#e6d7b5}
+select{font:inherit;border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:#fff;color:var(--ink)}
+#log{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--sub);max-height:90px;overflow:auto}
+</style></head><body>
+<iframe id="f" src="../index.html" style="display:none"></iframe>
+<header>
+  <h1>势力商店 · 可交互 Demo <span class="meta">67 张蓝图 · rep 付款 · 舰船 A 门禁 · sansha 挂起</span></h1>
+  <div class="bar" id="bar">加载中…</div>
+  <div class="bar" style="margin-top:8px">
+    <button id="btnNew">重置为新档</button>
+    <button id="btnLegacy">模拟老档（全解锁）</button>
+    <button id="btnMigrate" class="primary">执行迁移 A</button>
+    <label><input type="checkbox" id="chkRel"> 关系全满</label>
+    <label><input type="checkbox" id="chkRich"> 资源充足</label>
+    <label>舰基等级 <select id="selBody"><option value="0">Lv1</option><option value="1">Lv2</option><option value="2">Lv3</option><option value="3" selected>Lv4</option></select></label>
+  </div>
+</header>
+<div class="tabs" id="tabs"></div>
+<main id="main"></main>
+<div class="pop" id="pop"></div>
+<script>
+(function(){
+"use strict";
+var F = document.getElementById('f');
+var W = F.contentWindow;
+var DATA = null, state = null, curFaction = null, catalog = {}, lastLog = [];
+
+var BOOSTER_OWNER = {
+  high_temp_flux:'mining_guild', lattice_proliferation:'mining_guild',
+  assembly_coordinator:'salvage_union', gas_rheology:'lone_star',
+  fullerene_nucleation:'abyssal_inst', reaction_accelerant:'abyssal_inst',
+  reaction_chain_proliferation:'abyssal_inst', neural_booster:'bounty_league',
+  precision_rationing:'settlers'
+};
+// 1 代 SHIP_BLUEPRINTS 十八艘，扣 sansha 4 艘（挂起）；tier 0/1/2/3 = 本作 bodyLevelReq
+var SHIP_PLAN = [
+  ['gale','angel',60,'rep',0], ['thunder','angel',100,'rep',1],
+  ['dawnbreaker','angel',150,'rep',2], ['starcrown','angel',1000,'rep',3],
+  ['bloodthorn','blood',60,'rep',0], ['crimson','blood',100,'rep',1],
+  ['crimson_bastion','blood',150,'rep',2], ['eternal_fortress','blood',1000,'rep',3],
+  ['rifter','federation',50000,'credits',0], ['kestrel','federation',50000,'credits',0],
+  ['atron','federation',50000,'credits',0], ['miner_frigate','federation',50000,'credits',0],
+  ['gas_frigate','federation',50000,'credits',0], ['heron','federation',50000,'credits',0]
+];
+var EQ_PRICE = {1:20,15:40,35:80,55:160,80:320};
+var BQ_PRICE = {n:15,r:35,l:70};
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+function boot(){
+  try{
+    var N = W.NSK;
+    var facs = N.Data.Factions.FACTIONS.map(function(f){ return {id:f.id,name:f.name,color:f.color}; });
+    var eqs = N.Data.Equipment.all().filter(function(e){ return !!e.requiresBlueprint; });
+    var brs = (W.BOOSTER_RECIPES||[]).filter(function(r){ return !!r.requiresBlueprint && !!BOOSTER_OWNER[r.series]; });
+    DATA = {
+      facs:facs, eqs:eqs, brs:brs,
+      ships:N.Data.Ships.SHIPS, hulls:N.Data.Ships.BASE_HULLS||[],
+      labels:N.Data.Equipment.BONUS_LABELS||{}
+    };
+    catalog = buildCatalog();
+    curFaction = facs[0].id;
+    resetNew();
+    renderTabs();
+    document.title = 'DEMO OK';
+  }catch(e){
+    document.title = 'DEMO ERR';
+    document.getElementById('main').textContent = 'ERR ' + (e&&e.message) + '\n' + (e&&e.stack);
+  }
+}
+
+function eqDesc(e){
+  var b = e.bonuses||{}, out=[];
+  for(var k in b){ out.push((DATA.labels[k]||k)+' '+(typeof b[k]==='number'?('+'+(b[k]*100).toFixed(0)+'%'):b[k])); }
+  return out.join(' · ') || (e.cat||'') + ' 装备';
+}
+
+function buildCatalog(){
+  var out={};
+  DATA.facs.forEach(function(f){ out[f.id]={equip:[],booster:[],ship:[],hull:[]}; });
+  DATA.eqs.forEach(function(e){
+    if(e.faction==='sansha') return;                    // 挂起
+    if(!out[e.faction]) return;
+    out[e.faction].equip.push({
+      kind:'equip', id:e.id, key:'equipment:'+e.id, name:e.name,
+      price:EQ_PRICE[e.level]||40, cur:'rep', rel:e.requiresRel||null,
+      body:Math.min(3,Math.floor(((e.level||1)-1)/20)), desc:eqDesc(e), tag:'Lv'+e.level+' · '+(e.cat||'装备')
+    });
+  });
+  DATA.brs.forEach(function(r){
+    var fid=BOOSTER_OWNER[r.series];
+    if(!out[fid]) return;
+    out[fid].booster.push({
+      kind:'booster', id:r.id, key:'booster:'+r.id, name:r.name,
+      price:BQ_PRICE[r.quality]||15, cur:'rep', rel:null, body:0,
+      desc:r.description||'', tag:(r.qualityName||r.quality)+' · Lv'+r.level
+    });
+  });
+  SHIP_PLAN.forEach(function(p){
+    var s=DATA.ships[p[0]];
+    if(!s||!out[p[1]]) return;
+    out[p[1]].ship.push({
+      kind:'ship', id:p[0], key:p[0], name:s.name,
+      price:p[2], cur:p[3], rel:null, body:p[4],
+      desc:'舰基 Lv.'+(p[4]+1)+' 可建造 · '+p[3], tag:'舰船蓝图'
+    });
+  });
+  DATA.hulls.forEach(function(h){
+    if(out[h.factionId]) out[h.factionId].hull.push(h);
+  });
+  return out;
+}
+
+function freeKeys(){ return ['equipment:raider_mining_laser','equipment:raider_gas_harvester']; }
+function resetNew(){
+  state = {
+    res:{ rep:2000, credits:200000 },
+    factions:DATA.facs.map(function(f){ return {id:f.id,relation:0}; }),
+    base:{bodyLevel:3},
+    ownedBlueprints:freeKeys().slice(),
+    shopMigrated:true
+  };
+  lastLog=[]; log('新档：迁移标记已打，2 件联邦基础蓝图免费'); render();
+}
+function setLegacy(){
+  var all=[];
+  DATA.eqs.forEach(function(e){ all.push('equipment:'+e.id); });   // 含 sansha 10 件（老档全解锁）
+  DATA.brs.forEach(function(r){ all.push('booster:'+r.id); });
+  state.ownedBlueprints=all.slice();
+  state.shopMigrated=false;
+  lastLog=[]; log('老档：ownedBlueprints 共 '+all.length+' 键（BP_GRANT_ALL 污染），门禁失效'); render();
+}
+function migrate(){
+  if(state.shopMigrated){ log('已迁移过，幂等无操作'); return; }
+  var before=state.ownedBlueprints.length;
+  state.ownedBlueprints=freeKeys().slice();
+  state.shopMigrated=true;
+  log('迁移 A：清空 '+before+' 键 → 免费集 2 键 → 打标记'); render();
+}
+function log(s){ lastLog.push(s); if(lastLog.length>4)lastLog.shift(); }
+
+function relOf(fid){ return state.factions.find(function(x){return x.id===fid;})||{relation:0}; }
+function relNeed(it){
+  if(!it.rel) return 0;
+  var ks=Object.keys(it.rel);
+  return ks.length?it.rel[ks[0]]:0;
+}
+function check(it){
+  if(state.ownedBlueprints.indexOf(it.key)>=0) return {ok:false,why:'已拥有',cls:'ok'};
+  var need=relNeed(it);
+  if(need && !document.getElementById('chkRel').checked && relOf(curFaction).relation<need)
+    return {ok:false,why:'关系需 '+need,cls:'warn'};
+  if(it.body>state.base.bodyLevel) return {ok:false,why:'舰基 Lv.'+(it.body+1),cls:'warn'};
+  var have = document.getElementById('chkRich').checked ? 999999 : (state.res[it.cur]||0);
+  if(have<it.price) return {ok:false,why:(it.cur==='rep'?'声望':'星币')+'不足',cls:'warn'};
+  return {ok:true,why:'可购买',cls:'ok'};
+}
+function buy(kind,id){
+  var it=null;
+  ['equip','booster','ship'].forEach(function(k){
+    catalog[curFaction][k].forEach(function(x){ if(x.kind===kind&&x.id===id) it=x; });
+  });
+  if(!it) return;
+  var c=check(it);
+  if(!c.ok){ log('拒绝 '+it.name+'：'+c.why); renderBar(); return; }
+  if(!document.getElementById('chkRich').checked) state.res[it.cur]-=it.price;
+  state.ownedBlueprints.push(it.key);
+  log('购买 '+it.name+' → 写键 '+it.key+'，付 '+it.price+' '+(it.cur==='rep'?'rep':'credits'));
+  render();
+}
+
+function renderTabs(){
+  document.getElementById('tabs').innerHTML = DATA.facs.map(function(f){
+    var n=catalog[f.id].equip.length+catalog[f.id].booster.length+catalog[f.id].ship.length;
+    return '<button class="tab'+(f.id===curFaction?' on':'')+'" data-act="tab:'+f.id+'" style="border-left:4px solid '+f.color+'">'+esc(f.name)+' <span class="meta">'+n+'</span></button>';
+  }).join('');
+}
+function renderBar(){
+  document.getElementById('bar').innerHTML =
+    '<span class="pill">声望 rep <b>'+state.res.rep+'</b></span>'+
+    '<span class="pill">星币 credits <b>'+state.res.credits+'</b></span>'+
+    '<span class="pill">已拥有蓝图 <b>'+state.ownedBlueprints.length+'</b></span>'+
+    '<span class="pill">迁移态 <b>'+(state.shopMigrated?'已迁移':'老档未迁移')+'</b></span>'+
+    '<span class="pill">目录 <b>27 装备 + 26 增强剂 + 14 舰船 = 67</b></span>'+
+    '<span style="flex-basis:100%"></span><span id="log">'+lastLog.map(esc).join(' · ')+'</span>';
+}
+function cardHtml(it){
+  var c=check(it), owned=state.ownedBlueprints.indexOf(it.key)>=0;
+  var tip=it.name+'\n'+it.tag+'\n'+it.desc+'\n价格：'+it.price+' '+(it.cur==='rep'?'声望':'星币')+'\n归属键：'+it.key;
+  return '<div class="card'+(owned?' owned':'')+'">'+
+    '<h3>'+esc(it.name)+'<button class="info-btn" data-act="info" title="'+esc(tip)+'">ⓘ</button></h3>'+
+    '<div class="meta">'+esc(it.tag)+'</div>'+
+    '<div class="eff" title="'+esc(it.desc)+'">'+esc(it.desc)+'</div>'+
+    '<div class="buy"><span class="price">'+(it.cur==='rep'?'⭐':'¤')+' '+it.price+'</span>'+
+    (owned
+      ? '<span class="state ok">已拥有</span>'
+      : '<button data-act="buy:'+it.kind+':'+it.id+'" '+(c.ok?'class="primary"':'disabled')+'>'+esc(c.why)+'</button>')+
+    '</div></div>';
+}
+function render(){
+  renderBar();
+  var g=catalog[curFaction], h=[];
+  if(curFaction==='sansha'){
+    h.push('<div class="note mom"><b>静默集群 · 已挂起</b><br>该势力 10 件装备蓝图 + 4 艘舰船蓝图暂不进商店，未来改走战斗掉落；当前商店不加门禁、不展示。</div>');
+  }
+  var groups=[['equip','装备蓝图'],['booster','增强剂蓝图'],['ship','舰船蓝图（A 门禁）']];
+  groups.forEach(function(gp){
+    var list=g[gp[0]];
+    h.push('<div class="sec">'+gp[1]+' · '+list.length+' 件</div>');
+    h.push(list.length?('<div class="grid">'+list.map(cardHtml).join('')+'</div>'):'<div class="note">本势力无此类蓝图</div>');
+  });
+  if(g.hull.length){
+    h.push('<div class="sec">母舰 · 不在本商店购买</div>');
+    h.push('<div class="note">'+g.hull.map(function(x){ return esc(x.name); }).join(' / ')+
+      ' —— 请在「舰基 → 母舰蓝图」页购买（星币，单一入口）。本页仅展示。</div>');
+  }
+  document.getElementById('main').innerHTML=h.join('');
+}
+
+document.addEventListener('click',function(e){
+  var t=e.target.closest('[data-act]');
+  if(!t) return;
+  var a=t.getAttribute('data-act')||'';
+  if(a.indexOf('tab:')===0){ curFaction=a.slice(4); renderTabs(); render(); }
+  else if(a.indexOf('buy:')===0){ var p=a.split(':'); buy(p[1],p[2]); }
+  else if(a==='info'){
+    var pop=document.getElementById('pop'), r=t.getBoundingClientRect();
+    pop.textContent=t.title;
+    pop.style.left=Math.min(r.left,window.innerWidth-300)+'px';
+    pop.style.top=(r.bottom+6)+'px'; pop.style.display='block';
+  }
+});
+document.body.addEventListener('click',function(e){
+  if(!e.target.closest('[data-act="info"]')) document.getElementById('pop').style.display='none';
+});
+document.getElementById('btnNew').onclick=resetNew;
+document.getElementById('btnLegacy').onclick=setLegacy;
+document.getElementById('btnMigrate').onclick=migrate;
+['chkRel','chkRich'].forEach(function(id){ document.getElementById(id).onchange=render; });
+document.getElementById('selBody').onchange=function(){ state.base.bodyLevel=Number(this.value); render(); };
+
+F.onload=function(){ setTimeout(boot,1200); };
+window.__demo={
+  get state(){return state;}, get catalog(){return catalog;},
+  get log(){return lastLog;}, buy:buy, migrate:migrate,
+  setFaction:function(x){curFaction=x;renderTabs();render();}
+};
+})();
+</script>
+</body></html>

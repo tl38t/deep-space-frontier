@@ -49,9 +49,11 @@
     const St = _State();
     if (!St || !St.makeMember) return [];
     const out = [];
+    // 名册 + 本批已生成候选 一起参与去重（makeMember 会把新名字就地推进这个数组）
+    const used = (state.members || []).map(m => m.name);
     for (let i = 0; i < n; i++) {
       // makeMember 生成完整成员对象（id/技能/出身/词条/舰船/人生目的），仅暂存候选，不进名册
-      out.push(St.makeMember(Data, genRng(state), state.base.nodeId));
+      out.push(St.makeMember(Data, genRng(state), state.base.nodeId, used));
     }
     return out;
   }

@@ -50,6 +50,7 @@
   function clampN(n) { return Math.max(1, Math.min(MAX_CONTINUOUS, n | 0 || 1)); }
   function I() { return window.NSK.Engine && window.NSK.Engine.Invention; }
   function isStudy() { return !!cur && cur.type === "invent" && cur.tab === "study"; }
+  function isModule() { return !!cur && cur.type === "manufacture" && cur.tab === "module"; }
 
   function isOpen() { return !!cur; }
   function rdIsOpen() { return !!(rdOverlay && rdOverlay.classList.contains("active")); }
@@ -156,6 +157,7 @@
     if (cur.type === "booster") return (window.BOOSTER_RECIPES || []);
     if (cur.type === "equip") { if (cur.tab === "dismantle") return []; const E = EData(); return E ? E.bySlot(equipCat()) : []; }
     if (cur.type === "manufacture" && cur.tab === "component") return R.COMPONENT;
+    if (cur.type === "manufacture" && cur.tab === "fuel") return R.FUEL || [];
     return [];
   }
 
@@ -210,6 +212,10 @@
       const s = Data().Ships.shipById(j.shipId);
       list.push({ qk: "buildQueue", i: i, it: j, out: s ? s.name : j.shipId });
     });
+    (ind.moduleQueue || []).forEach((j, i) => {
+      const d = Data().Ships.baseModuleByType(j.moduleType);
+      list.push({ qk: "moduleQueue", i: i, it: j, out: d ? d.name : j.moduleType });
+    });
     (ind.enhanceQueue || []).forEach((j, i) => {
       const m = (state() && state().members) ? state().members.find(x => x.id === j.memberId) : null;
       const s = Data().Ships.shipById(j.shipId);
@@ -226,6 +232,9 @@
     if (cur.type === "manufacture" && cur.tab === "ship") {
       const s = Data().Ships.shipById(recipeId); return s ? s.name : recipeId;
     }
+    if (isModule()) {
+      const d = Data().Ships.baseModuleByType(recipeId); return d ? d.name : recipeId;
+    }
     if (cur.type === "equip") return eqName(recipeId) + " ×1";
     if (cur.type === "booster") {
       const it = BEngine() && BEngine().getItem(recipeId);
@@ -233,7 +242,7 @@
       return (it ? it.name : (r.name || recipeId)) + " ×" + ((r.output && r.output.qty) || 1);
     }
     const r = recipeTable().find(x => x.id === recipeId);
-    return r ? (CTX.resName(r.out) + (r.qty > 1 ? " ×" + r.qty : "")) : recipeId;
+    return r ? ((r.name || CTX.resName(r.out)) + (r.qty > 1 ? " ×" + r.qty : "")) : recipeId;
   }
 
   // ---------- 渲染 ----------
@@ -280,6 +289,13 @@
     if (cur.type === "manufacture" && cur.tab === "ship") {
       const s = Data().Ships.shipById(recipeId);
       return s ? (s.cost || {}) : null;
+    }
+    if (isModule()) {
+      const d = Data().Ships;
+      const cost = d.moduleBuildCost(recipeId);
+      if (!cost) return null;
+      const B = BEngine();
+      return (B && B.discountedCost) ? B.discountedCost(state(), cost, "ship") : cost;
     }
     const r = recipeTable().find(function (x) { return x.id === recipeId; });
     return r ? (r.in || {}) : null;
@@ -331,6 +347,15 @@
       gateOk = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel));
       gateText = gateOk ? "" : "需核心 Lv" + (s ? s.bodyLevelReq + 1 : "?");
       can = gateOk && Prod().canAfford(st.res, s ? s.cost : {});
+    } else if (isModule()) {
+      const S = Data().Ships;
+      const def = S.baseModuleByType(id);
+      const cost = S.moduleBuildCost(id);
+      const owned = (st.base.modules.owned || []).filter(m => m.type === id).length;
+      const queued = ((st.base.industry && st.base.industry.moduleQueue) || []).reduce((n, it) => n + (it.moduleType === id ? Math.max(0, (it.repeat || 1) - (it.done || 0)) : 0), 0);
+      gateOk = !!(def && cost && owned + queued < S.MODULE_INSTANCE_CAP);
+      gateText = gateOk ? "" : "同类已满 " + S.MODULE_INSTANCE_CAP;
+      can = gateOk && Prod().canAfford(st.res, cost);
     } else if (cur.type === "equip") {
       const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
       if (!eq) { gateOk = false; gateText = "—"; can = false; }
@@ -361,6 +386,9 @@
     const st = state();
     if (cur.type === "manufacture" && cur.tab === "ship") {
       return (st.ships || []).filter(function (s) { return s.shipId === id; }).length;
+    }
+    if (isModule()) {
+      return (st.base.modules.owned || []).filter(function (m) { return m.type === id; }).length;
     }
     if (cur.type === "equip") {
       return (st.equipment && st.equipment[id]) || 0;
@@ -398,6 +426,10 @@
     if (cur.type === "manufacture" && cur.tab === "ship") {
       const s = Data().Ships.shipById(id);
       return (s ? Math.round(s.buildTime * durMult) : 0) + "s / 艘";
+    }
+    if (isModule()) {
+      const t = Data().Ships.moduleBuildTime(id);
+      return Math.round(t * durMult) + "s / 个";
     }
     if (cur.type === "equip") {
       const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
@@ -647,6 +679,7 @@
     if (cur.type === "booster") return boosterCards();
     if (cur.type === "equip") return equipCards();
     if (cur.type === "manufacture" && cur.tab === "ship") return shipCards();
+    if (isModule()) return moduleCards();
     const st = state();
     const durMult = Base().queueDurationMultiplier(st, cur.type);
     const R = recipeTable();
@@ -654,7 +687,7 @@
     return R.map(function (r) {
       const adjDur = Math.round(r.dur * durMult * 10) / 10;
       const durTxt = (durMult < 0.995 ? r.dur + "s → " : "") + adjDur + "s / 批";
-      return recipeCardHTML(r.id, CTX.resName(r.out), r.qty, '<span class="wb-ic">' + CTX.resIcon(r.out) + '</span> ', durTxt);
+      return recipeCardHTML(r.id, r.name || CTX.resName(r.out), r.qty, '<span class="wb-ic">' + CTX.resIcon(r.out) + '</span> ', durTxt);
     }).join("");
   }
 
@@ -720,6 +753,32 @@
     return ships.map(function (s) {
       const adjDur = Math.round(s.buildTime * durMult);
       return recipeCardHTML(s.id, s.name, 1, "", adjDur + "s / 艘");
+    }).join("");
+  }
+
+  // 舱段子页签（2026-11-25：建造从右栏挪入总装船坞，走 buildQueue 同款队列）：
+  // 列出 9 种舱段，成本 / 耗时 / 同类上限门禁与入队同口径。
+  function moduleCards() {
+    const st = state();
+    const durMult = Base().queueDurationMultiplier(st, "manufacture");
+    const S = Data().Ships;
+    const types = Object.keys(S.BASE_MODULES);
+    return types.map(function (type) {
+      const def = S.BASE_MODULES[type];
+      const cost = S.moduleBuildCost(type) || {};
+      const have = (st.base.modules.owned || []).filter(m => m.type === type).length;
+      const queued = ((st.base.industry && st.base.industry.moduleQueue) || []).reduce((n, it) => n + (it.moduleType === type ? Math.max(0, (it.repeat || 1) - (it.done || 0)) : 0), 0);
+      const full = have + queued >= S.MODULE_INSTANCE_CAP;
+      const dur = Math.round(S.moduleBuildTime(type) * durMult);
+      const badge = full ? '同类已满 ' + S.MODULE_INSTANCE_CAP : '可制造';
+      const badgeCls = full ? 'lock' : 'can';
+      const costTxt = Object.keys(cost).map(k => CTX.resName(k) + ' ' + cost[k]).join(' · ');
+      return '<button class="wb-recipe' + (cur.recipeId === type ? ' sel' : '') + (full ? ' dis' : '') + '" data-act="workbench:sel:' + type + '">'
+        + '<div class="wb-ric"><span class="wb-ic" style="color:' + CTX.esc(def.color || '') + '">' + CTX.esc(def.icon || '▣') + '</span> '
+        + CTX.esc(def.name) + ' <span class="wb-qty">已有 ' + have + '/' + S.MODULE_INSTANCE_CAP + (queued ? ' · 排队 ' + queued : '') + '</span></div>'
+        + '<span class="wb-badge ' + badgeCls + '">' + badge + '</span>'
+        + '<div class="wb-r2">' + dur + 's / 个 · ' + CTX.esc(costTxt) + '</div>'
+        + '</button>';
     }).join("");
   }
 
@@ -805,7 +864,7 @@
       const remain = Math.max(0, (it.repeat - it.done - p) * it.dur);
       const remainTxt = remain > 60 ? Math.floor(remain / 60) + 'm ' + Math.round(remain % 60) + 's' : Math.round(remain) + 's';
       // 进度中的状态词按队列区分，避免增强剂显示成「冶炼中」
-      const QK_LABEL = { buildQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中', enhanceQueue: '强化中' };
+      const QK_LABEL = { buildQueue: '建造中', moduleQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中', enhanceQueue: '强化中' };
       const status = it.done >= it.repeat ? '完成'
         : it.outType === "study" ? '研究中' : (QK_LABEL[job.qk] || '生产中');
       return '<div class="wb-job">'
@@ -827,7 +886,9 @@
     if (cur.type === "manufacture") {
       tabs = '<div class="wb-tabs">'
         + '<span class="wb-tab' + (cur.tab === "component" ? " on" : "") + '" data-act="workbench:tab:component">部件 / 弹药</span>'
+        + '<span class="wb-tab' + (cur.tab === "fuel" ? " on" : "") + '" data-act="workbench:tab:fuel">燃料</span>'
         + '<span class="wb-tab' + (cur.tab === "ship" ? " on" : "") + '" data-act="workbench:tab:ship">造船</span>'
+        + '<span class="wb-tab' + (cur.tab === "module" ? " on" : "") + '" data-act="workbench:tab:module">舱段</span>'
         + '<span class="wb-tab' + (cur.tab === "enhance" ? " on" : "") + '" data-act="workbench:tab:enhance">强化舰船</span>'
         + '</div>';
     } else if (cur.type === "invent") {
@@ -873,8 +934,13 @@
     const hint = isStudy()
       ? '<div class="wb-note">研究消耗星币与改装图纸（图纸合成页产出，考古亦有掉落）。ME 减免在制造报价生效，'
         + 'TE 缩短该配方制造耗时；研究本身不产资源、不吃 TE。T4 / T5 保留 1 代门槛科研 Lv60 / Lv80，定位长线。</div>'
+      : (cur.type === "manufacture" && cur.tab === "module")
+      ? '<div class="wb-note">舱段与造船共用总装船坞槽位，按队列耗时制造；完成后入「舱段库」，拖到甲板空位即可装配。同类最多 '
+        + Data().Ships.MODULE_INSTANCE_CAP + ' 个（含排队）。</div>'
+      : (cur.type === "manufacture" && cur.tab === "fuel")
+      ? '<div class="wb-note">燃料直接入舰基燃料池（跃迁 / 战斗 / 考古共用），当前 <b>' + Math.floor((st.base && st.base.fuel) || 0) + '</b>；无容量上限，也不会溢出丢弃。与部件 / 造船 / 舱段共用总装槽位。</div>'
       : (cur.type === "manufacture" && cur.tab === "component")
-      ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船共用。</div>'
+      ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船 / 舱段共用。</div>'
       : (cur.type === "booster")
       ? '<div class="wb-note">瓶身入库后，到舰基页下方「增强剂」面板装入 16 个全局槽位，效果整军团共享、自动续瓶。</div>'
       : (cur.type === "equip")
@@ -1153,6 +1219,12 @@
       } else if (cur.type === "manufacture" && cur.tab === "ship") {
         const s = Data().Ships.shipById(id);
         can = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel) && Prod().canAfford(st.res, s.cost));
+      } else if (isModule()) {
+        const S = Data().Ships;
+        const cost = S.moduleBuildCost(id);
+        const owned = (st.base.modules.owned || []).filter(m => m.type === id).length;
+        const queued = ((st.base.industry && st.base.industry.moduleQueue) || []).reduce((n, it) => n + (it.moduleType === id ? Math.max(0, (it.repeat || 1) - (it.done || 0)) : 0), 0);
+        can = !!(cost && owned + queued < S.MODULE_INSTANCE_CAP && Prod().canAfford(st.res, cost));
       } else if (cur.type === "equip") {
         const E = EData();
         const eq = E && E.byId ? E.byId(id) : null;
@@ -1187,7 +1259,9 @@
     else if (cur.type === "booster") r = Prod().enqueue(st, "booster", cur.recipeId, cur.count);
     else if (cur.type === "equip" && cur.tab !== "dismantle") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "component") r = Prod().enqueue(st, "manufacture", cur.recipeId, cur.count);
+    else if (cur.type === "manufacture" && cur.tab === "fuel") r = Prod().enqueueFuel(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "ship") r = Prod().buildShip(st, cur.recipeId, cur.count);
+    else if (isModule()) r = Prod().enqueueModule(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "enhance") {
       if (!cur.enhMember) { CTX.toast("请先选择成员"); return; }
       r = Prod().enhanceShip(st, cur.enhMember, cur.count);

@@ -1,0 +1,23 @@
+// 把 _phase5_bonuses.json 的 combat bonuses 注入深空 ships.js 的 28 战斗舰对象（单行插入，锚定 id）
+import fs from "fs";
+import path from "path";
+
+const ROOT = "D:/深空星疆：商业与战争/game";
+const shipsPath = path.join(ROOT, "js/data/ships.js");
+const map = JSON.parse(fs.readFileSync(path.join(ROOT, "sim/_phase5_bonuses.json"), "utf8"));
+
+let text = fs.readFileSync(shipsPath, "utf8");
+let applied = 0, skipped = [];
+for (const [id, bonuses] of Object.entries(map)) {
+  const bs = Object.entries(bonuses).map(([k, v]) => k + ":" + v).join(",");
+  // 锚定：行首缩进 + id + 该舰所有字段 + fuelEfficiency:N 闭括号前插入 bonuses
+  const re = new RegExp("^(\\s*" + id + ": \\{ id:\"" + id + "\",[^\\n]*?fuelEfficiency:[0-9.]+)( \\}),", "m");
+  if (!re.test(text)) { skipped.push(id); continue; }
+  const before = text;
+  text = text.replace(re, "$1, bonuses:{" + bs + "}$2,");
+  if (text === before) { skipped.push(id); continue; }
+  applied++;
+}
+if (skipped.length) { console.error("SKIPPED:", skipped.join(", ")); process.exit(1); }
+fs.writeFileSync(shipsPath, text);
+console.log("Applied bonuses to", applied, "combat ships.");

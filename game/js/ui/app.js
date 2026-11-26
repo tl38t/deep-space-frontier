@@ -103,13 +103,17 @@
     if (state.reports.length > 30) state.reports.length = 30;
   }
 
+  // 燃料唯一读入口（2026-11-26）：HUD / 仓库 / 星图一律读 base.fuel，
+  // res.fuel 只是兼容镜像，不再作为显示值（旧档两本账开局都是 100，曾导致仓库数字永远不动）。
+  function fuelOf(st) { return (st && st.base && typeof st.base.fuel === "number") ? st.base.fuel : ((st && st.res && st.res.fuel) || 0); }
+
   // 资源 chips（HUD）—— 顶部只常驻星币与跃迁燃料，其余物资收进仓库页
   function renderHUD() {
     const order = ["credits", "fuel"];
     let inner = '<span class="brand">🌌 深空星疆</span>';
     for (const k of order) {
       const meta = Data.Resources.meta(k);
-      inner += '<span class="res" title="' + esc(meta.name) + '">' + meta.icon + " <b>" + fmt(state.res[k] || 0) + "</b></span>";
+      inner += '<span class="res" title="' + esc(meta.name) + '">' + meta.icon + " <b>" + fmt(k === "fuel" ? fuelOf(state) : (state.res[k] || 0)) + "</b></span>";
     }
     // 在勤成员数（有派遣任务）= 实时红点提示，点开抽屉看每个人在干什么
     const busy = state.members.filter(m => !m.destroyed && m.assignment).length;
@@ -228,7 +232,7 @@
     const regColor = id => (regionById[id] || { color: "#5ad1a0" }).color;
 
     let html = "<h2>星图 · 当前舰基位于「" + esc(curNode.name) + "」</h2>";
-    html += '<div class="panel map-hint"><span class="dim">跃迁燃料 <b>' + fmt(state.base.fuel) + " / " + state.base.fuelMax +
+    html += '<div class="panel map-hint"><span class="dim">跃迁燃料 <b>' + fmt(fuelOf(state)) +
       '</b></span><span class="dim">拖拽平移 · 滚轮缩放 · 点星系弹出查看 / 跃迁</span></div>';
 
     // 空间星图（SVG viewBox 自适应；pan/zoom 由 UI 层 transform 控制）
@@ -1081,23 +1085,6 @@
     const used = new Set(((state.base.modules && state.base.modules.installed) || []).map(x => x.moduleId));
     return mods.filter(m => !used.has(m.id));
   }
-  function baseBuildPanel() {
-    const cap = Data.Ships.MODULE_INSTANCE_CAP;
-    const rows = Object.keys(Data.Ships.BASE_MODULES).map(type => {
-      const d = Data.Ships.BASE_MODULES[type];
-      const cost = Data.Ships.moduleBuildCost(type);
-      const have = (state.base.modules.owned || []).filter(m => m.type === type).length;
-      const full = have >= cap;
-      const afford = cost ? Engine.Production.canAfford(state.res, cost) : false;
-      const costStr = cost ? Object.entries(cost).map(([k, v]) => resIcon(k) + v).join(" ") : "—";
-      return '<div class="bb-row">'
-        + '<span class="bb-ic" style="color:' + esc(d.color) + '">' + d.icon + '</span>'
-        + '<span class="bb-tx"><b>' + esc(d.name) + '</b><small>' + esc(Data.Ships.buildCostLabel(type)) + ' · 已有 ' + have + '/' + cap + '</small></span>'
-        + '<button class="sm bb-build" data-act="moduleBuild:' + type + '"' + (full || !afford ? " disabled" : "") + '>' + (full ? "上限" : "建造 " + costStr) + '</button>'
-        + '</div>';
-    }).join("");
-    return '<div class="base-build-panel"><div class="bb-head"><b>建造舱段</b><small>同类最多 ' + cap + ' 个 · 造好先入库，再拖到甲板空位</small></div><div class="bb-list">' + rows + '</div></div>';
-  }
   function baseStockPanel() {
     const list = baseStockModules();
     const body = list.length
@@ -1115,7 +1102,7 @@
       + '<div class="bs-head"><b>舱段库</b><small>待装配 ' + list.length + '</small></div>'
       + '<div class="bs-list">' + body + '</div>'
       + '<div class="bs-foot">拖到甲板<b>空位</b>=装配<br>拖到已占格 = <em>替换</em><br>拖回此处 = 拆下</div>'
-      + baseBuildPanel()
+      + '<div class="bs-build-hint">新建舱段请到 <b>总装船坞 → 舱段</b> 排队制造（与造船共用船坞槽位）。</div>'
       + '</aside>';
   }
 
@@ -1343,6 +1330,11 @@
     const smelt = baseQueueState("smelt", Data.Recipes.SMELT);
     const manufacture = baseQueueState("manufacture", Data.Recipes.COMPONENT);
     const invent = baseQueueState("invent", Data.Recipes.INVENT);
+    // 甲板页脚的即时电网读数（2026-11-26）：与下方「能源电网」面板同源 powerReport，
+    // 避免玩家在第一屏看不到负载/供能。只作用于当前核心舰基；预览别家船体不显示。
+    const pw = Engine.Base.powerReport(state);
+    const pwPct = pw.produced ? Math.round(pw.consumed / pw.produced * 100) : 0;
+    const powerChip = '<span class="base-stage-power' + (pw.ok ? '' : ' over') + '">⚡ ' + pw.consumed + ' / ' + pw.produced + ' <b>' + pwPct + '%</b></span>';
     let html = '<div class="base-view-head"><div><h2>舰基 · ' + esc(hull.name) + (vOther ? ' <span class="tag warn">预览 · 核心在「' + esc(activeHull.name) + '」</span>' : '') + '</h2><div class="dim">唯一舰基核心 · ' + esc(plan.name) + ' Lv.' + plan.lv + ' · ' + esc((Data.Factions.factionById(hull.factionId) || {}).name || "独立") + '</div></div>';
     if (vOther) {
       html += '<button class="sm ghost" data-act="baseHullView:' + esc(activeHull.id) + '">返回「' + esc(activeHull.name) + '」</button>';
@@ -1369,7 +1361,7 @@
       html += '<button class="base-module base-core' + (baseFocus === "core" ? " selected" : "") + '" style="grid-column:' + coreSlot.x + ';grid-row:' + coreSlot.y + '" data-act="baseinfo:core"><span class="base-module-icon">✦</span><b>唯一核心</b><small>' + esc(hull.name) + '</small><span class="base-module-status">本体 Lv.' + plan.lv + '</span></button>';
       for (const slot of slots) if (!slot.core) html += baseModule(slot, plan);
       const installedCount = state.base.modules.installed.length;
-      html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em></span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
+      html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span class="base-stage-foot-left"><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em>' + powerChip + '</span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
     }
     html += '</div>';
     html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>装备 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
@@ -1383,9 +1375,7 @@
       '<button class="sm ghost" data-act="tab:tech">前往科技</button></div>' +
       '<div class="dim">编制由「战斗编制」科技解锁（1 → 2 → 3）。' +
       (capNow < 3 ? "当前还能再提升 " + (3 - capNow) + " 人。" : "已达上限。") + '</div></div>';
-    // 能源电网（§1.5）：供能预算 / 负载 / 状态
-    const pw = Engine.Base.powerReport(state);
-    const pwPct = pw.produced ? Math.round(pw.consumed / pw.produced * 100) : 0;
+    // 能源电网（§1.5）：供能预算 / 负载 / 状态（pw / pwPct 已在函数顶部取，供页脚读数共用）
     // 电耗清单由 BASE_MODULES 生成，杜绝与数据表双份维护造成的文案漂移（2026-11-11 收口）。
     const pwMods = Data.Ships.BASE_MODULES;
     const pwList = Object.keys(pwMods).filter(k => k !== "energy")
@@ -2338,7 +2328,7 @@
       html += '<article class="fac-card' + (meta.questGiver === false ? ' hostile' : '') + '" style="--fac-color:' + esc(meta.color || "#4fc4d3") + '">'
         + '<div class="fac-card-signal"><span><i></i> NETWORK NODE</span><b>' + (meta.tier === "major" ? "CORE" : "LOCAL") + '</b></div>'
         + '<div class="fac-card-identity"><div class="fac-portrait">' + portrait + '</div><div class="fac-card-name"><small>' + esc(scale) + '</small><h3>' + esc(meta.name) + '</h3>'
-        + (c.name ? '<span>' + esc(c.name) + (c.title ? ' · ' + esc(c.title) : '') + '</span>' : '<span>未登记联络人</span>') + '</div></div>'
+        + (c.name ? '<span>' + esc(c.name) + (c.title ? ' / ' + esc(c.title) : '') + '</span>' : '<span>未登记联络人</span>') + '</div></div>'
         + '<p class="fac-card-blurb">' + esc(meta.blurb || "暂无势力档案。") + '</p>'
         + '<div class="fac-relation"><div><span>关系指数</span><b>' + relation + '<small> / 100</small></b></div><i><b style="width:' + relation + '%"></b></i></div>'
         + '<div class="fac-card-foot"><span>' + (meta.questGiver === false ? '无委托协议' : '委托协议已接入') + '</span><span class="fac-node-id">ID · ' + esc(meta.id.toUpperCase()) + '</span></div>'
@@ -2663,12 +2653,10 @@
     html += '<div class="wh-hero">';
     for (const k of WH_TOP) {
       const m = Data.Resources.meta(k); if (!m) continue;
-      const cap = (k === "fuel" && state.base && state.base.fuelMax)
-        ? ' <span class="st-cap">/ ' + fmt(state.base.fuelMax) + "</span>" : "";
       html += '<div class="wh-stat click" data-act="whinfo:' + k + '" data-res="' + k + '">'
         + '<span class="st-ic">' + resIcon(k) + '</span>'
         + '<span class="st-l">' + esc(m.name) + '</span>'
-        + '<span class="st-v">' + fmt(res[k] || 0) + cap + '</span></div>';
+        + '<span class="st-v">' + fmt(k === "fuel" ? fuelOf(state) : (res[k] || 0)) + '</span></div>';
     }
     html += "</div>";
 
@@ -3459,16 +3447,6 @@
     else if (cmd === "baseSlotReset") {
       const r = Engine.Base.resetSlotPos(state);
       if (r.ok) { baseFocus = "core"; toast("已恢复初始摆位"); }
-    }
-    else if (cmd === "moduleBuild") {
-      const d = Data.Ships.baseModuleByType(a) || {};
-      const r = Engine.Base.buildModule(state, a);
-      if (r.ok) {
-        const costStr = Object.entries(r.cost).map(([k, v]) => resName(k) + " " + v).join(" · ");
-        toast("已建造「" + (d.name || a) + "」· 花费 " + costStr + "，已入舱段库");
-      } else toast(r.err || "建造失败");
-      if (Persistence) Persistence.save(state); else Core.save(state);
-      renderView();
     }
     // ---- 舰船装配（环带面板在 js/ui/fit-orbit.js，数据回写走引擎，不经命令分发）----
     else if (cmd === "fleetFit") { openFleetFit(a); }

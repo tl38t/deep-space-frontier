@@ -207,6 +207,11 @@
       for (const k in ef.delta) {
         const v = Number(ef.delta[k]) || 0;
         if (!v) continue;
+        // 燃料奖励必须进唯一燃料池（2026-11-26）：旧实现只写 state.res.fuel，
+        // 玩家看到 HUD +20 但实际跃迁/战斗用的 base.fuel 一分没涨。
+        const B = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+          ? window.NSK.Engine.Base : null;
+        if (k === "fuel" && B && B.grantFuel) { B.grantFuel(state, v); continue; }
         state.res[k] = Math.max(0, (Number(state.res[k]) || 0) + v);
       }
     }

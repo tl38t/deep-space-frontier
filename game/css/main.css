@@ -196,7 +196,8 @@ button:disabled { transform: none; }
 .npc-record-kicker { display: flex; justify-content: space-between; gap: 12px; padding: 2px 32px 9px 0; border-bottom: 1px solid rgba(86,143,164,.19); }
 .npc-record-kicker span { color: #526e7c; }
 .npc-name-line { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-top: 12px; }
-.npc-name-line h2 { margin: 0; color: #f0f7fa; font-size: clamp(23px,3vw,31px); line-height: 1.2; letter-spacing: .08em; text-shadow: 0 0 18px rgba(81,208,228,.17); }
+.npc-name-line > div { min-width: 0; }  /* 长名（罗马三段名 / 西班牙三段名）不再把状态标签挤出卡片 */
+.npc-name-line h2 { margin: 0; color: #f0f7fa; font-size: clamp(23px,3vw,31px); line-height: 1.2; letter-spacing: .08em; text-shadow: 0 0 18px rgba(81,208,228,.17); overflow-wrap: anywhere; }
 .npc-name-line p { margin-top: 4px; color: #8aa7b2; font: 500 11px/1.4 var(--font-tech); letter-spacing: .07em; }
 .npc-name-line p span { color: #466a7b; padding: 0 4px; }
 .npc-status { flex: 0 0 auto; padding: 4px 9px; border: 1px solid rgba(116,174,193,.24); border-radius: 3px; color: #afc8d1; background: rgba(87,131,151,.08);
@@ -966,8 +967,11 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .base-layout{width:60%;height:82%;padding:0;gap:1px;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(5,minmax(0,1fr))}.base-module{border-radius:2px;padding:4px 2px 3px;background:linear-gradient(145deg,rgba(13,37,54,.97),rgba(6,20,32,.97));box-shadow:inset 0 0 0 1px rgba(150,203,222,.045);backdrop-filter:blur(2px)}.base-module:not(.base-core){box-shadow:inset 0 0 0 1px rgba(150,203,222,.06)}.base-module:hover{transform:translateY(-1px);filter:brightness(1.15)}.base-core{border-radius:3px;background:radial-gradient(circle,rgba(38,102,124,.94),rgba(8,35,51,.97));box-shadow:0 0 18px rgba(66,214,232,.2),inset 0 0 0 1px rgba(176,232,244,.18)}.base-module.empty{border-style:solid}
 .base-connections{overflow:visible}.base-connections line{stroke:rgba(106,186,215,.62);stroke-width:4;stroke-linecap:round;stroke-dasharray:none;vector-effect:non-scaling-stroke}.base-connections line.active{stroke:rgba(100,224,230,.96);stroke-width:4.6;stroke-dasharray:none;filter:drop-shadow(0 0 3px rgba(66,214,232,.5))}
 .base-stage-foot{bottom:12px;left:18px;right:18px;font-family:ui-monospace,Consolas,monospace;color:#6b94aa}.base-stage-foot b{color:#82dcb8}.base-stage-foot em{color:#e1bd70}
+/* 甲板页脚即时电网读数：正常=金框，超载=红框（2026-11-26） */
+.base-stage-foot-left{display:inline-flex;align-items:center;gap:6px}
+.base-stage-power{padding:1px 7px;border:1px solid rgba(226,189,104,.55);border-radius:4px;background:rgba(226,189,104,.12);color:#f0cd80;font-weight:600;letter-spacing:.04em;white-space:nowrap}.base-stage-power b{color:#ffe0a0;font-weight:700}.base-stage-power.over{border-color:rgba(233,103,79,.75);background:rgba(233,103,79,.16);color:#ff9f81}.base-stage-power.over b{color:#ffc0ad}
 @media(max-width:760px){.base-layout{width:68%;height:76%}.base-hull{left:9%;width:82%}.base-blueprint-meta{right:14px}.base-stage{min-height:440px}}
-@media(max-width:450px){.base-layout{width:76%;height:70%;gap:1px}.base-module{padding:3px 1px}.base-module-icon{font-size:14px}.base-module b{font-size:8px}.base-module small,.base-module-status{font-size:7px}.base-blueprint-title{left:12px}.base-blueprint-meta{right:12px}.base-stage-foot{left:12px;right:12px}}
+@media(max-width:450px){.base-layout{width:76%;height:70%;gap:1px}.base-module{padding:3px 1px}.base-module-icon{font-size:14px}.base-module b{font-size:8px}.base-module small,.base-module-status{font-size:7px}.base-blueprint-title{left:12px}.base-blueprint-meta{right:12px}.base-stage-foot{left:12px;right:12px}.base-stage-power{padding:0 4px;font-size:9px}}
 .base-hull .base-blueprint-art{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;opacity:.72;pointer-events:none;mix-blend-mode:screen;filter:drop-shadow(0 0 3px rgba(75,185,218,.32))}
 .base-stage .base-hull{border:0;background:transparent;box-shadow:none}.base-hull:before,.base-hull:after{content:none}.base-hull .base-blueprint-art{left:-4%;top:-6%;width:108%;height:112%}
 .base-hull{left:4%;top:2%;width:92%;height:96%}.base-hull .base-blueprint-art{inset:auto;left:0;top:0;width:100%;height:100%;opacity:.82;transform:scale(1.14);transform-origin:50% 50%}
@@ -2228,15 +2232,6 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .combo-chip.on{border-color:rgba(255,196,92,.4);border-left-color:var(--warn);background:rgba(255,196,92,.08)}
 .combo-chip.on b{color:var(--warn)}
 .combo-chip.on span{color:#c8b98f}
-.base-build-panel{margin-top:8px;border-top:1px solid rgba(66,110,139,.3);padding-top:7px}
-.base-build-panel .bb-head{display:flex;flex-direction:column;gap:1px;margin-bottom:6px}
-.base-build-panel .bb-head b{font-size:11px;color:var(--cyan)}
-.base-build-panel .bb-head small{font-size:9px;color:var(--dim);line-height:1.4}
-.bb-row{display:flex;align-items:center;gap:6px;margin:4px 0;padding:4px 5px;border:1px solid rgba(66,110,139,.28);border-radius:6px;background:rgba(10,24,36,.7)}
-.bb-ic{font-size:15px;flex:0 0 18px;text-align:center}
-.bb-tx{display:flex;flex-direction:column;gap:0;min-width:0;flex:1}
-.bb-tx b{font-size:10px;color:#fff;white-space:nowrap}
-.bb-tx small{font-size:9px;color:var(--dim);white-space:nowrap}
-.bb-build{flex:0 0 auto;font-size:9px;padding:3px 5px;line-height:1.2}
-.bb-build:disabled{opacity:.42;cursor:not-allowed}
-@media(max-width:760px){.base-build-panel .bb-head small{white-space:normal}.bb-row{flex-wrap:wrap}.bb-build{width:100%}}
+/* 舱段库引导（2026-11-25：建造入口移到总装船坞工作台，右栏只保留一行指引） */
+.mod-stock .bs-build-hint{margin-top:8px;padding:6px 7px;border-top:1px solid rgba(66,110,139,.3);font-size:9px;line-height:1.5;color:var(--dim)}
+.mod-stock .bs-build-hint b{color:var(--cyan)}

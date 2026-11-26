@@ -145,8 +145,8 @@
 <script src="js/data/factions.js"></script>
 <script src="js/engine/state.js"></script>
 <script src="js/data/names.js"></script>
-<script src="js/data/asset-prompts.js?v=3"></script>
-<script src="assets/portraits/npc/manifest.js?v=2"></script>
+<script src="js/data/asset-prompts.js?v=6"></script>
+<script src="assets/portraits/npc/manifest.js?v=3"></script>
 <script>
 (function(){
   "use strict";
@@ -404,6 +404,9 @@
   let npcHairState={};        // 原型 id -> 当前选中的挑染（发色高光）索引（仅生成期拼 Prompt 用，不影响落盘 combo）
   let npcMaleState={};        // 原型 id -> 当前选中的男性特征（墨镜/光头）索引（仅男性变体生效，不影响落盘 combo）
   let npcOpticState={};       // 原型 id -> 当前选中的战术目镜索引（所有变体生效，仅生成期拼 Prompt 用，不影响落盘 combo）
+  let npcPoseState={};        // 原型 id -> 当前选中的姿势神态索引（所有变体生效，仅生成期拼 Prompt 用，不影响落盘 combo）
+  let npcColorState={};       // 原型 id -> 当前选中的发色索引（覆盖变体自带发色，仅生成期拼 Prompt 用，不影响落盘 combo）
+  let npcStyleState={};       // 原型 id -> 当前选中的发型索引（覆盖变体自带发型，仅生成期拼 Prompt 用，不影响落盘 combo）
   let portraitsDir=null;       // FileSystemDirectoryHandle（game/assets/portraits）
   let armed=null;              // {sub, name} 当前待写入的行（势力/义体，单文件）
   let armedNpc=null;           // {arch,variant,aug,reveal,savekey} 当前待写入的 NPC 行（多张变体）
@@ -504,7 +507,7 @@
   function renderArtNpc(body){
     const AP=N.Data.AssetPrompts;
     const ar=model.prompts.npcArchetypes;
-    const optsOf=(a,v,aug)=>({ revealing: npcRevealState && v===0, augment: aug||null, hairHighlight: npcHairState[a.id]||0, maleTrait: npcMaleState[a.id]||0, tacticalOptic: npcOpticState[a.id]||0 });
+    const optsOf=(a,v,aug)=>({ revealing: npcRevealState && v===0, augment: aug||null, hairHighlight: npcHairState[a.id]||0, maleTrait: npcMaleState[a.id]||0, tacticalOptic: npcOpticState[a.id]||0, pose: npcPoseState[a.id]||0, hairColor: npcColorState[a.id]||0, hairStyle: npcStyleState[a.id]||0 });
     const npcPath=(a,v,aug)=> AP.npcOutPath(a.id, v, optsOf(a,v,aug));
     const npcPrompt=(a,v,aug)=>AP.buildNpcPrompt(a.id, v, Object.assign(optsOf(a,v,aug), {outfit: npcOutfitState[a.id]||0}));
     const isMale=(v)=> AP.npcIsMaleVariant(v);
@@ -552,6 +555,9 @@
       const hopts=AP.NPC_HAIR_HIGHLIGHTS.map((o,k)=>`<option value="${k}" ${k===(npcHairState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
       const mopts=AP.NPC_MALE_FACIALS.map((o,k)=>`<option value="${k}" ${k===(npcMaleState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
       const otopts=AP.NPC_TACTICAL_OPTICS.map((o,k)=>`<option value="${k}" ${k===(npcOpticState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const pops=AP.NPC_POSES.map((o,k)=>`<option value="${k}" ${k===(npcPoseState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const cops=AP.NPC_HAIR_COLORS.map((o,k)=>`<option value="${k}" ${k===(npcColorState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
+      const sops=AP.NPC_HAIR_STYLES.map((o,k)=>`<option value="${k}" ${k===(npcStyleState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
       const aug=npcAugState[i]||"";
       const pool=AP.npcRevealOutfitPool(a.id);
       const oopts=pool.map((o,k)=>`<option value="${k}" ${k===(npcOutfitState[a.id]||0)?"selected":""}>${esc(o.name)}</option>`).join("");
@@ -563,15 +569,25 @@
         <td style="font-size:12px">${esc(a.look)}</td>
         <td><textarea data-coll="prompts.npcArchetypes" data-idx="${i}" data-key="accent" data-kind="text" rows="4">${esc(a.accent)}</textarea></td>
         <td><select data-variant="${i}">${vopts}</select>
+            <div style="margin:4px 0 2px"><button class="btn sm" data-row-random="${i}" title="一键随机本原型当前变体下的全部生成期配置（挑染/发色/发型/战术目镜/姿势神态/男性特征/清凉服装）；不改变体与义体、不写盘">🎲 本行全随机</button></div>
             <span class="legend" id="npchint_${i}" style="display:none;color:#9aa5b1">清凉版仅对 V1 生效</span>
             <span class="legend" style="display:block;margin:3px 0 1px">挑染（发色高光）</span>
             <select data-hair="${i}">${hopts}</select>
             <button class="btn sm ghost" data-hair-rand="${i}" title="随机挑一款发色高光">🎲 随机</button>
+            <span class="legend" style="display:block;margin:6px 0 1px">发色（覆盖变体自带，所有变体）</span>
+            <select data-color="${i}">${cops}</select>
+            <button class="btn sm ghost" data-color-rand="${i}" title="随机抽一款发色覆盖变体自带发色（所有变体通用）">🎲 随机</button>
+            <span class="legend" style="display:block;margin:6px 0 1px">发型（覆盖变体自带，所有变体）</span>
+            <select data-style="${i}">${sops}</select>
+            <button class="btn sm ghost" data-style-rand="${i}" title="随机抽一款发型覆盖变体自带发型（所有变体通用）">🎲 随机</button>
             <span id="npcoptic_${i}" style="display:block">
-              <span class="legend" style="display:block;margin:3px 0 1px">战术目镜（所有变体）</span>
+              <span class="legend" style="display:block;margin:6px 0 1px">战术目镜（所有变体）</span>
               <select data-optic="${i}">${otopts}</select>
               <button class="btn sm ghost" data-optic-rand="${i}" title="随机抽一款战术目镜（所有变体通用）">🎲 随机</button>
             </span>
+            <span class="legend" style="display:block;margin:6px 0 1px">姿势神态（所有变体）</span>
+            <select data-pose="${i}">${pops}</select>
+            <button class="btn sm ghost" data-pose-rand="${i}" title="随机抽一款姿势神态（所有变体通用）">🎲 随机</button>
             <span id="npcmale_${i}" style="display:${isMale(v0)?'block':'none'}">
               <span class="legend" style="display:block;margin:3px 0 1px">男性特征（墨镜/光头）</span>
               <select data-male="${i}">${mopts}</select>
@@ -657,6 +673,54 @@
       npcHairState[a.id]=r;
       updateNpcRow(i, vOf(i), npcAugState[i]||"");
     }));
+    body.querySelectorAll('select[data-color]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.color, a=model.prompts.npcArchetypes[i];
+      npcColorState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-color-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.colorRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_HAIR_COLORS;
+      if(p.length<=1) return;
+      // 随机抽一款发色（排除「无」，让随机总是给到一个明确发色）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-color="${i}"]`);
+      if(sel) sel.value=r;
+      npcColorState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-style]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.style, a=model.prompts.npcArchetypes[i];
+      npcStyleState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-style-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.styleRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_HAIR_STYLES;
+      if(p.length<=1) return;
+      // 随机抽一款发型（排除「无」，让随机总是给到一个明确发型）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-style="${i}"]`);
+      if(sel) sel.value=r;
+      npcStyleState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('select[data-pose]').forEach(sel=>sel.addEventListener("change",()=>{
+      const i=+sel.dataset.pose, a=model.prompts.npcArchetypes[i];
+      npcPoseState[a.id]=+sel.value;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    body.querySelectorAll('button[data-pose-rand]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.poseRand, a=model.prompts.npcArchetypes[i];
+      const p=AP.NPC_POSES;
+      if(p.length<=1) return;
+      // 随机抽一款姿势神态（排除「无」，让随机总是给到一个明确姿势）
+      const r=1+Math.floor(Math.random()*(p.length-1));
+      const sel=body.querySelector(`select[data-pose="${i}"]`);
+      if(sel) sel.value=r;
+      npcPoseState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
     body.querySelectorAll('select[data-optic]').forEach(sel=>sel.addEventListener("change",()=>{
       const i=+sel.dataset.optic, a=model.prompts.npcArchetypes[i];
       npcOpticState[a.id]=+sel.value;
@@ -687,6 +751,26 @@
       const sel=body.querySelector(`select[data-male="${i}"]`);
       if(sel) sel.value=r;
       npcMaleState[a.id]=r;
+      updateNpcRow(i, vOf(i), npcAugState[i]||"");
+    }));
+    // —— 行级「本行全随机」：只抽当前原型当前变体下的 7 组生成期修饰（不动变体/义体，不写盘）——
+    body.querySelectorAll('button[data-row-random]').forEach(btn=>btn.addEventListener("click",()=>{
+      const i=+btn.dataset.rowRandom, a=model.prompts.npcArchetypes[i];
+      // 除清凉服装池外，其余池的索引 0 都是「无」，随机必须跳过
+      const setRand=(attr,state,pool,skipNone)=>{
+        if(!pool || pool.length<=1) return;
+        const r=skipNone ? (1+Math.floor(Math.random()*(pool.length-1))) : Math.floor(Math.random()*pool.length);
+        state[a.id]=r;
+        const sel=body.querySelector(`select[data-${attr}="${i}"]`);
+        if(sel) sel.value=String(r);
+      };
+      setRand("hair",   npcHairState,   AP.NPC_HAIR_HIGHLIGHTS,        true);
+      setRand("color",  npcColorState,  AP.NPC_HAIR_COLORS,            true);
+      setRand("style",  npcStyleState,  AP.NPC_HAIR_STYLES,            true);
+      setRand("optic",  npcOpticState,  AP.NPC_TACTICAL_OPTICS,        true);
+      setRand("pose",   npcPoseState,   AP.NPC_POSES,                  true);
+      setRand("male",   npcMaleState,   AP.NPC_MALE_FACIALS,           true);
+      setRand("outfit", npcOutfitState, AP.npcRevealOutfitPool(a.id),  false);
       updateNpcRow(i, vOf(i), npcAugState[i]||"");
     }));
     refreshNpcCounts();

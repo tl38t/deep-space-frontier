@@ -30,48 +30,48 @@
     {
       id: "angel", name: "苍穹劫团", color: "#5ad1a0", tier: "major",
       blurb: "游走星区边缘的劫掠者集群，乐见佣兵团壮大以分一杯羹。",
-      contact: { name: "隼眼·凯", title: "前线军需谈判官", img: "assets/portraits/factions/nsk_fac_angel_contact.webp" },
+      contact: { name: "隼眼", title: "前线军需谈判官", img: "assets/portraits/factions/nsk_fac_angel_contact.webp" },
     },
     {
       id: "blood", name: "赤誓教团", color: "#e879a8", tier: "major",
       blurb: "军事化狂信守备，只信任肯交付军备与矿材的佣兵。",
-      contact: { name: "赤誓·薇拉", title: "宣令官", img: "assets/portraits/factions/nsk_fac_blood_contact.webp" },
+      contact: { name: "瑟拉菲娜", title: "宣令官", img: "assets/portraits/factions/nsk_fac_blood_contact.webp" },
     },
     // ---- 中小型委托势力（tier minor）----
     {
       id: "mining_guild", name: "边陲矿业公会", color: "#b5793f", tier: "minor", scale: "中型",
       blurb: "务实蓝领工会，讲批量不讲情面；矿石与矿材的最大买家。",
-      contact: { name: "凿岩·戈登", title: "工头", img: "assets/portraits/factions/nsk_fac_mining_guild_contact.webp" },
+      contact: { name: "戈登·黑尔", title: "工头", img: "assets/portraits/factions/nsk_fac_mining_guild_contact.webp" },
       bias: { ore: 4, mineral: 3, component: 0.5, blueprint: 0.3, gas: 0.5 }, dispatchChance: 0.25,
     },
     {
       id: "salvage_union", name: "拾荒者联合体", color: "#c9772e", tier: "minor", scale: "中型",
       blurb: "残骸回收老炮，什么都收；部件与打捞物资的主要去向。",
-      contact: { name: "废铁·玛拉", title: "首席回收官", img: "assets/portraits/factions/nsk_fac_salvage_union_contact.webp" },
+      contact: { name: "锈手玛拉", title: "首席回收官", img: "assets/portraits/factions/nsk_fac_salvage_union_contact.webp" },
       bias: { ore: 1, mineral: 1, component: 3, blueprint: 0.5, gas: 0.5 }, dispatchChance: 0.3,
     },
     {
       id: "lone_star", name: "孤星商社", color: "#d8c07a", tier: "minor", scale: "中型",
       blurb: "精明独立商队，价高者得；要部件、气体与稀缺贸易品。",
-      contact: { name: "金秤·洛", title: "商队总管", img: "assets/portraits/factions/nsk_fac_lone_star_contact.webp" },
+      contact: { name: "佩林·洛克", title: "商队总管", img: "assets/portraits/factions/nsk_fac_lone_star_contact.webp" },
       bias: { ore: 0.5, mineral: 1, component: 2.5, blueprint: 1, gas: 2 }, dispatchChance: 0.3,
     },
     {
       id: "abyssal_inst", name: "深空研究院", color: "#9b8fd0", tier: "minor", scale: "中型",
       blurb: "冷峻科研机构，为样本与数据付星币；气体与图纸的大主顾。",
-      contact: { name: "静析·伊", title: "首席研究员", img: "assets/portraits/factions/nsk_fac_abyssal_inst_contact.webp" },
+      contact: { name: "伊-04", title: "首席研究员", img: "assets/portraits/factions/nsk_fac_abyssal_inst_contact.webp" },
       bias: { ore: 0.3, mineral: 0.5, component: 1, blueprint: 1.5, gas: 4 }, dispatchChance: 0.25,
     },
     {
       id: "bounty_league", name: "悬赏者同盟", color: "#b02a1f", tier: "minor", scale: "小型",
       blurb: "赏金猎人网络，专接脏活；突发派遣任务远多于缴纳。",
-      contact: { name: "血契·雷", title: "赏金经纪", img: "assets/portraits/factions/nsk_fac_bounty_league_contact.webp" },
+      contact: { name: "雷蒙德·万斯", title: "赏金经纪", img: "assets/portraits/factions/nsk_fac_bounty_league_contact.webp" },
       dispatchChance: 0.65,
     },
     {
       id: "settlers", name: "拓殖议会", color: "#b5c46a", tier: "minor", scale: "小型",
       blurb: "边境殖民镇议会，求生优先；需要补给、部件与人力。",
-      contact: { name: "新禾·安", title: "镇长", img: "assets/portraits/factions/nsk_fac_settlers_contact.webp" },
+      contact: { name: "安禾", title: "镇长", img: "assets/portraits/factions/nsk_fac_settlers_contact.webp" },
       bias: { ore: 1, mineral: 1, component: 2, blueprint: 0.3, gas: 0.5 }, dispatchChance: 0.2,
     },
     // ---- 联邦拓殖公社（序章新增背景势力；玩家继承的家族关系使其初始关系值极高）----

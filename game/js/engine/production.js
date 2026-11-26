@@ -48,10 +48,11 @@
   }
   function spend(res, cost) { for (const k in cost) res[k] = Math.max(0, (res[k] || 0) - cost[k]); }
   function gain(res, out, qty) { res[out] = (res[out] || 0) + qty; }
-  // 总装船坞（manufacture）槽位由「部件制造队列」+「造船队列」+「强化队列」共享
+  // 总装船坞（manufacture）槽位由「部件制造队列」+「造船队列」+「强化队列」+「舱段建造队列」共享
   function manufactureUsed(state) {
     const ind = state.base.industry;
-    return (ind.manufactureQueue || []).length + (ind.buildQueue || []).length + (ind.enhanceQueue || []).length;
+    return (ind.manufactureQueue || []).length + (ind.buildQueue || []).length
+      + (ind.enhanceQueue || []).length + (ind.moduleQueue || []).length;
   }
 
   // 入队：检查槽位 + 原料，扣原料，写队列项
@@ -116,6 +117,24 @@
       recipeId: recipeId, dur: r.dur * durationMult, out: r.out, qty: r.qty, outType: "res",
       in: inCost,
       startedAt: Date.now(), repeat: repeat, done: 0,
+    });
+    return { ok: true };
+  }
+
+  // 燃料制造（2026-11-26）：与部件/造船/舱段共用总装船坞槽位，但产出走 Base.setFuel 进唯一燃料池，
+  // 不再写 state.res.fuel。配方取 1 代 fuel_t1/t2/t3 真值（data/recipes.js FUEL），
+  // 故此处不套用部件的 Blueprint ME / 舰船材料折扣（1 代燃料单元也无这两项）。
+  function enqueueFuel(state, recipeId, repeat) {
+    const r = ((Data.Recipes && Data.Recipes.FUEL) || []).find(x => x.id === recipeId);
+    if (!r) return { ok: false, err: "配方不存在" };
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
+    if (!r.in || !canAfford(state.res, r.in)) return { ok: false, err: "原料不足" };
+    spend(state.res, r.in);   // 入队即扣第 1 批（与既有队列同口径）
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
+    state.base.industry.manufactureQueue.push({
+      recipeId: recipeId, dur: r.dur * durationMult, out: "fuel", qty: r.qty, outType: "fuel",
+      in: r.in, startedAt: Date.now(), repeat: repeat || 1, done: 0,
     });
     return { ok: true };
   }
@@ -248,6 +267,12 @@
         } else if (it.outType === "equipment") {
           state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
           log.push({ out: it.out, qty: outQty, outType: "equipment" });
+        } else if (it.outType === "fuel") {
+          // 燃料进唯一池；无容量上限，产出全量入池（原料已在入队/续批时扣除）。
+          const before = (state.base && state.base.fuel) || 0;
+          if (Base && Base.setFuel) Base.setFuel(state, before + outQty);
+          else gain(state.res, it.out, outQty);   // Node 探针无 Base 时的兜底
+          log.push({ out: it.out, qty: Math.max(0, ((state.base && state.base.fuel) || 0) - before), outType: "fuel" });
         } else {
           gain(state.res, it.out, outQty);
           log.push({ out: it.out, qty: outQty });
@@ -302,6 +327,72 @@
     const q = state.base.industry.buildQueue || (state.base.industry.buildQueue = []);
     q.push({ shipId: shipId, dur: ship.buildTime * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, ship: ship };
+  }
+
+  // ---- 舱段建造队列（2026-11-25：从「右栏即时建造」改为走总装船坞队列，与造船同管线）----
+  // 与造船共用 manufacture 槽位、共用入队时的特化格/成套组合耗时乘区，完成入 state.base.modules.owned。
+  // 同类上限校验要把「已拥有 + 队列中同类型未完成」一起算，否则连续入队会绕开 MODULE_INSTANCE_CAP。
+  function enqueueModule(state, type, repeat) {
+    const Ship = Data.Ships;
+    const def = Ship.baseModuleByType(type);
+    if (!def) return { ok: false, err: "未知舱段类型" };
+    const cost = Ship.moduleBuildCost(type);
+    if (!cost) return { ok: false, err: "该舱段不可建造" };
+    const owned = (state.base.modules.owned || []).filter(m => m.type === type).length;
+    const ind = state.base.industry;
+    const queued = (ind.moduleQueue || []).reduce((n, it) => n + (it.moduleType === type ? Math.max(0, (it.repeat || 1) - (it.done || 0)) : 0), 0);
+    const cap = Ship.MODULE_INSTANCE_CAP;
+    if (owned + queued >= cap) return { ok: false, err: "同类舱段已达上限 " + cap + "（含队列中）" };
+    const plan = Ship.bodyLevelPlan(state.base.bodyLevel);
+    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
+    const n = Math.max(1, Math.min(repeat || 1, cap - owned - queued));
+    const shipCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, cost, "ship") : cost;
+    if (!canAfford(state.res, shipCost)) return { ok: false, err: "材料不足" };
+    // 批量只扣一次料的老问题在造船队列也存在；这里按 n 倍扣，保证「买 N 个」真的扣 N 份。
+    const total = {};
+    for (const k in shipCost) total[k] = shipCost[k] * n;
+    if (!canAfford(state.res, total)) return { ok: false, err: "材料不足（批量）" };
+    spend(state.res, total);
+    const dur = Ship.moduleBuildTime(type) * (Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1);
+    const q = ind.moduleQueue || (ind.moduleQueue = []);
+    q.push({ moduleType: type, dur: dur, startedAt: Date.now(), repeat: n, done: 0 });
+    return { ok: true, module: def, count: n };
+  }
+
+  // 结算舱段队列：并行槽位、逐项复利式推进，与造船共享制造乘区（电网 / 增强剂 / 精通 / 特化格已烘入 dur）。
+  function processModuleQueue(state, now) {
+    const pm = (Base && Base.powerMult) ? Base.powerMult(state) : 1;
+    const M = _Mastery();
+    const mm = (M && M.industryTimeMult) ? M.industryTimeMult(state) : 1;
+    const Tech = _Tech();
+    const techManu = (Tech && Tech.manuSpeedFactor) ? Tech.manuSpeedFactor(state) : 1;
+    const q = state.base.industry.moduleQueue || (state.base.industry.moduleQueue = []);
+    const log = [];
+    let guard = 0;
+    const alive = [];
+    for (const it of q) {
+      const effDur = it.dur / pm * mm * techManu;
+      while (guard < MAX_BATCHES) {
+        if ((now - it.startedAt) / 1000 < effDur) break;
+        const r = (Base && Base.finishModuleBuild) ? Base.finishModuleBuild(state, it.moduleType) : { ok: false };
+        if (!r.ok) break;   // 异形项（类型已删）丢弃，不阻塞后续槽位
+        const def = Data.Ships.baseModuleByType(it.moduleType);
+        log.push({ moduleType: it.moduleType, name: def ? def.name : it.moduleType });
+        it.done += 1;
+        it.startedAt += Math.round(effDur * 1000);
+        // 驻舱工头制造经验：与造船同口径，真产出才涨。
+        const Sx = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Settle : null;
+        if (Sx && Sx.grantBatchXp && Base && Base.stationWorker) {
+          const w = Base.stationWorker(state, "build");
+          if (w) Sx.grantBatchXp(state, w.member, w.skill, (def ? Data.Ships.moduleBuildTime(it.moduleType) : 45) * 0.35);
+        }
+        if (it.done >= (it.repeat || 1)) break;
+        guard += 1;
+      }
+      if (it.done < (it.repeat || 1)) alive.push(it);
+    }
+    if (alive.length !== q.length) { q.length = 0; for (const it of alive) q.push(it); }
+    return log;
   }
 
   // ---- 装备制造（制造车间，独立 equip 队列；完成入 state.equipment 库存）----
@@ -586,6 +677,7 @@
     all.push(...processQueue(state, "invent", now, pm));
     all.push(...processQueue(state, "booster", now, pm));
     all.push(...processBuildQueue(state, now));
+    all.push(...processModuleQueue(state, now));
     all.push(...processEnhanceQueue(state, now));
     return all;
   }
@@ -598,5 +690,5 @@
     });
   }
 
-  return { enqueue, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processEnhanceQueue, buildShip, enhanceShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
+  return { enqueue, enqueueFuel, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processModuleQueue, processEnhanceQueue, buildShip, enqueueModule, enhanceShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
 });

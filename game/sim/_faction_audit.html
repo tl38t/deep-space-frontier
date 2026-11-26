@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AUDIT</title></head><body>
+<iframe id="f" src="../index.html" style="display:none"></iframe>
+<pre id="log">loading</pre>
+<script>
+var fr = document.getElementById('f');
+fr.onload = function () {
+  setTimeout(function () {
+    try {
+      var W = fr.contentWindow, N = W.NSK, out = {};
+      var F = N.Data.Factions;
+      out.factions = F.FACTIONS.map(function (x) {
+        return { id: x.id, name: x.name, tier: x.tier, questGiver: x.questGiver,
+                 bias: x.bias || null,
+                 dispatchChance: x.dispatchChance === undefined ? 0.34 : x.dispatchChance };
+      });
+      var eqs = N.Data.Equipment.all().filter(function (e) { return e.requiresBlueprint; });
+      out.eqTotal = eqs.length;
+      out.byFaction = {};
+      eqs.forEach(function (e) {
+        var k = e.faction || '(none)';
+        if (!out.byFaction[k]) out.byFaction[k] = [];
+        out.byFaction[k].push({ id: e.id, name: e.name, cat: e.cat || '?', level: e.level,
+                                slot: e.slot, rel: e.requiresRel || null });
+      });
+      out.factionEqCount = Object.keys(out.byFaction).reduce(function (a, k) { a[k] = out.byFaction[k].length; return a; }, {});
+      out.catByFaction = Object.keys(out.byFaction).reduce(function (a, k) {
+        var c = {}; out.byFaction[k].forEach(function (e) { c[e.cat] = (c[e.cat] || 0) + 1; }); a[k] = c; return a;
+      }, {});
+      out.relMatrix = Object.keys(out.byFaction).reduce(function (a, k) {
+        var c = {}; out.byFaction[k].forEach(function (e) {
+          var key = e.rel ? Object.keys(e.rel).map(function (q) { return q + ':' + e.rel[q]; }).join(',') : '(none)';
+          c[key] = (c[key] || 0) + 1;
+        }); a[k] = c; return a;
+      }, {});
+      var S = N.Data.Ships;
+      out.shipExports = Object.keys(S);
+      var hulls = S.BASE_HULLS || S.HULLS || [];
+      out.hullCount = hulls.length;
+      out.hulls = hulls.map(function (h) {
+        return { id: h.id, name: h.name, faction: h.factionId, rel: h.relationReq,
+                 body: h.bodyLevelReq, cost: h.blueprintCost,
+                 specialQueue: h.specialSlot && h.specialSlot.queue };
+      });
+      var BR = (typeof W.BOOSTER_RECIPES !== 'undefined' && W.BOOSTER_RECIPES) ? W.BOOSTER_RECIPES : [];
+      out.boosterRecipes = BR.length;
+      out.boosterWithBp = BR.filter(function (r) { return r.requiresBlueprint; })
+                            .map(function (r) { return { id: r.id, name: r.name, slot: r.slot }; });
+      out.boosterWithBpCount = out.boosterWithBp.length;
+      out.repDesc = N.Data.Resources.meta ? (N.Data.Resources.meta('rep') || {}).desc : null;
+      document.getElementById('log').textContent = JSON.stringify(out, null, 1);
+      document.title = 'AUDIT OK';
+    } catch (e) {
+      document.getElementById('log').textContent = 'ERR ' + (e && e.message) + '\n' + (e && e.stack);
+      document.title = 'AUDIT ERR';
+    }
+  }, 1500);
+};
+</script></body></html>

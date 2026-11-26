@@ -1,4 +1,9 @@
 window.NSK_NPC_MANIFEST = {
+  "abyss_acolyte/reveal": [
+    "abyss_acolyte/abyss_acolyte_reveal.webp",
+    "abyss_acolyte/abyss_acolyte_reveal_2.webp",
+    "abyss_acolyte/abyss_acolyte_reveal_3.webp"
+  ],
   "actress/reveal": [
     "actress/actress_reveal.webp",
     "actress/actress_reveal_2.webp",
@@ -27,6 +32,9 @@ window.NSK_NPC_MANIFEST = {
     "belt_nomad/belt_nomad_v4.webp",
     "belt_nomad/belt_nomad_v4_2.webp",
     "belt_nomad/belt_nomad_v4_3.webp"
+  ],
+  "bounty_foundling/v1": [
+    "bounty_foundling/bounty_foundling_v1.webp"
   ],
   "corp_heir/reveal": [
     "corp_heir/corp_heir_reveal.webp",
@@ -74,11 +82,48 @@ window.NSK_NPC_MANIFEST = {
   "frontier/v1": [
     "frontier/frontier_v1.webp"
   ],
+  "gas_drifter/reveal": [
+    "gas_drifter/gas_drifter_reveal.webp",
+    "gas_drifter/gas_drifter_reveal_2.webp",
+    "gas_drifter/gas_drifter_reveal_3.webp",
+    "gas_drifter/gas_drifter_reveal_4.webp",
+    "gas_drifter/gas_drifter_reveal_5.webp",
+    "gas_drifter/gas_drifter_reveal_6.webp"
+  ],
+  "gas_drifter/reveal_limb": [
+    "gas_drifter/gas_drifter_reveal_limb.webp",
+    "gas_drifter/gas_drifter_reveal_limb_2.webp"
+  ],
+  "gas_drifter/v2": [
+    "gas_drifter/gas_drifter_v2.webp",
+    "gas_drifter/gas_drifter_v2_2.webp"
+  ],
+  "gas_drifter/v2_eye": [
+    "gas_drifter/gas_drifter_v2_eye.webp"
+  ],
+  "gas_drifter/v2_limb": [
+    "gas_drifter/gas_drifter_v2_limb.webp"
+  ],
+  "gas_drifter/v4": [
+    "gas_drifter/gas_drifter_v4.webp",
+    "gas_drifter/gas_drifter_v4_2.webp"
+  ],
+  "gas_drifter/v4_eye": [
+    "gas_drifter/gas_drifter_v4_eye.webp",
+    "gas_drifter/gas_drifter_v4_eye_2.webp"
+  ],
+  "gas_drifter/v4_limb": [
+    "gas_drifter/gas_drifter_v4_limb.webp",
+    "gas_drifter/gas_drifter_v4_limb_2.webp"
+  ],
   "merc_veteran/v1": [
     "merc_veteran/merc_veteran_v1.webp"
   ],
   "noble/reveal": [
     "noble/noble_reveal.webp"
+  ],
+  "noble/v1": [
+    "noble/noble_v1.webp"
   ],
   "orphan_void/reveal": [
     "orphan_void/orphan_void_reveal.webp",
@@ -121,6 +166,18 @@ window.NSK_NPC_MANIFEST = {
   ],
   "relic_kid/v1": [
     "relic_kid/relic_kid_v1.webp"
+  ],
+  "salvage_waif/reveal": [
+    "salvage_waif/salvage_waif_reveal.webp"
+  ],
+  "salvage_waif/v1": [
+    "salvage_waif/salvage_waif_v1.webp"
+  ],
+  "salvage_waif/v2": [
+    "salvage_waif/salvage_waif_v2.webp"
+  ],
+  "salvage_waif/v4": [
+    "salvage_waif/salvage_waif_v4.webp"
   ],
   "signal_orphan/v1": [
     "signal_orphan/signal_orphan_v1.webp"
@@ -228,5 +285,8 @@ window.NSK_NPC_MANIFEST = {
   "station_rat/v4_limb": [
     "station_rat/station_rat_v4_limb.webp",
     "station_rat/station_rat_v4_limb_2.webp"
+  ],
+  "turret_child/v1": [
+    "turret_child/turret_child_v1.webp"
   ]
 };

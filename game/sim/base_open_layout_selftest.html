@@ -37,9 +37,8 @@ function hookErrors(){ ERRS=[]; try{ W().addEventListener("error",e=>ERRS.push(S
   ok("U1 甲板渲染全部可用格（>9 含空格）", cells.length>9, "cells="+cells.length);
   ok("U2 存在空格卡", qa(".base-layout .base-module.empty").length>0, "empty="+qa(".base-layout .base-module.empty").length);
   ok("U3 存在特化格标记 ✦", qa(".base-layout .base-module.special").length===1, "special="+qa(".base-layout .base-module.special").length);
-  ok("U4 舱段库含建造面板", !!q(".mod-stock .base-build-panel"));
-  const buildBtns=qa('.mod-stock [data-act^="moduleBuild:"]');
-  ok("U5 每类舱段有建造按钮（9 类）", buildBtns.length===9, "btns="+buildBtns.length);
+  ok("U4 舱段库含船坞制造引导（建造入口已移出右栏）", /总装船坞/.test(q(".mod-stock .bs-build-hint")?.textContent||""));
+  ok("U5 右栏已无即时建造按钮", qa('.mod-stock [data-act^="moduleBuild:"]').length===0);
 
   // 打开核心面板看组合图鉴
   const core=q('[data-act="baseinfo:core"]'); if(core) core.click(); await wait(400);

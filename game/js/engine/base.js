@@ -110,6 +110,8 @@
     if (!Array.isArray(base.industry.equipQueue)) base.industry.equipQueue = [];
     // ② 舰船强化队列（总装船坞共享槽位）：旧档补空队列（不升版本、不迁移在制任务）
     if (!Array.isArray(base.industry.enhanceQueue)) base.industry.enhanceQueue = [];
+    // ③ 舱段建造队列（2026-11-25）：旧档补空队列，不迁移（旧即时建造无在制任务）
+    if (!Array.isArray(base.industry.moduleQueue)) base.industry.moduleQueue = [];
     // 增强剂状态迁移到 state.boosters（全局 16 槽 + 库存=state.res["booster:<id>"]），见 engine/booster.js。
     // 旧档残留的 base.boosters（整舱生效简化版数组）在此清掉，避免与新模型混淆。
     if (Array.isArray(base.boosters)) delete base.boosters;
@@ -321,6 +323,19 @@
     return { ok: true, module: inst, cost: cost };
   }
 
+  // 队列完成入库（2026-11-25：舱段建造改走总装队列，与造船同管线）。
+  // 与 buildModule 的区别：成本已在入队时扣除、同类上限已在入队时校验，这里只做入库，
+  // 避免「排队期间材料被挪作他用 / 上限被别的队列项抢先」导致完成时才失败。
+  function finishModuleBuild(state, type) {
+    const def = Ships.baseModuleByType(type);
+    if (!def) return { ok: false, err: "未知舱段类型" };
+    const owned = state.base.modules.owned.filter(m => m.type === type);
+    const n = owned.length + 1;
+    const inst = { id: "module_" + type + "_" + String(n).padStart(2, "0"), type: type };
+    state.base.modules.owned.push(inst);
+    return { ok: true, module: inst };
+  }
+
   function buyBlueprint(state, hullId) {
     const hull = Ships.baseHullById(hullId);
     if (!hull) return { ok: false, err: "母舰蓝图不存在" };
@@ -400,6 +415,21 @@
     const p = powerReport(state);
     if (p.ok) return 1;
     return Math.max(0.1, p.produced / Math.max(1, p.consumed));
+  }
+
+  // ===== 燃料池（2026-11-26：统一唯一真相源；无容量上限）=====
+  // base.fuel 是唯一权威（跃迁 / 战斗 / 考古都从这里扣）；res.fuel 仅作镜像保留，
+  // 供旧档、HUD 与外部读取兼容 —— 所有写入必须经 setFuel，避免两本账再次分叉。
+  // 燃料是可制造、可囤积的物资，不设容量墙；仅钳制非负，避免扣减产生负数。
+  function setFuel(state, value) {
+    if (!state || !state.base) return 0;
+    const v = Math.max(0, Number(value) || 0);
+    state.base.fuel = v;
+    if (state.res) state.res.fuel = v;
+    return v;
+  }
+  function grantFuel(state, amount) {
+    return setFuel(state, ((state && state.base && state.base.fuel) || 0) + (Number(amount) || 0));
   }
 
   // 升级唯一舰基核心（bodyLevel 0→3）。付 upgradeCost，递增并解锁能源预算 + 工业槽 + 高级舰种。
@@ -566,10 +596,10 @@
 
   return {
     normalize, hullOf, stateSlots, slotById, adjacentSlots, moduleAt, availableModules,
-    swapSlots, moveModule, resetSlotPos, hasCustomLayout, installModule, buildModule,
+    swapSlots, moveModule, resetSlotPos, hasCustomLayout, installModule, buildModule, finishModuleBuild,
     buyBlueprint, switchHull, uninstallModule, replaceModule, slotEffects,
     queueDurationMultiplier, comboXpMult, comboLogisticsMult, activeCombos, COMBOS, hullStatus,
-    energyBudget, energyUsed, powerReport, powerMult, upgradeCore,
+    energyBudget, energyUsed, powerReport, powerMult, setFuel, grantFuel, upgradeCore,
     stationedAt, stationedOfType, stationWorker, stationSpeedMult, memberSkillLv,
     QUEUE_MODULE, QUEUE_SKILL, UNMANNED_PENALTY,
   };

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>compartment audit</title></head><body>
+<iframe id="f" src="../index.html" style="display:none"></iframe>
+<pre id="log">loading…</pre>
+<script>
+function W(){ return document.getElementById('f').contentWindow; }
+function run(){
+  var out = {};
+  try {
+    var NSK = W().NSK, B = NSK.Engine.Base, S = NSK.Data.Ships, st = NSK.Core.Persistence.state;
+    out.stateVersion = NSK.Core.Persistence.STATE_VERSION || '(n/a)';
+    out.bodyLevel = st.base.bodyLevel;
+    out.hullId = st.base.hullId;
+    out.powerReport = B.powerReport(st);
+    out.powerMult = B.powerMult(st);
+    out.energyBudget = B.energyBudget(st);
+    out.energyUsed = B.energyUsed(st);
+    out.energyOutputPerGen = S.ENERGY_OUTPUT;
+    out.bodyLevels = S.BODY_LEVELS;
+    out.modules = Object.keys(S.BASE_MODULES).map(function(k){
+      var d = S.BASE_MODULES[k];
+      return { type:k, name:d.name, energy:d.energy };
+    });
+    out.hulls = S.BASE_HULLS.map(function(h){
+      return { id:h.id, name:h.name, relationReq:h.relationReq, bodyLevelReq:h.bodyLevelReq,
+               blueprintCost:h.blueprintCost, special: h.specialSlot ? h.specialSlot.id+'/'+h.specialSlot.queue+'/'+h.specialSlot.speedMult : null };
+    });
+    out.queueDurMult = { smelt:B.queueDurationMultiplier(st,'smelt'), manufacture:B.queueDurationMultiplier(st,'manufacture'),
+                         invent:B.queueDurationMultiplier(st,'invent'), booster:B.queueDurationMultiplier(st,'booster'),
+                         equip:B.queueDurationMultiplier(st,'equip') };
+    out.installedCount = st.base.modules.installed.length;
+    out.ownedCount = st.base.modules.owned.length;
+  } catch(e){ out.ERR = String(e && e.stack ? e.stack : e); }
+  var s = JSON.stringify(out, null, 1);
+  document.getElementById('log').textContent = s;
+  document.title = 'AUDIT_DONE';
+}
+document.getElementById('f').addEventListener('load', function(){ setTimeout(run, 1800); });
+</script></body></html>
