@@ -717,16 +717,36 @@
     const Pirates = Data.Pirates;
     const band = (raidR && raidR.band) || (raid && raid.band) || 1;
     const faction = (raidR && raidR.faction) || (raid && raid.faction);
-    const fleet = (Pirates && faction) ? Pirates.fleetFor(band, faction) : null;
+    // ★ 2026-11-27 P0：必须按「当前这一波」的 compId 取编队（每波抽签，各安等池不同）。
+    //   取默认编队会让面板显示的敌舰与实际交战对象不是同一批。
+    const curComp = (state.combatWavePlan && state.combatWavePlan[node.id] && state.combatWavePlan[node.id].compId) || null;
+    const fleet = (Pirates && faction) ? Pirates.fleetFor(band, faction, curComp) : null;
+    // ★ 2026-11-27 P1a：敌方血条读**逐敌真实血量**（state.combatEnemies），不再用进度百分比摊算。
+    //   长度与当前波编队不符（刚推进波/旧档）→ 退回旧进度口径，避免把上一波的残血画到新编队上。
+    const enArr = (state.combatEnemies && state.combatEnemies[node.id]) || null;
+    const enOk = Array.isArray(enArr) && fleet && enArr.length === fleet.ships.length;
+    // ★ 2026-11-27 P1b 索敌模式：门禁用轻量判定（只扫成员舰种，不跑装配扫描），
+    //   同一份 curMode 既喂给血量快照（高亮目标）也喂给下方按钮（选中态），两边绝不打架。
+    const tUnlocked = (Engine.Combat && Engine.Combat.targetUnlockedFor)
+      ? Engine.Combat.targetUnlockedFor(state, node.id) : false;
+    const curMode = (Engine.Combat && Engine.Combat.targetModeOf)
+      ? Engine.Combat.targetModeOf(state, node.id, tUnlocked) : "formation";
     const snap = (fleet && Engine.Combat && Engine.Combat.fleetSnapshot)
-      ? Engine.Combat.fleetSnapshot(fleet, bt.progress || 0) : null;
+      ? Engine.Combat.fleetSnapshot(fleet, enOk ? enArr : (bt.progress || 0), curMode) : null;
 
     let html = '<h3>战斗观测 · ' + esc(node.name) + '</h3><div class="battle-panel">';
 
-    const prep = (Engine.Combat && Engine.Combat.prepareNode) ? Engine.Combat.prepareNode(state, node.id) : null;
+    const prep = (Engine.Combat && Engine.Combat.prepareNode) ? Engine.Combat.prepareNode(state, node.id, curComp) : null;
+
+    const MAXW = (Engine.Combat && Engine.Combat.MAX_WAVE) || 20;
+    const curWave = Math.max(1, Math.min(MAXW, Math.round((state.combatWave && state.combatWave[node.id]) || 1)));
+    const clears = (state.combatClears && state.combatClears[node.id]) || 0;
+    const isBossP = curComp === "boss";
 
     html += '<div class="battle-head">'
-      + '<span class="tag good">第 ' + fmt(Math.round(bt.waves || 0)) + ' 波</span>'
+      + '<span class="tag ' + (isBossP ? 'bad' : 'good') + '">第 ' + curWave + ' / ' + MAXW + ' 波'
+      + (isBossP ? ' · BOSS' : '') + '</span>'
+      + (clears ? '<span class="tag warn">已肃清 ' + fmt(clears) + ' 轮</span>' : '')
       + (bt.waveSec && isFinite(bt.waveSec) ? '<span class="tag">一波 ' + (Math.round(bt.waveSec * 10) / 10) + ' 秒</span>' : '')
       + (bt.simmed ? '<span class="tag live">逐轮仿真</span>' : '<span class="tag">闭式结算</span>')
       + '<span class="dim">我方火力 ' + fmt(Math.round(bt.squadDps || 0)) + '/s'
@@ -737,6 +757,29 @@
       + (bt.dmgReduction ? '<span class="tag">减伤 ' + Math.round(bt.dmgReduction * 100) + '%</span>' : '')
       + (bt.repairPerSec ? '<span class="tag">维修 ' + (Math.round(bt.repairPerSec * 10) / 10) + '/s</span>' : '')
       + '</div>';
+
+    // ★ 2026-11-27 P1b 索敌模式（1 代 capital-combat.js CAPITAL_TARGETING_MODES）
+    //   门禁对回 1 代「只有旗舰才能设索敌」→ 本作映射为「队内最高 classTier >= 3（战列/旗舰档）」。
+    //   未解锁时不显示按钮列（只给一行说明），避免玩家点了没反应。
+    const TMODES = (Engine.Combat && Engine.Combat.TARGET_MODES) || [];
+    if (TMODES.length) {
+      html += '<div class="battle-target"><span class="dim">索敌</span>';
+      if (!tUnlocked) {
+        html += '<span class="tag">按编队顺序</span>'
+          + '<span class="dim">队内配有战列舰（旗舰档）后解锁：优先精英 / BOSS / 最高火力 / 最低生命</span>';
+      } else {
+        for (const tm of TMODES) {
+          html += '<button class="sm ' + (tm.id === curMode ? 'primary' : 'ghost')
+            + '" data-act="tgt:' + node.id + ':' + tm.id + '" title="' + esc(tm.desc) + '">'
+            + esc(tm.name) + '</button>';
+        }
+        if (prep && prep.repairSuppr > 0) {
+          html += '<span class="tag bad" title="BOSS 抑制我方维修">抑制维修 '
+            + Math.round(prep.repairSuppr * 100) + '%</span>';
+        }
+      }
+      html += '</div>';
+    }
 
     // 弹药状态：只列本场真正在消耗的弹种（某弹种打空 → 该型武器哑火；全空 → 整队撤退）
     if (prep && prep.weapons && prep.weapons.length) {
@@ -3374,6 +3417,14 @@
     else if (cmd === "raidRecall") {
       const r = Engine.Dispatch.recallGroup(state, a);
       toast(r.ok ? "已召回 " + r.recalled + " 人" : "此处无人");
+      renderView();
+    }
+    // ★ 2026-11-27 P1b 索敌模式：tgt:<nodeId>:<modeId>
+    else if (cmd === "tgt") {
+      const r = Engine.Combat.setTargetMode(state, a, b);
+      if (!r.ok) toast(r.reason === "locked"
+        ? "需队内配有一艘战列舰（旗舰档）才能设置索敌"
+        : "无效的索敌模式");
       renderView();
     }
     else if (cmd === "raidPick") {

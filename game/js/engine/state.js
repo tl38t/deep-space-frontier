@@ -69,6 +69,16 @@
       // prog：取消研究后保留的半截进度（0~1），研究完成即清除
       tech: { levels: {}, prog: {}, active: null },
       combatWaveHp: {},         // 剿匪进度：nodeId → 已打进当前编队的伤害（见 combat.js advance）
+      // ★ 2026-11-27 P0 波次系统（1 代 maxWave=20：一轮 19 普通波 + 第 20 波 boss，打穿后 wave=1 重开，永不停）
+      combatWave: {},           // nodeId → 1..20（当前第几波，循环值）
+      combatWavePlan: {},       // nodeId → { compId }（当前波的编队 id，波开始时抽一次，绝不每 tick 重抽）
+      combatClears: {},         // nodeId → 已肃清轮数（对应 1 代 zoneClears，无限累加）
+      // ★ 2026-11-27 P1a 逐敌实例（D1 = 路线 B）：nodeId → [{k:"n"|"e"|"b", hp:[盾,甲,构]}]
+      //   · 这是战斗敌方的唯一真相；旧 combatWaveHp（聚合累计伤害）已退役，仅在迁移时读取一次
+      combatEnemies: {},
+      // ★ 2026-11-27 P1b 索敌模式：nodeId → "formation"|"elite"|"boss"|"highest_damage"|"lowest_hp"|"highest_hp"
+      //   · "formation" 是默认值，**不写进存档**（保持干净）；未解锁时引擎强制回落 formation，不清存档
+      combatTargeting: {},
       combatFocus: null,        // 当前被玩家注视的战场节点（焦点走逐轮真仿真，其余走闭式）
       battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,waveSec,progress,squadDps,...}
       ships: [],               // {id, shipId, name, status:'idle'|'mission', nodeId}

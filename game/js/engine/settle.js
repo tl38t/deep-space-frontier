@@ -187,6 +187,17 @@
     return { ok: true, fuelCost: need };
   }
 
+  // ★ 2026-11-27 P0：清空某节点的「本场」战斗进度。
+  // 与 1 代一致：撤离/断弹后再进场，是从第 1 波重新开始（1 代 tryResumeCombatAfterRepair
+  // 也是回到「第 1 波继续累计清波」），不会接着上次的第 7 波打。
+  // ⚠️ combatClears（已肃清轮数）是历史战绩，**不清**。
+  function resetWaveOf(state, nodeId) {
+    if (state.combatWaveHp) delete state.combatWaveHp[nodeId];
+    if (state.combatWave) delete state.combatWave[nodeId];
+    if (state.combatWavePlan) delete state.combatWavePlan[nodeId];
+    if (state.combatEnemies) delete state.combatEnemies[nodeId];   // ★ P1a 逐敌状态
+  }
+
   // 战斗受击：把该节点本 tick 的敌方总伤害平摊给参战成员，按 shield→armor→structure 扣除。
   // 结构归零 → 舰体失去战力，撤出剿匪返港（不阵亡：人是活的，船进船坞修）。
   // 返港后 status="idle"，下一 tick 由 Repair.tick 自动拉进修复泊位（复用 1-E 队列）。
@@ -298,7 +309,7 @@
 
     // 0) 剿匪结算：每个「有参战成员」的据点结算一次。
     //    焦点节点（state.combatFocus）走逐轮真仿真，其余（含离线大 dt）走一次乘除闭式；
-    //    两条路共用 state.combatWaveHp（已打进当前编队的伤害），所以切页签不白打。
+    //    两条路共用 state.combatEnemies（逐敌血量，P1a 起），所以切页签不白打。
     const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
     const Raids = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Raids : null;
     state.combatWaveHp = state.combatWaveHp || {};
@@ -324,8 +335,11 @@
       for (const mm of state.members) memberById[mm.id] = mm;
       for (const nid in combatNodes) {
         const focus = (state.combatFocus === nid);
-        const r = Combat.advance(state, nid, dt, state.combatWaveHp[nid] || 0, focus);
-        state.combatWaveHp[nid] = r.waveHp;
+        // ★ 2026-11-27 P1a：敌方状态真相已改为 state.combatEnemies（逐敌血量）。
+        //   combatWaveHp 只作为**旧档一次性迁移源**传进去，advance 内部摊成逐敌血量后会自行删除。
+        const legacyHp = (state.combatWaveHp && state.combatWaveHp[nid]) || 0;
+        const r = Combat.advance(state, nid, dt, legacyHp, focus);
+        if (state.combatWaveHp && state.combatWaveHp[nid] !== undefined) delete state.combatWaveHp[nid];
         if (r.credits || r.rep) { state.res.credits += r.credits; state.res.rep += r.rep; }
         // 弹药扣除（按弹种；某弹种打空该型武器哑火，全部打空则整队撤退）
         if (r.ammoUsed) {
@@ -380,14 +394,15 @@
         b.hits = r.hits;
         b.misses = r.misses;
         if (r.allDry) {
-          delete state.combatWaveHp[nid];
+          resetWaveOf(state, nid);
           withdrawSquad(state, nid, "弹药耗尽，剿匪小队已撤离返港（保留已得战利品）。");
           delete state.battles[nid];
         }
       }
       // 战斗结束（节点已无参战成员）时清空该节点战报与余量，保证「本场」语义正确
-      for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; delete state.combatWaveHp[k]; } }
-      for (const k in state.combatWaveHp) { if (!combatNodes[k]) delete state.combatWaveHp[k]; }
+      for (const k in state.battles) { if (!combatNodes[k]) { delete state.battles[k]; resetWaveOf(state, k); } }
+      for (const k in state.combatWaveHp) { if (!combatNodes[k]) resetWaveOf(state, k); }
+      if (state.combatEnemies) for (const k in state.combatEnemies) { if (!combatNodes[k]) resetWaveOf(state, k); }
     }
 
     // 0.5) 科技研究推进（单线队列，绝对时间戳 endsAt，离线同样完成）

@@ -1891,6 +1891,10 @@ img.res-img { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align
 .battle-cleared { font-size: 10px; color: var(--dim); margin-top: 3px; }
 .battle-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(120,160,200,.16); font-size: 12px; flex-wrap: wrap; }
 .battle-ammo { display: flex; gap: 8px; flex-wrap: wrap; margin: -2px 0 10px; }
+/* P1b 索敌模式：一行小按钮，手机端自动换行 */
+.battle-target { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: -2px 0 10px; font-size: 11px; }
+.battle-target .dim { font-size: 11px; }
+.battle-target button.sm { padding: 2px 8px; font-size: 11px; }
 .ammo-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(120,160,200,.28); background: rgba(255,255,255,.03); color: var(--text); }
 .ammo-chip b { color: #8fd0ff; font-weight: 600; }
 .ammo-chip.empty { border-color: rgba(239,107,107,.55); background: rgba(239,107,107,.10); }

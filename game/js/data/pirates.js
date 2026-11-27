@@ -53,7 +53,20 @@
         2: { id: "raider_destroyer",  name: "苍穹劫团掠袭驱逐舰",   level: 25, kind: "elite",  hp: { shield: 1200,  armor: 500,   structure: 300   }, hit: 150, dodge: 60, baseDamage: 141,  iskDrop: 1500 },
         3: { id: "war_cruiser",       name: "苍穹劫团战斗巡洋舰",   level: 45, kind: "elite",  hp: { shield: 4140,  armor: 1620,  structure: 900   }, hit: 180, dodge: 70, baseDamage: 465,  iskDrop: 3000 },
         4: { id: "marauder_battleship", name: "苍穹劫团掠袭战列舰", level: 65, kind: "elite",  hp: { shield: 12420, armor: 4860,  structure: 2700  }, hit: 210, dodge: 60, baseDamage: 1395, iskDrop: 6000 },
-        5: { id: "frontier_commander", name: "苍穹劫团边疆指挥舰",  level: 82, kind: "elite",  hp: { shield: 37500, armor: 15000, structure: 9375  }, hit: 320, dodge: 68, baseDamage: 1800, iskDrop: 12000 },
+        // ★ P1b：auraDamage 是 1 代原值（data/combat.js 该条目带 auraDamage:1.3）。
+        //   在场时其余敌舰伤害 ×1.3（自身不吃）。P0 搬数据时漏了这一字段，P1b 补。
+        5: { id: "frontier_commander", name: "苍穹劫团边疆指挥舰",  level: 82, kind: "elite",  hp: { shield: 37500, armor: 15000, structure: 9375  }, hit: 320, dodge: 68, baseDamage: 1800, auraDamage: 1.3, iskDrop: 12000 },
+      },
+      // ★ 2026-11-27 P0：boss 档（1 代 ENEMY_DATABASE 逐值照搬）。第 20 波强制出现，不参与抽签。
+      //   对照 1 代据点→boss：lv1 高安=commander(lv20) / lv20 边境=hunter_commander(lv30) /
+      //   lv40 低安=fleet_commander(lv50) / lv60 深空=war_master(lv70) / lv80 0.0=outer_reach_overseer(lv90)。
+      //   ⚠️ 三势力的三防分布沿用 1 代原生设计：苍穹护盾厚 / 赤誓装甲厚 / 静默结构厚。
+      boss: {
+        1: { id: "commander",            name: "苍穹劫团指挥官",     level: 20, kind: "boss", hp: { shield: 1853,  armor: 65,    structure: 32    }, hit: 160, dodge: 50, baseDamage: 96,   iskDrop: 4000  },
+        2: { id: "hunter_commander",     name: "苍穹劫团猎杀指挥官", level: 30, kind: "boss", hp: { shield: 4200,  armor: 200,   structure: 100   }, hit: 200, dodge: 70, baseDamage: 308,  iskDrop: 4000  },
+        3: { id: "fleet_commander",      name: "苍穹劫团舰队指挥官", level: 50, kind: "boss", hp: { shield: 14040, armor: 630,   structure: 270   }, hit: 235, dodge: 85, baseDamage: 990,  iskDrop: 8000  },
+        4: { id: "war_master",           name: "苍穹劫团战争主宰",   level: 70, kind: "boss", hp: { shield: 42120, armor: 1890,  structure: 810   }, hit: 270, dodge: 70, baseDamage: 2970, iskDrop: 16000 },
+        5: { id: "outer_reach_overseer", name: "苍穹劫团外环督军",   level: 90, kind: "boss", hp: { shield: 117000, armor: 5250, structure: 2250  }, hit: 400, dodge: 85, baseDamage: 5700, iskDrop: 32000 },
       },
     },
     blood: {
@@ -70,7 +83,14 @@
         2: { id: "blood_destroyer",   name: "赤誓教团鲜血驱逐舰",   level: 25, kind: "elite",  hp: { shield: 500,  armor: 1200,  structure: 300   }, hit: 160, dodge: 55, baseDamage: 123,  iskDrop: 1500 },
         3: { id: "sacrament_cruiser", name: "赤誓教团圣礼巡洋舰",   level: 45, kind: "elite",  hp: { shield: 1580, armor: 4037,  structure: 878   }, hit: 190, dodge: 65, baseDamage: 420,  iskDrop: 3000 },
         4: { id: "apostle_battleship", name: "赤誓教团使徒战列舰",  level: 65, kind: "elite",  hp: { shield: 4740, armor: 12111, structure: 2634  }, hit: 220, dodge: 55, baseDamage: 1260, iskDrop: 6000 },
-        5: { id: "covenant_commander", name: "赤誓教团圣约指挥舰",  level: 82, kind: "elite",  hp: { shield: 14625, armor: 36563, structure: 9141 }, hit: 330, dodge: 63, baseDamage: 1620, iskDrop: 12000 },
+        5: { id: "covenant_commander", name: "赤誓教团圣约指挥舰",  level: 82, kind: "elite",  hp: { shield: 14625, armor: 36563, structure: 9141 }, hit: 330, dodge: 63, baseDamage: 1620, auraDamage: 1.3, iskDrop: 12000 },
+      },
+      boss: {
+        1: { id: "cardinal",                name: "赤誓教团主教",       level: 20, kind: "boss", hp: { shield: 65,     armor: 1853,  structure: 32    }, hit: 170, dodge: 45, baseDamage: 96,   iskDrop: 4000  },
+        2: { id: "high_priest",             name: "赤誓教团大祭司",     level: 30, kind: "boss", hp: { shield: 200,    armor: 4200,  structure: 100   }, hit: 210, dodge: 65, baseDamage: 260,  iskDrop: 4000  },
+        3: { id: "blood_archon",            name: "赤誓教团鲜血执政官", level: 50, kind: "boss", hp: { shield: 614,    armor: 13689, structure: 263   }, hit: 245, dodge: 80, baseDamage: 840,  iskDrop: 8000  },
+        4: { id: "blood_sovereign",         name: "赤誓教团鲜血君王",   level: 70, kind: "boss", hp: { shield: 1842,   armor: 41067, structure: 789   }, hit: 280, dodge: 65, baseDamage: 2570, iskDrop: 16000 },
+        5: { id: "outer_reliquary_overseer", name: "赤誓教团外环圣主",  level: 90, kind: "boss", hp: { shield: 5119,   armor: 114075, structure: 2194 }, hit: 410, dodge: 80, baseDamage: 5130, iskDrop: 32000 },
       },
     },
     sansha: {
@@ -87,12 +107,22 @@
         2: { id: "sentinel_destroyer",      name: "静默集群哨戒驱逐舰", level: 25, kind: "elite",  hp: { shield: 500,   armor: 300,   structure: 1200  }, hit: 140, dodge: 65, baseDamage: 111,  iskDrop: 1500 },
         3: { id: "dominion_cruiser",        name: "静默集群统御巡洋舰", level: 45, kind: "elite",  hp: { shield: 1620,  armor: 900,   structure: 4140  }, hit: 170, dodge: 75, baseDamage: 375,  iskDrop: 3000 },
         4: { id: "domination_battleship",   name: "静默集群支配战列舰", level: 65, kind: "elite",  hp: { shield: 4860,  armor: 2700,  structure: 12420 }, hit: 200, dodge: 65, baseDamage: 1125, iskDrop: 6000 },
-        5: { id: "nexus_commander",         name: "静默集群枢纽指挥舰", level: 82, kind: "elite",  hp: { shield: 15000, armor: 9375,  structure: 37500 }, hit: 310, dodge: 73, baseDamage: 1440, iskDrop: 12000 },
+        5: { id: "nexus_commander",         name: "静默集群枢纽指挥舰", level: 82, kind: "elite",  hp: { shield: 15000, armor: 9375,  structure: 37500 }, hit: 310, dodge: 73, baseDamage: 1440, auraDamage: 1.3, iskDrop: 12000 },
+      },
+      boss: {
+        1: { id: "overlord",             name: "静默集群领主",     level: 20, kind: "boss", hp: { shield: 65,    armor: 32,    structure: 1853  }, hit: 150, dodge: 55, baseDamage: 96,   iskDrop: 4000  },
+        2: { id: "control_overlord",     name: "静默集群控制领主", level: 30, kind: "boss", hp: { shield: 200,   armor: 100,   structure: 4200  }, hit: 190, dodge: 75, baseDamage: 226,  iskDrop: 4000  },
+        3: { id: "nexus_overlord",       name: "静默集群枢纽领主", level: 50, kind: "boss", hp: { shield: 630,   armor: 270,   structure: 14040 }, hit: 225, dodge: 90, baseDamage: 801,  iskDrop: 8000  },
+        4: { id: "matrix_overlord",      name: "静默集群矩阵领主", level: 70, kind: "boss", hp: { shield: 1890,  armor: 810,   structure: 42120 }, hit: 260, dodge: 75, baseDamage: 2550, iskDrop: 16000 },
+        5: { id: "outer_array_overseer", name: "静默集群外环主脑", level: 90, kind: "boss", hp: { shield: 5250,  armor: 2250,  structure: 117000 }, hit: 390, dodge: 90, baseDamage: 4560, iskDrop: 32000 },
       },
     },
   };
 
-  // 编队构成：2 普通 + 1 精英（与战斗面板 3 张敌舰卡对应）
+  // 默认编队：2 普通 + 1 精英。
+  // ★ 2026-11-27 P0 起**只作为向后兼容默认值**（`fleetFor` 不传 compId 时使用），
+  //   真实战斗每波由 rollFormation 按 band 的池抽签（见 BAND_FORMATION_POOLS）。
+  //   保留它是为了让探针（sim/arch_probe.mjs:1248 断言 3 艘）与所有旧调用点行为完全不变。
   const BAND_COMPOSITION = {
     1: ["normal", "normal", "elite"],
     2: ["normal", "normal", "elite"],
@@ -100,6 +130,91 @@
     4: ["normal", "normal", "elite"],
     5: ["normal", "normal", "elite"],
   };
+
+  // ★ 2026-11-27 P0：band → 编队池（1 代 js/data/combat.js:95-131 的 COMBAT_FORMATION_POOLS 逐值照搬）
+  // ⚠️⚠️ **各安等的池不同** —— 这是 1 代的核心手感：越危险，精英编队占比越高。
+  //   含精英概率：band1 10% → band2 30% → band3 40% → band4 50% → band5 60%。
+  //   本作 band 与 1 代池的对应：
+  //     1 → highsec   (安等 1.0-0.8)
+  //     2 → bordersec (安等 0.7-0.5)
+  //     3 → lowsec    (安等 0.4-0.3)
+  //     4 → deepsec   (安等 0.2-0.1)
+  //     5 → nullsec   (安等 0.0 外环)
+  //   ⚠️ band5 用 nullsec **不是** deepnull：本作 SEC_BAND（data/raids.js:49）只有 5 档且 "0.0"→5，
+  //      band5 敌舰是 lv80/lv82，对应 1 代「0.0 外环」（data/combat.js:166-168，formationPool:"nullsec"）。
+  //      deepnull 对应 lv90 深层 / lv110 深渊，本作没有这两档敌舰，暂不接（将来加深层星域再启用）。
+  //   ⚠️ 1 代 getFactionEliteChanceBonus（负势力声望拉高精英率）**本作不接**：
+  //      本作只有单一 state.res.rep（settle.js:329），没有分势力声望，接了就是死机制。
+  const BAND_FORMATION_POOLS = {
+    1: [ { id: "2_normal",         normal: 2, elite: 0, chance: 0.45 },
+         { id: "3_normal",         normal: 3, elite: 0, chance: 0.45 },
+         { id: "2_normal_1_elite", normal: 2, elite: 1, chance: 0.08 },
+         { id: "3_normal_1_elite", normal: 3, elite: 1, chance: 0.02 } ],
+    2: [ { id: "2_normal",         normal: 2, elite: 0, chance: 0.30 },
+         { id: "3_normal",         normal: 3, elite: 0, chance: 0.40 },
+         { id: "2_normal_1_elite", normal: 2, elite: 1, chance: 0.20 },
+         { id: "3_normal_1_elite", normal: 3, elite: 1, chance: 0.10 } ],
+    3: [ { id: "2_normal",         normal: 2, elite: 0, chance: 0.25 },
+         { id: "3_normal",         normal: 3, elite: 0, chance: 0.35 },
+         { id: "2_normal_1_elite", normal: 2, elite: 1, chance: 0.25 },
+         { id: "3_normal_1_elite", normal: 3, elite: 1, chance: 0.15 } ],
+    4: [ { id: "2_normal",         normal: 2, elite: 0, chance: 0.20 },
+         { id: "3_normal",         normal: 3, elite: 0, chance: 0.30 },
+         { id: "2_normal_1_elite", normal: 2, elite: 1, chance: 0.30 },
+         { id: "3_normal_1_elite", normal: 3, elite: 1, chance: 0.20 } ],
+    5: [ { id: "2_normal",         normal: 2, elite: 0, chance: 0.15 },
+         { id: "3_normal",         normal: 3, elite: 0, chance: 0.25 },
+         { id: "2_normal_1_elite", normal: 2, elite: 1, chance: 0.35 },
+         { id: "3_normal_1_elite", normal: 3, elite: 1, chance: 0.25 } ],
+  };
+
+  // compId → 舰种序列。顺序沿用 1 代 buildCombatWave：先普通、后精英。
+  const COMP_KINDS = {
+    "2_normal":         ["normal", "normal"],
+    "3_normal":         ["normal", "normal", "normal"],
+    "2_normal_1_elite": ["normal", "normal", "elite"],
+    "3_normal_1_elite": ["normal", "normal", "normal", "elite"],
+  };
+
+  // BOSS 波 = 1 个 boss + bossEscortCount 个 normal 护航（1 代 combat.js:321）。
+  // 1 代仅「0.0 深层」lv90 据点 bossEscortCount=2，其余全为 1；
+  // 本作 band5 对应 1 代「0.0 外环」⇒ 1。
+  const BOSS_ESCORT = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
+
+  // 该 band 的一轮波数（一轮 = 19 普通波 + 1 boss 波，1 代 maxWave=20）
+  const MAX_WAVE = 20;
+
+  function compKinds(compId, band) {
+    if (compId === "boss") {
+      const n = BOSS_ESCORT[clampBand(band)] || 1;
+      const arr = ["boss"];
+      for (let i = 0; i < n; i++) arr.push("normal");
+      return arr;
+    }
+    return COMP_KINDS[compId] || BAND_COMPOSITION[clampBand(band)];
+  }
+
+  // 抽签：按该 band 池的权重掷一次。返回 { compId, normal, elite, boss }
+  // randomFn 可注入（探针钉桩用）；省略则 Math.random。
+  function rollFormation(band, randomFn) {
+    const b = clampBand(band);
+    const pool = BAND_FORMATION_POOLS[b] || BAND_FORMATION_POOLS[1];
+    const roll = (typeof randomFn === "function") ? randomFn : Math.random;
+    const v = roll();
+    let cum = 0;
+    for (let i = 0; i < pool.length; i++) {
+      cum += pool[i].chance;
+      if (v < cum) return { compId: pool[i].id, normal: pool[i].normal, elite: pool[i].elite, boss: 0 };
+    }
+    const last = pool[pool.length - 1];
+    return { compId: last.id, normal: last.normal, elite: last.elite, boss: 0 };
+  }
+
+  // BOSS 波固定编队（不抽签）
+  function bossFormation(band) {
+    const b = clampBand(band);
+    return { compId: "boss", normal: BOSS_ESCORT[b] || 1, elite: 0, boss: 1 };
+  }
 
   const BAND_TITLE = { 1: "游猎编队", 2: "劫掠编队", 3: "猎杀编队", 4: "深空战团", 5: "旗舰战团" };
 
@@ -114,20 +229,25 @@
     return SHIPS[faction] ? faction : "sansha";
   }
 
-  // 生成某档某势力的敌方编队（确定性：同 band + faction 恒等，便于存档/探针/UI）
-  // 返回 { band, faction, factionName, title, ships[], totalHp, dps, split, evasion }
+  // 生成某档某势力的敌方编队。
+  // ★ 2026-11-27 P0：新增第三参 compId（"2_normal" / "3_normal" / "2_normal_1_elite" /
+  //   "3_normal_1_elite" / "boss"）。**省略时退回 BAND_COMPOSITION 默认编队**，
+  //   保证原有 4 处调用点（combat.js:309、app.js:83/720、arch_probe.mjs:1521+）与探针断言零影响。
+  // 返回 { band, faction, factionName, title, compId, isBossWave, ships[], totalHp, dps, split, evasion, hpSum }
   //   dps      = 编队每轮总伤害（1 代 baseDamage 之和，未乘命中率；命中在我方结算侧算）
   //   split    = 三防在编队总血中的占比（克制判定用当前层，此字段仅供 UI/探针参考）
   //   evasion  = 按血量加权的编队闪避（命中率分母）
-  function fleetFor(band, faction) {
+  function fleetFor(band, faction, compId) {
     const b = clampBand(band);
     const fac = factionKey(faction);
     const db = SHIPS[fac];
-    const comp = BAND_COMPOSITION[b];
-    const seen = { normal: 0, elite: 0 };
+    const comp = compKinds(compId, b);
+    const seen = { normal: 0, elite: 0, boss: 0 };
+    const isBossWave = compId === "boss";
 
     const ships = comp.map(function (kind, i) {
-      const tpl = db[kind][b];
+      const tpl = db[kind] && db[kind][b];
+      if (!tpl) return null;                       // 数据缺失时跳过，不让整队崩掉
       const n = seen[kind]++;
       const maxHp = { shield: tpl.hp.shield, armor: tpl.hp.armor, structure: tpl.hp.structure };
       return {
@@ -145,7 +265,7 @@
         hp: { shield: maxHp.shield, armor: maxHp.armor, structure: maxHp.structure },
         total: totalOf(maxHp),
       };
-    });
+    }).filter(Boolean);   // 数据缺失时剔除，避免后面解引用 null
 
     let totalHp = 0, dps = 0, wDodge = 0;
     const sum = { shield: 0, armor: 0, structure: 0 };
@@ -166,6 +286,8 @@
       faction: fac,
       factionName: db.factionName,
       title: BAND_TITLE[b],
+      compId: compId || "default",
+      isBossWave: isBossWave,
       ships: ships,
       totalHp: totalHp,
       dps: dps,
@@ -184,9 +306,16 @@
     FACTION_NAME: { angel: "苍穹劫团", blood: "赤誓教团", sansha: "静默集群" },
     SHIPS: SHIPS,
     BAND_COMPOSITION: BAND_COMPOSITION,
+    BAND_FORMATION_POOLS: BAND_FORMATION_POOLS,   // ★ P0：band → 编队池（各安等不同）
+    COMP_KINDS: COMP_KINDS,
+    BOSS_ESCORT: BOSS_ESCORT,
+    MAX_WAVE: MAX_WAVE,
     KIND_CN: KIND_CN,
     clampBand: clampBand,
     factionKey: factionKey,
-    fleetFor: fleetFor,
+    compKinds: compKinds,
+    rollFormation: rollFormation,     // ★ P0：每波抽签
+    bossFormation: bossFormation,     // ★ P0：第 20 波固定 boss
+    fleetFor: fleetFor,               // ★ P0：第三参 compId
   };
 });

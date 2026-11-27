@@ -256,6 +256,66 @@
     if (s.combatFocus === undefined) s.combatFocus = null;
     if (s.combatCarry !== undefined) delete s.combatCarry;
 
+    // ★ 2026-11-27 P0 波次系统（幂等补字段，不升 STATE_VERSION）
+    //   · combatWave：钳到 [1,20]，脏档夹回而不是重置（保留玩家进度）
+    //   · combatWavePlan：只校验 compId 是否在合法集合内；非法/缺失一律删 key，
+    //     由 combat.js 在下次波开始时按该据点 band 重新抽签（不在读档里抽，读档必须纯幂等）
+    //   · combatClears：非负整数，缺失补 0
+    if (!s.combatWave || typeof s.combatWave !== "object") s.combatWave = {};
+    for (const nid in s.combatWave) {
+      let w = Math.round(Number(s.combatWave[nid]) || 1);
+      if (!isFinite(w)) w = 1;
+      s.combatWave[nid] = Math.min(20, Math.max(1, w));
+    }
+    const VALID_COMPS = { "2_normal": 1, "3_normal": 1, "2_normal_1_elite": 1, "3_normal_1_elite": 1, "boss": 1 };
+    if (!s.combatWavePlan || typeof s.combatWavePlan !== "object") s.combatWavePlan = {};
+    for (const nid in s.combatWavePlan) {
+      const p = s.combatWavePlan[nid];
+      if (!p || typeof p !== "object" || !VALID_COMPS[p.compId]) delete s.combatWavePlan[nid];
+    }
+    if (!s.combatClears || typeof s.combatClears !== "object") s.combatClears = {};
+    for (const nid in s.combatClears) {
+      let c = Math.floor(Number(s.combatClears[nid]) || 0);
+      if (!isFinite(c) || c < 0) c = 0;
+      s.combatClears[nid] = c;
+    }
+
+    // ★ 2026-11-27 P1a 逐敌实例（D1 = 路线 B，幂等补字段，不升 STATE_VERSION）
+    //   · combatEnemies：nodeId → [{k, hp:[盾,甲,构]}]，长度 1..6、hp 三项有限非负
+    //   · 结构非法整条删掉 → combat.js 下次按当前波编队满血重建（不在这里抽签/不碰 prepareNode）
+    //   · ⚠️ combatWaveHp 故意**保留不清**：它是旧档唯一进度来源，由 combat.js 首次 ensureEnemies
+    //     摊成逐敌血量后自行删除。在这里删会让老玩家的半截进度白丢。
+    if (!s.combatEnemies || typeof s.combatEnemies !== "object") s.combatEnemies = {};
+    for (const nid in s.combatEnemies) {
+      const arr = s.combatEnemies[nid];
+      let bad = !Array.isArray(arr) || arr.length < 1 || arr.length > 6;
+      if (!bad) {
+        for (const e of arr) {
+          if (!e || typeof e !== "object" || !Array.isArray(e.hp) || e.hp.length < 3) { bad = true; break; }
+          for (let i = 0; i < 3; i++) {
+            const v = Number(e.hp[i]);
+            if (!isFinite(v) || v < 0) { bad = true; break; }
+            e.hp[i] = v;
+          }
+          if (bad) break;
+          if (e.k !== "n" && e.k !== "e" && e.k !== "b") e.k = "n";
+        }
+      }
+      if (bad) delete s.combatEnemies[nid];
+    }
+
+    // ★ 2026-11-27 P1b 索敌模式（幂等补字段，不升 STATE_VERSION）
+    //   · 只认白名单六个 id；非法/未知一律删 key（回落 formation = 「按编队顺序」，1 代默认）
+    //   · "formation" 是默认值，落盘的也删掉，存档里只留非默认模式
+    //   · 不在这里判「有没有解锁」：解锁状态随编制变动，读档时必须纯幂等
+    if (!s.combatTargeting || typeof s.combatTargeting !== "object") s.combatTargeting = {};
+    const VALID_TARGET_MODES = {
+      elite: 1, boss: 1, highest_damage: 1, lowest_hp: 1, highest_hp: 1,
+    };
+    for (const nid in s.combatTargeting) {
+      if (!VALID_TARGET_MODES[s.combatTargeting[nid]]) delete s.combatTargeting[nid];
+    }
+
     return s;
   }
 
