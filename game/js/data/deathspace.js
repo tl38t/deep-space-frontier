@@ -22,11 +22,11 @@
   if (typeof window !== "undefined") {
     window.NSK = window.NSK || {};
     window.NSK.Data = window.NSK.Data || {};
-    window.NSK.Data.Deathspace = mod;
+    window.NSK.Data.DeathSpace = mod;
   } else if (root) {
     root.NSK = root.NSK || {};
     root.NSK.Data = root.NSK.Data || {};
-    root.NSK.Data.Deathspace = mod;
+    root.NSK.Data.DeathSpace = mod;
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
@@ -247,5 +247,37 @@
 
   function tickets() { return SITES.map(s => s.ticket); }
 
-  return { SITES, BY_ID, TIER_BAND, siteFor, tickets, byId: function (id) { return BY_ID[id] || null; } };
+  // ===== 探针掉落（2026-11-27 P6；1 代 data/combat.js:436-484 逐值照搬）=====
+  // 死亡空间掉「探针本体」，与考古稀有池的「抄本 BPC」两条路径并行。
+  // 本作资源 id 用 probe:<id>（resources.js 已注册），实测存进 state.archaeology.probes[id]。
+  // 小怪概率 = 首领概率 × 0.25（1 代 DEATHSPACE_PROBE_NORMAL_RATIO），一本里每波有
+  //   1 个 leader（boss kind）+ escortNormal 个小怪，普通小怪才是数量主体，故不能只挂 boss。
+  const PROBE_NORMAL_RATIO = 0.25;
+  const PROBE_DROPS = {
+    // 势力探针：按敌人势力绑定，仅该势力的指定 tier 副本掉。
+    angel:  { probe: "faction_probe_i",   byTier: { 2: { boss: 0.08, qty: 1 }, 3: { boss: 0.10, qty: 2 }, 4: { boss: 0.12, qty: 2 }, 6: { boss: 0.15, qty: 3 } } },
+    blood:  { probe: "faction_probe_ii",  byTier: { 4: { boss: 0.10, qty: 2 }, 6: { boss: 0.13, qty: 2 } } },
+    sansha: { probe: "faction_probe_iii", byTier: { 6: { boss: 0.10, qty: 2 } } },
+  };
+  // 深层先驱探针 IV：任意势力的 8/10（tier8）与 10/10（tier10）副本都掉。
+  const DEEP_PROBE = { probe: "deep_probe_iv", byTier: { 8: { boss: 0.12, qty: 2 }, 10: { boss: 0.18, qty: 3 } } };
+
+  // 返回某副本的所有探针掉落配置：[{ probe, bossChance, normalChance, qty }]。无配置 → []。
+  function probeDropsFor(site) {
+    if (!site) return [];
+    const out = [];
+    const f = PROBE_DROPS[site.faction];
+    if (f && f.byTier[site.dedTier]) {
+      const t = f.byTier[site.dedTier];
+      out.push({ probe: f.probe, bossChance: t.boss, normalChance: t.boss * PROBE_NORMAL_RATIO, qty: t.qty });
+    }
+    if (DEEP_PROBE.byTier[site.dedTier]) {
+      const t = DEEP_PROBE.byTier[site.dedTier];
+      out.push({ probe: DEEP_PROBE.probe, bossChance: t.boss, normalChance: t.boss * PROBE_NORMAL_RATIO, qty: t.qty });
+    }
+    return out;
+  }
+
+  return { SITES, BY_ID, TIER_BAND, siteFor, tickets, byId: function (id) { return BY_ID[id] || null; },
+    PROBE_NORMAL_RATIO, PROBE_DROPS, DEEP_PROBE, probeDropsFor };
 });

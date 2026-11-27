@@ -44,6 +44,8 @@
   // 考古探针制造（S6）：与装备共用「制造车间」，配方取 Data.ArchaeologyContent.PROBES[].craft
   function probeDef(id) { const D = Data(); const AC = D && D.ArchaeologyContent; return AC && AC.probeById ? AC.probeById(id) : null; }
   function probeCraftable() { const D = Data(); const AC = D && D.ArchaeologyContent; return AC && AC.PROBES ? AC.PROBES.filter(p => !!p.craft) : []; }
+  // 燃料配方（制造车间 · 燃料分类，对齐 1 代装备工程 fuel 分类）：id ∈ recipes.FUEL 即走 enqueueFuel。
+  function fuelRecipe(id) { const R = Data() && Data().Recipes; const L = (R && R.FUEL) || []; return L.find(x => x.id === id) || null; }
   function eqName(id) {
     const p = probeDef(id); if (p) return p.name;
     const E = EData(); const e = E && E.byId ? E.byId(id) : null; return e ? e.name : id;
@@ -161,9 +163,12 @@
     if (cur.type === "smelt") return R.SMELT;
     if (cur.type === "invent") return R.INVENT;
     if (cur.type === "booster") return (window.BOOSTER_RECIPES || []);
-    if (cur.type === "equip") { if (cur.tab === "dismantle") return []; const E = EData(); return E ? E.bySlot(equipCat()) : []; }
+    if (cur.type === "equip") {
+      if (cur.tab === "dismantle") return [];
+      if (equipCat() === "fuel") return R.FUEL || [];
+      const E = EData(); return E ? E.bySlot(equipCat()) : [];
+    }
     if (cur.type === "manufacture" && cur.tab === "component") return R.COMPONENT;
-    if (cur.type === "manufacture" && cur.tab === "fuel") return R.FUEL || [];
     return [];
   }
 
@@ -211,7 +216,10 @@
     if (cur.type === "booster")
       return (ind.boosterQueue || []).map((j, i) => ({ qk: "boosterQueue", i: i, it: j, out: boosterName(j.out) }));
     if (cur.type === "equip")
-      return (ind.equipQueue || []).map((j, i) => ({ qk: "equipQueue", i: i, it: j, out: eqName(j.out) }));
+      return (ind.equipQueue || []).map((j, i) => ({
+        qk: "equipQueue", i: i, it: j,
+        out: j.outType === "fuel" ? "燃料" : eqName(j.out),
+      }));
     const list = [];
     (ind.manufactureQueue || []).forEach((j, i) => list.push({ qk: "manufactureQueue", i: i, it: j, out: outName(j.out) }));
     (ind.buildQueue || []).forEach((j, i) => {
@@ -242,6 +250,8 @@
       const d = Data().Ships.baseModuleByType(recipeId); return d ? d.name : recipeId;
     }
     if (cur.type === "equip") {
+      const fr = fuelRecipe(recipeId);
+      if (fr) return (fr.name || "燃料单元") + " · 燃料 +" + fr.qty;
       const pr = probeDef(recipeId);
       return eqName(recipeId) + (pr && pr.craft ? " ×" + (pr.craft.batch || 1) + " 支" : " ×1");
     }
@@ -289,6 +299,11 @@
       return (B && B.craftCost(st, recipeId)) || null;
     }
     if (cur.type === "equip") {
+      const fr = fuelRecipe(recipeId);
+      if (fr) {
+        const B0 = BEngine();
+        return (B0 && B0.discountedCost) ? B0.discountedCost(st, fr.in || {}, "equip") : (fr.in || {});
+      }
       if (probeDef(recipeId)) return Prod().probeCostOf(recipeId);  // 探针成本含 credits/声望，不套装备材料折扣
       const E = EData();
       const eq = E && E.byId ? E.byId(recipeId) : null;
@@ -367,8 +382,14 @@
       gateText = gateOk ? "" : "同类已满 " + S.MODULE_INSTANCE_CAP;
       can = gateOk && Prod().canAfford(st.res, cost);
     } else if (cur.type === "equip") {
+      const fr = fuelRecipe(id);
       const pr = probeDef(id);
-      if (pr && pr.craft) {
+      if (fr) {
+        const B0 = BEngine();
+        const fcost = (B0 && B0.discountedCost) ? B0.discountedCost(st, fr.in || {}, "equip") : (fr.in || {});
+        gateOk = true;
+        can = Prod().canAfford(st.res, fcost);
+      } else if (pr && pr.craft) {
         const gate = Prod().equipGateLevel(pr.level);
         const lvOk = st.base.bodyLevel >= gate;
         gateOk = lvOk;
@@ -410,6 +431,7 @@
       return (st.base.modules.owned || []).filter(function (m) { return m.type === id; }).length;
     }
     if (cur.type === "equip") {
+      if (fuelRecipe(id)) return (st.base && typeof st.base.fuel === "number") ? st.base.fuel : ((st.res && st.res.fuel) || 0);
       if (probeDef(id)) return ((st.archaeology && st.archaeology.probes && st.archaeology.probes[id]) || 0);
       return (st.equipment && st.equipment[id]) || 0;
     }
@@ -452,6 +474,11 @@
       return Math.round(t * durMult) + "s / 个";
     }
     if (cur.type === "equip") {
+      const fr = fuelRecipe(id);
+      if (fr) {
+        const d = Math.round(fr.dur * durMult * 10) / 10;
+        return (durMult < 0.995 ? fr.dur + "s → " : "") + d + "s / 批";
+      }
       const pr = probeDef(id);
       if (pr && pr.craft) return Math.round(pr.craft.time * durMult) + "s / 批";
       const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
@@ -822,12 +849,15 @@
     }).join("");
   }
 
-  // 制造车间（装备）分类：按槽位分组，与 1 代装备工程页的 高/中/低/改装件 一致。
+  // 制造车间（装备）分类：槽位分组 + 探针 + 燃料，对齐 1 代装备工程页
+  // （1 代 EQUIPMENT_ENGINEERING_CATEGORIES 里 fuel / probes 就是同级分类）。
   // 改装件（rig）本作无装备数据 → 该组恒空，自动从标签条里消失。
   const EQ_SLOT_META = [{ id: "high", name: "高槽" }, { id: "mid", name: "中槽" }, { id: "low", name: "低槽" }, { id: "rig", name: "改装件" }];
   function equipCatList() {
     const E = EData();
     const list = E ? EQ_SLOT_META.map(m => ({ id: m.id, name: m.name, n: E.bySlot(m.id).length })).filter(c => c.n > 0) : [];
+    const FR = (Data().Recipes && Data().Recipes.FUEL) || [];
+    if (FR.length) list.push({ id: "fuel", name: "燃料", n: FR.length });
     list.push({ id: "probe", name: "考古探针", n: probeCraftable().length });
     return list;
   }
@@ -838,6 +868,7 @@
   }
   function equipCards() {
     if (cur.type === "equip" && cur.tab === "dismantle") return dismantleCards();
+    if (equipCat() === "fuel") return fuelCards();
     if (equipCat() === "probe") return probeCards();
     const st = state();
     const E = EData();
@@ -849,6 +880,18 @@
       const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
       const adjDur = Math.round(eq.time * durMult);
       return recipeCardHTML(eq.id, eq.name + " T" + tier, 1, "", adjDur + "s / 批");
+    }).join("");
+  }
+  // 燃料卡（制造车间 · 燃料，对齐 1 代装备工程 fuel 分类）：一次入队产出 qty，
+  // 成品进唯一燃料池（Base.setFuel），不入 state.res。与装备 / 探针共用制造车间槽位。
+  function fuelCards() {
+    const st = state();
+    const FR = (Data().Recipes && Data().Recipes.FUEL) || [];
+    if (!FR.length) return '<div class="wb-empty">燃料配方未就绪。</div>';
+    const durMult = Base().queueDurationMultiplier(st, "equip");
+    return FR.map(function (r) {
+      const adj = Math.round(r.dur * durMult * 10) / 10;
+      return recipeCardHTML(r.id, r.name || "燃料单元", r.qty, "⛽ ", adj + "s / 批");
     }).join("");
   }
   // 探针卡：一次入队产出 craft.batch 支，卡片显示「×N 支」与考古池库存。
@@ -899,7 +942,7 @@
       const remain = Math.max(0, (it.repeat - it.done - p) * it.dur);
       const remainTxt = remain > 60 ? Math.floor(remain / 60) + 'm ' + Math.round(remain % 60) + 's' : Math.round(remain) + 's';
       // 进度中的状态词按队列区分，避免增强剂显示成「冶炼中」
-      const QK_LABEL = { buildQueue: '建造中', moduleQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', smeltQueue: '冶炼中', enhanceQueue: '强化中' };
+      const QK_LABEL = { buildQueue: '建造中', moduleQueue: '建造中', boosterQueue: '合成中', inventQueue: '研发中', manufactureQueue: '制造中', equipQueue: '制造中', smeltQueue: '冶炼中', enhanceQueue: '强化中' };
       const status = it.done >= it.repeat ? '完成'
         : it.outType === "study" ? '研究中' : (QK_LABEL[job.qk] || '生产中');
       return '<div class="wb-job">'
@@ -921,7 +964,6 @@
     if (cur.type === "manufacture") {
       tabs = '<div class="wb-tabs">'
         + '<span class="wb-tab' + (cur.tab === "component" ? " on" : "") + '" data-act="workbench:tab:component">部件 / 弹药</span>'
-        + '<span class="wb-tab' + (cur.tab === "fuel" ? " on" : "") + '" data-act="workbench:tab:fuel">燃料</span>'
         + '<span class="wb-tab' + (cur.tab === "ship" ? " on" : "") + '" data-act="workbench:tab:ship">造船</span>'
         + '<span class="wb-tab' + (cur.tab === "module" ? " on" : "") + '" data-act="workbench:tab:module">舱段</span>'
         + '<span class="wb-tab' + (cur.tab === "enhance" ? " on" : "") + '" data-act="workbench:tab:enhance">强化舰船</span>'
@@ -972,12 +1014,12 @@
       : (cur.type === "manufacture" && cur.tab === "module")
       ? '<div class="wb-note">舱段与造船共用总装船坞槽位，按队列耗时制造；完成后入「舱段库」，拖到甲板空位即可装配。同类最多 '
         + Data().Ships.MODULE_INSTANCE_CAP + ' 个（含排队）。</div>'
-      : (cur.type === "manufacture" && cur.tab === "fuel")
-      ? '<div class="wb-note">燃料直接入舰基燃料池（跃迁 / 战斗 / 考古共用），当前 <b>' + Math.floor((st.base && st.base.fuel) || 0) + '</b>；无容量上限，也不会溢出丢弃。与部件 / 造船 / 舱段共用总装槽位。</div>'
       : (cur.type === "manufacture" && cur.tab === "component")
       ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船 / 舱段共用。</div>'
       : (cur.type === "booster")
       ? '<div class="wb-note">瓶身入库后，到舰基页下方「增强剂」面板装入 16 个全局槽位，效果整军团共享、自动续瓶。</div>'
+      : (cur.type === "equip" && equipCat() === "fuel")
+      ? '<div class="wb-note">燃料是本作唯一燃料来源（跃迁 / 战斗 / 考古共用，已取消自动回复），当前 <b>' + ((st.base && typeof st.base.fuel === "number") ? Math.floor(st.base.fuel) : 0) + '</b>；成品直接入舰基燃料池，无容量上限。与装备 / 探针共用制造车间槽位（1 代同属「装备工程」）。</div>'
       : (cur.type === "equip" && equipCat() === "probe")
       ? '<div class="wb-note">一次入队产出整批探针，成品直接进考古探针池（仓库「消耗品」可见），考古页选中后消耗。与装备共用制造车间槽位；复原/深层探针只从考古稀有池掉落。</div>'
       : (cur.type === "equip")
@@ -1301,12 +1343,13 @@
     else if (cur.type === "invent") r = Prod().enqueue(st, "invent", cur.recipeId, cur.count);
     else if (cur.type === "booster") r = Prod().enqueue(st, "booster", cur.recipeId, cur.count);
     else if (cur.type === "equip" && cur.tab !== "dismantle") {
-      r = (probeDef(cur.recipeId) && probeDef(cur.recipeId).craft)
-        ? Prod().buildProbe(st, cur.recipeId, cur.count)
-        : Prod().buildEquipment(st, cur.recipeId, cur.count);
+      r = fuelRecipe(cur.recipeId)
+        ? Prod().enqueueFuel(st, cur.recipeId, cur.count)
+        : (probeDef(cur.recipeId) && probeDef(cur.recipeId).craft)
+          ? Prod().buildProbe(st, cur.recipeId, cur.count)
+          : Prod().buildEquipment(st, cur.recipeId, cur.count);
     }
     else if (cur.type === "manufacture" && cur.tab === "component") r = Prod().enqueue(st, "manufacture", cur.recipeId, cur.count);
-    else if (cur.type === "manufacture" && cur.tab === "fuel") r = Prod().enqueueFuel(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "ship") r = Prod().buildShip(st, cur.recipeId, cur.count);
     else if (isModule()) r = Prod().enqueueModule(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "enhance") {

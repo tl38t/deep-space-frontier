@@ -22,7 +22,7 @@
   // 顶层资源（HUD 常驻）
   const TOP = {
     credits: { id: "credits", name: "星币", icon: "💠", cat: "top", desc: "军团流通货币，用于制造、招募与势力交易。" },
-    fuel:    { id: "fuel",    name: "跃迁燃料", icon: "⛽", cat: "top", desc: "跃迁 / 战斗 / 考古共用的燃料池：随时间自动回复，也可在总装船坞「燃料」页制造；无容量上限，可无限囤积。" },
+    fuel:    { id: "fuel",    name: "燃料", icon: "⛽", cat: "top", desc: "跃迁 / 战斗 / 考古共用的燃料池：唯一来源是「制造车间 → 燃料」用富勒烯制造，不再自动回复；无容量上限，可无限囤积。" },
     rep:     { id: "rep",     name: "宇宙声望", icon: "⭐", cat: "top", desc: "宇宙声望，向势力交付物资累积，可在声望商店兑换奖励物品与装备。" },
   };
 

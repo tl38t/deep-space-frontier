@@ -144,14 +144,12 @@ try {
 
 // ---- 跑主循环：48 步 × 1h = 2 天 ----
 let thrown = 0, lastErr = null;
-let minFuel = st.base.fuel;
 let t = now0;
 st.lastSeen = t; // 确保第一轮 dt>0
 for (let k = 0; k < 48; k++) {
   t += STEP * 1000;
   try { Settle.settle(st, t); }
   catch (e) { thrown++; lastErr = (e && e.stack) || String(e); break; }
-  if (st.base.fuel < minFuel) minFuel = st.base.fuel;
 }
 ok("① 全链路主循环零异常（48步×1h=2天）", thrown === 0, lastErr ? ("ERR:" + String(lastErr).slice(0, 200)) : "");
 
@@ -160,10 +158,10 @@ const oreNow = mine ? (st.res[mine.ore] || 0) : 0;
 ok("② 采矿真实产出（"+ (mine ? mine.ore : "?") +" > 0）", oreNow > 0, "res="+oreNow.toFixed(1));
 
 const fuelNow = st.base.fuel;
-ok("③ 燃料系统合法（终值非负，无容量上限时持续累积）",
-   fuelNow >= 0 && fuelNow > 100,
+ok("③ 燃料不自动增长（2 天内不高于初始 100）",
+   fuelNow >= 0 && fuelNow <= 100,
    "now="+fuelNow.toFixed(1));
-// ③b 隔离验证：扣燃料管线函数本身正常（不经 settle regen，FUEL_REGEN=0.02/s 会把扣減淹没）
+// ③b 隔离验证：扣燃料管线函数本身正常（燃料已无自动再生，扣减直接可见）
 const archCost = Settle.archaeologyFuelCost(st, m1);
 const fittedFuel = (Combat.fittedFuelCost ? Combat.fittedFuelCost(m1) : 0);
 ok("③b 扣燃料管线函数正常（考古燃料成本>0 且 装备燃料成本>0）",

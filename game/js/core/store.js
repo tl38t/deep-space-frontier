@@ -327,6 +327,20 @@
       if (s.base.fuelMax !== undefined) delete s.base.fuelMax;
     }
 
+    // 燃料队列归属迁移（2026-11-27）：燃料从总装船坞迁回制造车间（对齐 1 代「装备工程」面板）。
+    // 11-26 的旧档里可能还排着 outType:"fuel" 的总装队列项 → 整体平移到 equipQueue，
+    // 否则它继续占着总装槽位、而新入队的燃料又进制造车间，两处槽位账各算一半。
+    // 幂等：搬完 manufactureQueue 中不再有 outType:"fuel"，重复读档不动作；不升 STATE_VERSION。
+    if (s.base && s.base.industry && Array.isArray(s.base.industry.manufactureQueue)) {
+      const mq = s.base.industry.manufactureQueue;
+      const carried = mq.filter(function (it) { return it && it.outType === "fuel"; });
+      if (carried.length) {
+        s.base.industry.manufactureQueue = mq.filter(function (it) { return !(it && it.outType === "fuel"); });
+        const eq = s.base.industry.equipQueue || (s.base.industry.equipQueue = []);
+        for (const it of carried) eq.push(it);
+      }
+    }
+
     // 战斗状态字段补齐（不升 STATE_VERSION：旧字段 combatCarry 语义已废弃，直接丢弃即可）
     if (!s.combatWaveHp || typeof s.combatWaveHp !== "object") s.combatWaveHp = {};
     if (s.combatFocus === undefined) s.combatFocus = null;

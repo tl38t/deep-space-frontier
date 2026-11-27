@@ -452,7 +452,7 @@ function logisticsRun(lv, sec) {
   const before = st.base.fuel;
   const r = Settle.moveBase(st, edge.to);
   const spent = r.ok ? (before - st.base.fuel) : -1;
-  ok("电容管理: 不影响跃迁燃料（1 代 warpFuel ≠ 战斗燃料）", r.ok && Math.abs(spent - edge.fuelCost) < 1e-6,
+  ok("电容管理: 不影响跃迁（1 代 warpFuel ≠ 战斗燃料）", r.ok && Math.abs(spent - edge.fuelCost) < 1e-6,
     "原价=" + edge.fuelCost.toFixed(2) + " 实耗=" + spent.toFixed(2));
 }
 {
@@ -465,7 +465,7 @@ function logisticsRun(lv, sec) {
     m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 };
     m.status = "dispatched";
     m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;
-    st.base.fuel = 1e9; st.base.fuelMax = 1e9;   // 大池避免再生成上限干扰（真实 fuelMax=200）
+    st.base.fuel = 1e9; st.base.fuelMax = 1e9;   // 大池避免燃料不足打断战斗（燃料已无自动再生）
     tick(st, now, 30);
     return 1e9 - st.base.fuel;
   }

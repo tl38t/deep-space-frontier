@@ -37,7 +37,9 @@
   const Sites = (typeof window !== "undefined" ? window.NSK.Engine.Sites : null);
 
   // ---- 标定常量（§13 默认，待平衡） ----
-  const FUEL_REGEN = 0.02;       // 跃迁燃料 /秒
+  // 燃料无自动再生（2026-11-27 用户定案）：唯一来源 = 制造车间「燃料」分类制造（recipes.FUEL）。
+  //   原 FUEL_REGEN=0.02/s 无上限累积已删除——它让燃料永远溢出，跃迁/战斗/考古的燃料成本失去约束。
+  //   取消再生不死锁：采矿/采气本身不耗燃料，crude_fullerene×3 → 100 燃料（15s）自开局即通。
   // 燃料唯一写入口（2026-11-26）：浏览器走 Engine.Base.setFuel 同步镜像 res.fuel，
   // Node 探针无 Base 时保持同口径（无上限，仅钳非负），不依赖 base.fuelMax。
   function _setFuel(st, v) {
@@ -194,7 +196,7 @@
     const T = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null;
     const fuelMult = (T && T.fuelMult) ? T.fuelMult(state) : 1;
     const need = edge.fuelCost * fuelMult;   // 科技树·跃迁增效：校验与扣减同一值（电容管理只减战斗燃料，不影响跃迁 warpFuel）
-    if (state.base.fuel < need) return { ok: false, err: "跃迁燃料不足" };
+    if (state.base.fuel < need) return { ok: false, err: "燃料不足" };
     _setFuel(state, state.base.fuel - need);
     state.base.nodeId = toNodeId;
     if (node && !node.discovered) { node.discovered = true; state.starMap.discovered.push(toNodeId); }
@@ -512,8 +514,8 @@
       }
     }
 
-    // 1) 燃料回复（基础再生，与电容管理无关；电容管理效果为降战斗/考古燃料消耗，见 Combat.advance / archaeologyFuelCost）
-    _setFuel(state, state.base.fuel + FUEL_REGEN * dt);
+    // 1) 燃料不自动回复（2026-11-27 定案）：删除原 FUEL_REGEN 每 tick 累加，唯一来源为制造车间制造。
+    //    电容管理（capacitor）仍只降战斗/考古燃料消耗，见 Combat.advance / archaeologyFuelCost。
 
     // 1.5) 物流补偿累积（由 logistics 岗成员持续产生，软顶 70pp）
     if (Logistics) Logistics.accumulate(state, dt);
@@ -786,7 +788,7 @@
   }
 
   return {
-    settle, moveBase, levelOf, skillBonus, xpForLevel, XP_RATE, FUEL_REGEN, BASE_MINE, LV_THRESHOLD, MAX_OFFLINE_SECONDS,
+    settle, moveBase, levelOf, skillBonus, xpForLevel, XP_RATE, BASE_MINE, LV_THRESHOLD, MAX_OFFLINE_SECONDS,
     passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, recipeBatchXp, BATCH_XP_RATIO,
     MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
     ARCH_XP_BY_BAND, archXpForBand,

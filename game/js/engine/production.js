@@ -130,20 +130,24 @@
     return { ok: true };
   }
 
-  // 燃料制造（2026-11-26）：与部件/造船/舱段共用总装船坞槽位，但产出走 Base.setFuel 进唯一燃料池，
-  // 不再写 state.res.fuel。配方取 1 代 fuel_t1/t2/t3 真值（data/recipes.js FUEL），
-  // 故此处不套用部件的 Blueprint ME / 舰船材料折扣（1 代燃料单元也无这两项）。
+  // 燃料制造（2026-11-27 迁回制造车间）：1 代燃料属「装备工程」面板的 fuel 分类
+  //   （ammunition.js `AMMO_ENG_RECIPES` category:"fuel" + `EQUIPMENT_ENGINEERING_CATEGORIES` {id:"fuel",name:"燃料"}），
+  //   与装备 / 弹药 / 探针同面板同队列 → 本作对应制造车间（equipQueue / plan.equip）。
+  //   ⚠️ 11-26 曾错挂总装船坞（manufactureQueue / plan.manufacture），已迁回；旧档队列项由 store.normalize 平移。
+  //   成本套装备槽精密配给剂折扣，对回 1 代 getEquipEngBuildingQuote（装备工程全配方统一报价，燃料不用蓝图故无 ME）。
   function enqueueFuel(state, recipeId, repeat) {
     const r = ((Data.Recipes && Data.Recipes.FUEL) || []).find(x => x.id === recipeId);
     if (!r) return { ok: false, err: "配方不存在" };
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
-    if (manufactureUsed(state) >= plan.manufacture) return { ok: false, err: "总装船坞槽位已满（需升级舰基）" };
-    if (!r.in || !canAfford(state.res, r.in)) return { ok: false, err: "原料不足" };
-    spend(state.res, r.in);   // 入队即扣第 1 批（与既有队列同口径）
-    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "manufacture") : 1;
-    state.base.industry.manufactureQueue.push({
+    const eqQueue = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
+    if (eqQueue.length >= plan.equip) return { ok: false, err: "制造车间槽位已满（需升级舰基）" };
+    const inCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, r.in || {}, "equip") : (r.in || {});
+    if (!r.in || !canAfford(state.res, inCost)) return { ok: false, err: "原料不足" };
+    spend(state.res, inCost);   // 入队即扣第 1 批（与既有队列同口径）
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "equip") : 1;
+    eqQueue.push({
       recipeId: recipeId, dur: r.dur * durationMult, out: "fuel", qty: r.qty, outType: "fuel",
-      in: r.in, startedAt: Date.now(), repeat: repeat || 1, done: 0,
+      in: inCost, startedAt: Date.now(), repeat: repeat || 1, done: 0,
     });
     return { ok: true };
   }

@@ -342,7 +342,7 @@
   // booster = 反应实验室制造队列槽位（增强剂制造）。起步 1 槽可用（与精炼/总装同级），随本体升级扩容。
   // equip = 制造车间队列槽位（装备制造，2026-11-03 从总装坞独立出来）。曲线与 booster 一致（1/1/2/3）。
   const BODY_LEVELS = [
-    // 燃料池不设容量上限（2026-11-26 定案）：可随时间回复、可制造囤积，本体升级不再改变燃料容量。
+    // 燃料池不设容量上限（2026-11-26 定案）：唯一来源是制造车间制造（2026-11-27 迁回），本体升级不改变燃料容量。
     { lv: 1, name: "空间站",   smelt: 1, manufacture: 1, invent: 0, booster: 1, equip: 1, energy: 80 },
     { lv: 2, name: "星堡",     smelt: 2, manufacture: 2, invent: 1, booster: 1, equip: 1, energy: 180 },
     { lv: 3, name: "星城",     smelt: 3, manufacture: 3, invent: 2, booster: 2, equip: 2, energy: 320 },

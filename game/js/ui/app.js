@@ -108,7 +108,7 @@
   // res.fuel 只是兼容镜像，不再作为显示值（旧档两本账开局都是 100，曾导致仓库数字永远不动）。
   function fuelOf(st) { return (st && st.base && typeof st.base.fuel === "number") ? st.base.fuel : ((st && st.res && st.res.fuel) || 0); }
 
-  // 资源 chips（HUD）—— 顶部只常驻星币与跃迁燃料，其余物资收进仓库页
+  // 资源 chips（HUD）—— 顶部只常驻星币与燃料，其余物资收进仓库页
   function renderHUD() {
     const order = ["credits", "fuel"];
     let inner = '<span class="brand">🌌 深空星疆</span>';
@@ -181,7 +181,7 @@
   function viewStarMap() {
     const map = state.starMap;
     // 视图指纹只跟「当前节点 / 已探明数」走。燃料有 HUD 实时显示，不放进指纹，
-    // 否则燃料后台回复会让 207 节点 SVG 每秒整图重建（视觉刷新/脉冲重播）。
+    // 否则战斗/考古扣燃料会让 207 节点 SVG 每秒整图重建（视觉刷新/脉冲重播）。
     const sig = state.base.nodeId + "#" + map.discovered.length;
     if (sig === _starSig) return _starCache;
     _starSig = sig;
@@ -235,7 +235,7 @@
     const regColor = id => (regionById[id] || { color: "#5ad1a0" }).color;
 
     let html = "<h2>星图 · 当前舰基位于「" + esc(curNode.name) + "」</h2>";
-    html += '<div class="panel map-hint"><span class="dim">跃迁燃料 <b>' + fmt(fuelOf(state)) +
+    html += '<div class="panel map-hint"><span class="dim">燃料 <b>' + fmt(fuelOf(state)) +
       '</b></span><span class="dim">拖拽平移 · 滚轮缩放 · 点星系弹出查看 / 跃迁</span></div>';
 
     // 空间星图（SVG viewBox 自适应；pan/zoom 由 UI 层 transform 控制）
@@ -1172,12 +1172,14 @@
     const recipe = it && recipes ? recipes.find(r => r.id === it.recipeId) : null;
     if (!it) return { count: 0, label: "待命", progress: 0, detail: "暂无排产" };
     const p = Core.clamp((Date.now() - it.startedAt) / 1000 / it.dur, 0, 1);
-    // 制造车间（equip）队列项存的是装备 id 或探针 id，没有 Recipes 表，直接查对应数据表
+    // 制造车间（equip）队列项存的是装备 id / 探针 id / 燃料配方 id，没有 Recipes 通用表，逐一查对应数据表
     let label;
     if (type === "equip") {
       const E = Data.Equipment, eq = E && E.byId ? E.byId(it.recipeId) : null;
       const AC = Data.ArchaeologyContent, pr = AC && AC.probeById ? AC.probeById(it.recipeId) : null;
-      label = eq ? eq.name : (pr ? pr.name : it.recipeId);
+      const FR = (Data.Recipes && Data.Recipes.FUEL) || [];
+      const fr = FR.find(r => r.id === it.recipeId);
+      label = fr ? (fr.name || "燃料") : (eq ? eq.name : (pr ? pr.name : it.recipeId));
     } else if (it.outType === "study") {
       // 蓝图效率研究：队列项不存中文名（内部键全 ASCII），显示名由数据表实时派生，
       // 改名后旧档队列项自动跟随，且不会露出 "study:booster:xxx:me" 这种裸 key。
@@ -1189,7 +1191,7 @@
 
   function baseInventoryStrip() {
     const ids = ["credits", "fuel", "fe_alloy", "ni_alloy", "integrated_hull", "power_core", "functional_system"];
-    return '<div class="base-inventory-strip">' + ids.map(k => '<span class="base-stock">' + resIcon(k) + '<b>' + fmt(state.res[k] || 0) + '</b><em>' + esc(resName(k)) + '</em></span>').join("") + '</div>';
+    return '<div class="base-inventory-strip">' + ids.map(k => '<span class="base-stock">' + resIcon(k) + '<b>' + fmt(k === "fuel" ? fuelOf(state) : (state.res[k] || 0)) + '</b><em>' + esc(resName(k)) + '</em></span>').join("") + '</div>';
   }
 
   function baseHullSelector() {
@@ -1540,7 +1542,7 @@
       html += '</div>' + baseStockPanel() + '<div class="base-stage-foot"><span class="base-stage-foot-left"><b>核心在线</b><em>模块 ' + installedCount + ' / ' + state.base.modules.owned.length + '</em>' + powerChip + '</span><span>工业槽位 ' + (state.base.industry.smeltQueue.length + state.base.industry.manufactureQueue.length + state.base.industry.inventQueue.length + (state.base.industry.buildQueue || []).length + (state.base.industry.equipQueue || []).length) + ' / ' + (plan.smelt + plan.manufacture + plan.invent + plan.equip) + '</span><span>成员 ' + state.members.length + ' / 20</span></div></div>';
     }
     html += '</div>';
-    html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>装备 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
+    html += '<div class="base-queue-note"><span>新排产效率</span><b>精炼 ' + smelt.count + '/' + plan.smelt + ' · 耗时 -' + Math.round((1 - smeltMult) * 100) + '%</b><b>制造 ' + manufacture.count + '/' + plan.manufacture + ' · 耗时 -' + Math.round((1 - manufactureMult) * 100) + '%</b><b>发明 ' + invent.count + '/' + plan.invent + ' · 耗时 -' + Math.round((1 - inventMult) * 100) + '%</b><b>制造车间 ' + (state.base.industry.equipQueue || []).length + '/' + plan.equip + ' · 耗时 -' + Math.round((1 - Engine.Base.queueDurationMultiplier(state, "equip")) * 100) + '%</b><small>模块布局在排产时确定，本批次按已锁定耗时运行。</small></div>';
     // 工业三队列（精炼 / 制造 / 发明 / 造船）已迁入「舱段工作台」：点击舰基页对应舱段卡片打开（独立弹窗）。
     html += '<div class="panel dim">精炼 / 制造 / 发明 / 造船 / 增强剂 / 装备 统一在「舱段工作台」中操作：点击舰基页对应的 <b>精炼环 · 总装船坞 · 发明舱 · 反应实验室 · 制造车间</b> 卡片即可打开弹窗（可连续生产、加队列、随时取消）。</div>';
     html += equipStockBlock();
@@ -1636,7 +1638,7 @@
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
     const used = (state.base.industry.equipQueue || []).length;
     let html = '<div class="panel"><h3>已存装备 · 制造车间 ' + used + "/" + plan.equip + '</h3>';
-    html += '<div class="dim">装备与改装件在「制造车间」舱段独立生产（点击舰基页该舱段卡片打开工作台）。成品入此库存，到「舰队」页点「装配」按成员装上舰。</div>';
+    html += '<div class="dim">装备、改装件与<b>燃料</b>都在「制造车间」舱段生产（点击舰基页该舱段卡片打开工作台，分类：高槽 / 中槽 / 低槽 / 燃料 / 考古探针）。装备成品入此库存，到「舰队」页点「装配」按成员装上舰；燃料直接入舰基燃料池。三者共用制造车间槽位。</div>';
     const inv = Object.entries(state.equipment || {}).filter(([k, v]) => (v || 0) > 0);
     html += '<div class="eq-inv"><b>已存装备</b>';
     if (!inv.length) html += '<span class="dim"> 暂无（制造后在此显示）</span>';
@@ -3596,7 +3598,7 @@
     state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
     const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, fleet: viewFleet, warehouse: viewWarehouse, archaeology: viewArchaeology, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
-    // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，
+    // 内容无变化（如星图缓存命中、仅燃料数值变化）则不重设 innerHTML，
     // 避免 207 节点 SVG 每秒销毁重建导致的整图刷新 / 脉冲重播 / 视角闪烁。
     if (html === _lastViewHtml) return;
     _lastViewHtml = html;

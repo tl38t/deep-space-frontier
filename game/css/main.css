@@ -344,7 +344,7 @@ button:disabled { transform: none; }
 .wh-tally b { font: 700 20px/1 var(--font-tech); color: #fff; font-variant-numeric: tabular-nums; }
 .wh-tally span { font-size: 12px; color: var(--dim); }
 
-/* 顶层资源（星币/跃迁燃料/声望）三卡：大数字 + 右侧角标图标 + 角部辉光 */
+/* 顶层资源（星币/燃料/声望）三卡：大数字 + 右侧角标图标 + 角部辉光 */
 .wh-hero { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .wh-stat { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 3px;
   padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--cc, var(--acc));

@@ -196,6 +196,70 @@
     return { core: core, proto: proto };
   }
 
+  // ===== 探针掉落（2026-11-27 P6）=====
+  // 1 代 rollDeathspaceProbeDrops：boss 用 bossChance、其余用 normalChance(=boss×0.25)，
+  // 每只击杀独立掷骰，中则入 probe:<id> qty 支。本作探针存 state.archaeology.probes[id]
+  // （不是 state.res，resources.js 的 probe: 只做显示名解析）。
+  // kills: { normal, elite, boss }；site 决定掉哪种探针。返回 { probeId: 支数 } 供账本/战报。
+  function rollProbeDrops(state, site, kills, rng) {
+    const roll = (typeof rng === "function") ? rng : Math.random;
+    const got = {};
+    if (!state || !site || !kills) return got;
+    const D = _D();
+    const cfgs = (D && D.DeathSpace && D.DeathSpace.probeDropsFor) ? D.DeathSpace.probeDropsFor(site) : [];
+    if (!cfgs.length) return got;
+    if (!state.archaeology || typeof state.archaeology !== "object") {
+      // 引擎侧兜底：正常启动 store.ensure 已建，这里只防探针模块被独立调用。
+      state.archaeology = { probes: {}, artifacts: {}, vouchers: {}, protocols: {} };
+    }
+    if (!state.archaeology.probes || typeof state.archaeology.probes !== "object") state.archaeology.probes = {};
+    const probes = state.archaeology.probes;
+    const bk = Math.max(0, Math.floor(Number(kills.boss) || 0));
+    // 1 代普通小怪才是数量主体：非 boss 一律按 normalChance（含 elite，1 代此处无 elite 档）。
+    const nk = Math.max(0, Math.floor(Number(kills.normal) || 0))
+      + Math.max(0, Math.floor(Number(kills.elite) || 0));
+    for (const c of cfgs) {
+      if (!c || !c.probe) continue;
+      let n = 0;
+      for (let i = 0; i < bk; i++) if (roll() < (c.bossChance || 0)) n += (c.qty || 1);
+      for (let i = 0; i < nk; i++) if (roll() < (c.normalChance || 0)) n += (c.qty || 1);
+      if (n > 0) {
+        probes[c.probe] = (probes[c.probe] || 0) + n;
+        got[c.probe] = (got[c.probe] || 0) + n;
+      }
+    }
+    return got;
+  }
+
+  // 折叠路径探针掉落：整本击杀构成 = ΣescortNormal 小怪 + waves.length 个 boss，
+  // k 本期望件数 → binomial 二项抽样，保真实分布且与 k（离线时长）线性、循环次数不随 dt 增长
+  // （binomial 的 n = 期望/概率，副本最多 6 波、k 受 512 本硬顶，恒定有界）。
+  function foldProbeDrops(state, site, booksFolded, rng) {
+    const roll = (typeof rng === "function") ? rng : Math.random;
+    const got = {};
+    if (!state || !site || !(booksFolded > 0)) return got;
+    const D = _D();
+    const cfgs = (D && D.DeathSpace && D.DeathSpace.probeDropsFor) ? D.DeathSpace.probeDropsFor(site) : [];
+    if (!cfgs.length) return got;
+    if (!state.archaeology || typeof state.archaeology !== "object") state.archaeology = { probes: {} };
+    if (!state.archaeology.probes || typeof state.archaeology.probes !== "object") state.archaeology.probes = {};
+    const probes = state.archaeology.probes;
+    let mobsPerBook = 0;
+    for (const w of site.waves) mobsPerBook += Math.max(0, Math.round(w.escortNormal || 0));
+    const bossPerBook = Math.max(0, (site.waves || []).length);   // 每波 1 个 leader
+    for (const c of cfgs) {
+      if (!c || !c.probe) continue;
+      const nBoss = binomial(bossPerBook * booksFolded * (c.bossChance || 0), c.bossChance || 0, roll);
+      const nMob = binomial(mobsPerBook * booksFolded * (c.normalChance || 0), c.normalChance || 0, roll);
+      const n = (nBoss + nMob) * (c.qty || 1);
+      if (n > 0) {
+        probes[c.probe] = (probes[c.probe] || 0) + n;
+        got[c.probe] = (got[c.probe] || 0) + n;
+      }
+    }
+    return got;
+  }
+
   // 一本的闭式期望：Σ每波 waveOutcomeOfFleet + 弹药/承伤/耗时。
   // ⚠️ P 只 prepare 一次（成员装配不变），每波只换 fleet（1 代 buildDeathspaceWave）。
   function expectedBook(P, site, mode) {
@@ -237,7 +301,7 @@
     const run = state.dsRuns[nodeId];
     const EMPTY = {
       waves: 0, credits: 0, rep: 0, damage: 0, fightSec: 0, fuelUsed: 0,
-      ammoUsed: null, drops: null, kills: { normal: 0, elite: 0, boss: 0 },
+      ammoUsed: null, drops: null, probeDrops: null, kills: { normal: 0, elite: 0, boss: 0 },
       wiped: false, allDry: false, simmed: false,
       dsClears: 0, dsTickets: 0, dsSpent: 0, siteId: run ? run.siteId : null,
     };
@@ -259,7 +323,7 @@
 
     const acc = {
       waves: 0, credits: 0, rep: 0, damage: 0, fightSec: 0, fuelUsed: 0,
-      ammoUsed: {}, drops: {}, kills: { normal: 0, elite: 0, boss: 0 },
+      ammoUsed: {}, drops: {}, probeDrops: {}, kills: { normal: 0, elite: 0, boss: 0 },
       wiped: false, allDry: false, simmed: false,
       dsClears: 0, dsTickets: 0, dsSpent: 0, siteId: site.id,
     };
@@ -273,11 +337,16 @@
       if (r.allDry) acc.allDry = true;
       if (r.ammoUsed) for (const k in r.ammoUsed) acc.ammoUsed[k] = (acc.ammoUsed[k] || 0) + r.ammoUsed[k];
       if (r.killed && r.fleet) {
+        // 探针掉落按本段真实击杀逐只掷（1 代原式）；账本只记数量，探针另有分支写 state.archaeology.probes。
+        const segKills = { normal: 0, elite: 0, boss: 0 };
         for (const idx of r.killed) {
           const s = r.fleet.ships[idx];
           const k = s && s.kind === "boss" ? "boss" : (s && s.kind === "elite" ? "elite" : "normal");
           acc.kills[k]++;
+          segKills[k]++;
         }
+        const pd = rollProbeDrops(state, site, segKills, Math.random);
+        for (const pid in pd) acc.probeDrops[pid] = (acc.probeDrops[pid] || 0) + pd[pid];
       }
     };
     const finishBook = function () {
@@ -368,6 +437,9 @@
     const dr = foldSiteDrops(state, site, k, Math.random);
     acc.drops[site.coreMaterial] = dr.core;
     acc.drops[site.protocolMaterial] = dr.proto;
+    // 探针掉落：折叠整本一次算（写 state.archaeology.probes），账本单独记供 UI 显示。
+    const pdr = foldProbeDrops(state, site, k, Math.random);
+    for (const pid in pdr) acc.probeDrops[pid] = (acc.probeDrops[pid] || 0) + pdr[pid];
     // 逐敌状态作废（折叠跨过 k 本，下一本按新编队满血重建）
     if (state.combatEnemies) delete state.combatEnemies[dk];
     run.wave = 1;
@@ -384,6 +456,8 @@
     leave: leave,
     advance: advance,
     dropTickets: dropTickets,
+    rollProbeDrops: rollProbeDrops,
+    foldProbeDrops: foldProbeDrops,
     reserveOf: reserveOf,
     setReserve: setReserve,
     ticketCount: ticketCount,

@@ -610,7 +610,7 @@
       if (used.has(key)) return;
       used.add(key);
       const d = dist(a, b);
-      // 软进度：目的地区 stage 越高，跃迁燃料越贵（后期星域自然劝退，不硬锁）
+      // 软进度：目的地区 stage 越高，单跳燃料越贵（后期星域自然劝退，不硬锁）
       const rsa = regions.find(r => r.id === nodes[a].region), rsb = regions.find(r => r.id === nodes[b].region);
       const extra = (Math.max((rsa && rsa.stage) || 1, (rsb && rsb.stage) || 1) - 1) * 3;
       const fc = Math.max(2, Math.round(d / 82)) + extra;
