@@ -325,6 +325,88 @@
     };
   }
 
+  // ★ 2026-11-27 死亡空间：按 1 代 systems/combat.js buildDeathspaceWave 原式构造单波编队。
+  //   每波 = escortNormal 艘普通舰 + 1 艘 boss 当 wave leader（名字用 wave.name），
+  //   血量 ×(balance.hp×[finalHp])×wave.hpMult，伤害 ×(balance.damage×[finalDamage])×wave.damageMult，
+  //   与 1 代逐值同源。返回结构与 fleetFor 完全一致，可直接喂给 prepareNode 的 fleet 注入口。
+  //   ⚠️ 本函数只被死亡空间调用；普通据点的 fleetFor 一行不改。
+  function fleetForSite(site, waveIndex) {
+    if (!site || !Array.isArray(site.waves)) return null;
+    const wi = Math.max(0, Math.min(site.waves.length - 1, Math.round(waveIndex || 1) - 1));
+    const w = site.waves[wi];
+    if (!w) return null;
+    const fac = factionKey(site.faction);
+    const db = SHIPS[fac];
+    if (!db) return null;                      // precursor 等无模板势力：数据先落库、入口不做
+    const b = clampBand(site.band || 1);
+    const bal = site.combatBalance || {};
+    const isFinal = !!w.final;
+    const hpScale = (bal.hp || 1) * (isFinal ? (bal.finalHp || 1) : 1);
+    const dmgScale = (bal.damage || 1) * (isFinal ? (bal.finalDamage || 1) : 1);
+
+    function makeShip(kind, seq, scaleHp, scaleDmg, displayName) {
+      const tpl = db[kind] && db[kind][b];
+      if (!tpl) return null;
+      const maxHp = {
+        shield: Math.max(1, Math.round(tpl.hp.shield * scaleHp)),
+        armor: Math.max(1, Math.round(tpl.hp.armor * scaleHp)),
+        structure: Math.max(1, Math.round(tpl.hp.structure * scaleHp)),
+      };
+      const ship = {
+        id: "ds" + b + "_" + fac + "_" + tpl.id + "_" + seq,
+        type: tpl.id,
+        name: displayName || tpl.name,
+        level: tpl.level,
+        kind: tpl.kind,
+        kindCn: KIND_CN[tpl.kind] || "普通",
+        hit: tpl.hit,
+        dodge: tpl.dodge,
+        baseDamage: Math.max(1, Math.round(tpl.baseDamage * scaleDmg)),
+        iskDrop: tpl.iskDrop,
+        maxHp: maxHp,
+        hp: { shield: maxHp.shield, armor: maxHp.armor, structure: maxHp.structure },
+        total: totalOf(maxHp),
+        deathspaceLeader: kind === "boss",
+        deathspaceWave: wi + 1,
+        deathspaceFinal: isFinal,
+      };
+      for (let fi = 0; fi < SPECIAL_FIELDS.length; fi++) {
+        const k = SPECIAL_FIELDS[fi];
+        if (tpl[k] !== undefined) ship[k] = tpl[k];
+      }
+      return ship;
+    }
+
+    const ships = [];
+    for (let i = 0; i < Math.max(0, Math.round(w.escortNormal || 0)); i++) {
+      const s = makeShip("normal", i, hpScale, dmgScale);
+      if (s) ships.push(s);
+    }
+    const leader = makeShip("boss", 0, hpScale * (w.hpMult || 1), dmgScale * (w.damageMult || 1), w.name);
+    if (leader) ships.push(leader);
+
+    let totalHp = 0, dps = 0, wDodge = 0;
+    const sum = { shield: 0, armor: 0, structure: 0 };
+    for (const s of ships) {
+      totalHp += s.total;
+      dps += s.baseDamage;
+      wDodge += s.dodge * s.total;
+      sum.shield += s.maxHp.shield;
+      sum.armor += s.maxHp.armor;
+      sum.structure += s.maxHp.structure;
+    }
+    return {
+      band: b, faction: fac, factionName: db.factionName,
+      title: w.name, compId: "ds_wave_" + (wi + 1), isBossWave: isFinal,
+      ships: ships, totalHp: totalHp, dps: dps,
+      split: totalHp > 0
+        ? { shield: sum.shield / totalHp, armor: sum.armor / totalHp, structure: sum.structure / totalHp }
+        : { shield: 0, armor: 0, structure: 0 },
+      evasion: totalHp > 0 ? wDodge / totalHp : 30,
+      hpSum: sum,
+    };
+  }
+
   // 兼容接口：某档编队总血 / 每轮总伤害（供探针与 UI 快速取用）
   // ⚠️ 2026-11-01 清理：删掉 totalHp(band) / fleetDps(band) 两个只取 angel 势力的
   //    便捷 wrapper（无人调用，且默认势力会让调用方误以为「强度与势力无关」）。
@@ -339,6 +421,7 @@
     COMP_KINDS: COMP_KINDS,
     BOSS_ESCORT: BOSS_ESCORT,
     MAX_WAVE: MAX_WAVE,
+    fleetForSite: fleetForSite,                // ★ 死亡空间单波编队（1 代 buildDeathspaceWave 原式）
     KIND_CN: KIND_CN,
     clampBand: clampBand,
     factionKey: factionKey,

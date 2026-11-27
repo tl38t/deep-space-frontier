@@ -13,8 +13,11 @@
 //   每势力扩到 12 个词。一个星域有 19~27 个星系而词只有 12 个，**跨星系必然会重名**——
 //   这是刻意的：据点靠「所属星系名」区分，星图与星系图都同时显示两者。
 //
-// 精锐：每星域 1 个（域内第一个非起始星系），band = 星域档 + 1（封顶 5），
-//   赏金 ×1.5、声望 ×1.3。作用是让四个高安星域也有 band2 的挑战，梯度不断层。
+// band（2026-11-27 定稿）：节点级——域内每 4 个节点有 1 个高档（星域档 +1，封顶 5），
+//   非高档节点用星域档。12 星域 = 4 安等 × 3 势力 ⇒ 每个 band 都有苍/赤/静三势力，
+//   死亡空间按 band+势力过滤时每个副本都能在对应星带刷出。
+// 无「精锐据点」：悬赏/声望倍率只由星域安等决定（SEC_ISK / SEC_REP），
+//   强度梯度由节点级高档 band 承担。敌舰精英（kind:"elite"）是战斗机制，与据点无关。
 // ================================================================
 (function (root, factory) {
   const mod = factory();
@@ -44,8 +47,6 @@
              "侦查结点", "增殖巢", "群体归化站", "核心耦合器", "静默信标", "母体接口"],
   };
 
-  const ELITE_ISK = 1.5;   // 精锐赏金倍率（叠在星域安等倍率上）
-  const ELITE_REP = 1.3;   // 精锐声望倍率
   const SEC_BAND = { "1.0-0.8": 1, "0.7-0.5": 2, "0.4-0.3": 3, "0.2-0.1": 4, "0.0": 5 };
   const SEC_ISK = { "1.0-0.8": 1.0, "0.7-0.5": 1.5, "0.4-0.3": 2.0, "0.2-0.1": 2.5, "0.0": 3.5 };
   const SEC_REP = { "1.0-0.8": 1.0, "0.7-0.5": 1.2, "0.4-0.3": 1.5, "0.2-0.1": 1.8, "0.0": 2.5 };
@@ -68,14 +69,15 @@
       const poolNames = NAME_POOL[faction] || NAME_POOL.sansha;
       const sec = reg.secLevel || "1.0-0.8";
       const baseBand = SEC_BAND[sec] || 1;
-      // 每星域 1 个精锐：域内第一个「不是起始星系」的节点。固定规则，不随机。
-      const eliteNode = pool.find(n => n.id !== map.startId) || pool[0];
 
-      for (const n of pool) {
-        const elite = !!eliteNode && n.id === eliteNode.id;
+      for (let i = 0; i < pool.length; i++) {
+        const n = pool[i];
         const word = poolNames[used[faction] % poolNames.length];
         used[faction] += 1;
-        const band = Math.max(1, Math.min(5, baseBand + (elite ? 1 : 0)));
+        // ★ 节点级 band：每 4 个节点 1 个高档（i%4===3），其余用星域基础档。
+        //   band4 的域（00）高档节点 = band5，承载 8/10、10/10 钥匙产出。
+        const highBand = (i % 4) === 3;
+        const band = Math.max(1, Math.min(5, baseBand + (highBand ? 1 : 0)));
         n.raid = {
           id: "raid_" + n.id,
           name: (FACTION_CN[faction] || faction) + word,
@@ -84,9 +86,9 @@
           secLevel: sec,
           secName: SEC_CN[sec] || "高安",
           band: band,
-          elite: elite,
-          iskMult: Math.round((SEC_ISK[sec] || 1) * (elite ? ELITE_ISK : 1) * 100) / 100,
-          repMult: Math.round((SEC_REP[sec] || 1) * (elite ? ELITE_REP : 1) * 100) / 100,
+          highBand: highBand,
+          iskMult: SEC_ISK[sec] || 1,
+          repMult: SEC_REP[sec] || 1,
         };
         // ⚠️ 这里**刻意不再强制探明**：早期「18 个稀有据点」时怕玩家找不到目标才强制点亮，
         //    现在每星系都有据点，继续强制探明等于开局把 207 个节点全部揭开 ——

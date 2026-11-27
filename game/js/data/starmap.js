@@ -7,7 +7,7 @@
 //      核心区 sigma 小 + 节点多 → 高密度核心；外围 sigma 大 + 节点少 → 稀疏长散，
 //      相邻团大面积重叠 → 颜色互相犬牙交错（EVE 星图那种融合感，而非分明地界）。
 //      区域靠「密度 + 颜色 + 漂浮文字标签」自然区分，无硬边界。
-//  - 【层级】207 系统 -> 9 区域(Region) -> 每域 3~6 星座(Constellation)（域内 k-means 聚类）
+//  - 【层级】207 系统 -> 12 区域(Region) -> 每域 3~6 星座(Constellation)（域内 k-means 聚类）
 //  - 【连边三层】星座内密网(MST+近邻) + 星座间桥 + 区域间长途星门(高燃料/战略要冲)
 //  - 同一张图每次新存档完全一致（固定种子 mulberry32）
 // ================================================================
@@ -55,16 +55,30 @@
   // 节点富裕度读取：新档走 richness，旧档回退 tier，再不济取 1（兼容老存档）
   function nodeRich(n) { return n.richness != null ? n.richness : (n.tier != null ? n.tier : 1); }
   // 海盗强度不再有独立标量：由 band → pirates.fleetFor(band, faction) 取 1 代 ENEMY_DATABASE 原值
+  // 2026-11-27 定稿：12 星域 = 4 安等（高安/边境/低安/00）× 3 势力（苍/赤/静），
+  //   每势力 4 域、每域 17~18 星系，合计 207。四个安等各出一档 band：
+  //   高安 band1 / 边境 band2 / 低安 band3 / 00 band4（secLevel 用 0.2-0.1）；
+  //   band5 由各域内 1/4 的「高档节点」产生（见 data/raids.js attach），不占独立安等。
+  //   ⇒ 1 代档4/5/6 三档压进本作 band4/5：00 普通节点=档4，高档节点=档5。
+  // 势力总量严格均分：苍 69 / 赤 69 / 静 69（5 域×... → 4 域×17~18）。
+  // 旧档强制升级（STATE_VERSION 9 / SAVE_KEY v8）：星图整体重排，无兼容负担。
   const REGION_DEFS = [
-    { name: "苍曜星域", color: "#5ad1a0", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ax: 1420, ay: 1060, sigma: 205, size: 27 },
-    { name: "霜环星域", color: "#5fb8ff", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "blood",  ax: 1700, ay: 1190, sigma: 212, size: 25 },
-    { name: "沉沙星域", color: "#e8b45a", rich: 1, stage: 1, secLevel: "1.0-0.8", pirate: "sansha", ax: 870,  ay: 720,  sigma: 330, size: 22 },
-    { name: "碧落星域", color: "#7ee0c0", rich: 1, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ax: 2140, ay: 1600, sigma: 338, size: 24 },
-    { name: "远寂星域", color: "#cfd8e3", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "angel",  ax: 2620, ay: 1240, sigma: 392, size: 20 },
-    { name: "玄渊星域", color: "#b07cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "sansha", ax: 1370, ay: 1330, sigma: 205, size: 26 },
-    { name: "幽烬星域", color: "#9b8cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "blood",  ax: 2200, ay: 780,  sigma: 345, size: 23 },
-    { name: "残辉星域", color: "#e879a8", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "blood",  ax: 620,  ay: 1500, sigma: 385, size: 19 },
-    { name: "赤潮星域", color: "#ef6b5a", rich: 4, stage: 3, secLevel: "0.0",     pirate: "sansha", ax: 1260, ay: 340,  sigma: 362, size: 21 },
+    // 高安 band1（stage1 试玩开放）
+    { name: "苍曜星域", color: "#5ad1a0", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ax: 500,  ay: 450,  sigma: 180, size: 17 },
+    { name: "霜环星域", color: "#5fb8ff", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "blood",  ax: 500,  ay: 1100, sigma: 180, size: 17 },
+    { name: "沉沙星域", color: "#e8b45a", rich: 1, stage: 1, secLevel: "1.0-0.8", pirate: "sansha", ax: 500,  ay: 1750, sigma: 180, size: 17 },
+    // 边境 band2（stage1 试玩开放）
+    { name: "远寂星域", color: "#cfd8e3", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "angel",  ax: 1150, ay: 450,  sigma: 180, size: 17 },
+    { name: "烬晓星域", color: "#e0935a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "blood",  ax: 1150, ay: 1100, sigma: 180, size: 17 },
+    { name: "缚沙星域", color: "#c9d45a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "sansha", ax: 1150, ay: 1750, sigma: 180, size: 17 },
+    // 低安 band3
+    { name: "裂穹星域", color: "#4aa8c8", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "angel",  ax: 1800, ay: 450,  sigma: 180, size: 17 },
+    { name: "幽烬星域", color: "#9b8cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "blood",  ax: 1800, ay: 1100, sigma: 180, size: 17 },
+    { name: "玄渊星域", color: "#b07cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "sansha", ax: 1800, ay: 1750, sigma: 180, size: 17 },
+    // 00 band4（本作安等名沿用「深空」0.2-0.1；死亡空间 8/10/10/10 的钥匙挂高档节点）
+    { name: "碧落星域", color: "#7ee0c0", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "angel",  ax: 2450, ay: 450,  sigma: 180, size: 18 },
+    { name: "残辉星域", color: "#e879a8", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "blood",  ax: 2450, ay: 1100, sigma: 180, size: 18 },
+    { name: "赤潮星域", color: "#ef6b5a", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "sansha", ax: 2450, ay: 1750, sigma: 180, size: 18 },
   ];
 
   // —— MVP 试玩门禁（用户 2026-10-26 确认）：仅开放 stage ≤ TRIAL_STAGE_MAX 的区域 ——

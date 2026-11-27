@@ -190,12 +190,14 @@
     const adj = Data.StarMap.adjacency(map);
     const neighbours = (adj[cur] || []).map(e => ({ node: Data.StarMap.nodeById(map, e.to), fuelCost: e.fuelCost }));
     const reachIds = new Set(neighbours.filter(nb => nb.node && state.base.fuel >= nb.fuelCost).map(nb => nb.node.id));
-    // 星图展示坐标：把九个星域排成疏朗的星区阵列，保留每个星域内部的相对布局。
-    // 只用于绘制，不改存档坐标或航线数据，因此旧存档也会立即采用新布局。
+    // 星图展示坐标：12 星域 = 4 安等列 × 3 势力行，排成疏朗阵列。
+    // 只用于绘制，不改存档坐标或航线数据。
+    // 顺序与 REGION_DEFS 对齐：高安(3) → 边境(3) → 低安(3) → 00(3)，列=安等，行=势力。
     const regionAnchors = [
-      { x: 2300, y: 1600 }, { x: 3100, y: 1000 }, { x: 1500, y: 1000 },
-      { x: 1500, y: 2200 }, { x: 3100, y: 2200 }, { x: 450, y: 1600 },
-      { x: 4150, y: 1600 }, { x: 2300, y: 300 }, { x: 2300, y: 2900 },
+      { x: 700,  y: 500 },  { x: 700,  y: 1600 }, { x: 700,  y: 2700 },  // 高安 苍/赤/静
+      { x: 1900, y: 500 },  { x: 1900, y: 1600 }, { x: 1900, y: 2700 },  // 边境 苍/赤/静
+      { x: 3100, y: 500 },  { x: 3100, y: 1600 }, { x: 3100, y: 2700 },  // 低安 苍/赤/静
+      { x: 4300, y: 500 },  { x: 4300, y: 1600 }, { x: 4300, y: 2700 },  // 00   苍/赤/静
     ];
     const sourceRegionById = {};
     for (const r of (map.regions || [])) sourceRegionById[r.id] = r;
@@ -641,7 +643,7 @@
     // 敌对锚点是战术信号而不是天体：据点实景小图 + 据点名，整枚标记可点击。
     let nameW = 0;
     for (const ch of raid.name) nameW += (ch.charCodeAt(0) > 0x2000 ? 10.5 : 7);
-    const w = Math.round(Math.max(110, nameW + (raid.elite ? 84 : 54))), h = 34, pad = 10;
+    const w = Math.round(Math.max(110, nameW + 54)), h = 34, pad = 10;
     // 每个天体的占用框：本体 + 下方名字 + 上方在岗徽章，垂直方向各留一行。
     // 把它当外接矩形（而不是圆）是保守估计——宁可离远点，也别压在标签上。
     const boxes = [];
@@ -671,18 +673,13 @@
       if (!best || gap > best.gap) best = { cx: c.cx, cy: c.cy, gap: gap };
     }
     const cx = best.cx.toFixed(1), cy = best.cy.toFixed(1);
-    const markerState = (raid.elite ? " elite" : "") + (engaged ? " engaged" : "");
+    const markerState = engaged ? " engaged" : "";
     const iconX = -w / 2 + 18;
     const textX = -w / 2 + 38;
     let s = '<g class="sys-raid click' + markerState + '" data-faction="' + esc(raid.faction) + '" data-act="raidOpen:' + node.id + '" transform="translate(' + cx + "," + cy + ')">';
     s += '<rect class="sys-raid-frame" x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h + '" rx="4"/>';
     s += raidSiteIconSvg(raid, iconX - 14, -14, 28);
     s += '<text class="sys-raid-label" x="' + textX + '" y="4">' + esc(raid.name) + '</text>';
-    if (raid.elite) {
-      const bx = w / 2 - 35;
-      s += '<rect class="sys-raid-elite-bg" x="' + bx + '" y="-7" width="28" height="14" rx="2"/>';
-      s += '<text class="sys-raid-elite" x="' + (bx + 14) + '" y="3">精锐</text>';
-    }
     s += "</g>";
     return s;
   }
@@ -731,8 +728,8 @@
     });
     if (!fighters.length) return "";
     const bt = (state.battles && state.battles[node.id]) || {};
-    // ⚠️ 敌方编队必须用「节点级」raid.band（精锐 = 星域档 +1），不能用星域档：
-    //    prepareNode() 用的是 Raids.raidAt(...).band，两边取错会在精锐节点上差一整档，
+    // ⚠️ 敌方编队必须用「节点级」raid.band（高档节点 = 星域档 +1），不能用星域档：
+    //    prepareNode() 用的是 Raids.raidAt(...).band，两边取错会在高档节点上差一整档，
     //    面板显示的敌舰与实际交战对象不是同一批。
     const raidR = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, node.id) : null;
     const raid = Data.StarMap.pirateRaid(state.starMap, node.id);
@@ -2082,6 +2079,7 @@
   // 取代旧的「持久小队名册 + 部署」：一次选定本次要去打的人和人数，直接写 assignment。
   let raidDlgEl = null;
   let raidSel = null;   // { nodeId, ids: [] }
+  let raidDlgTab = "belt";  // ★ 死亡空间：'belt' 海盗星带 / 'ds' 死亡空间
 
   function raidFighting(nodeId) {
     return state.members.filter(m => !m.destroyed && m.assignment &&
@@ -2089,14 +2087,14 @@
   }
 
   function raidKeyArtHtml(nodeId, raid, engaged) {
-    const artState = engaged ? "engaged" : (raid.elite ? "elite" : "ready");
-    const artEyebrow = engaged ? "FRIENDLY FLEET ENGAGED" : (raid.elite ? "ELITE HOSTILE SIGNAL" : "HOSTILE SIGNAL");
+    const artState = engaged ? "engaged" : "ready";
+    const artEyebrow = engaged ? "FRIENDLY FLEET ENGAGED" : "HOSTILE SIGNAL";
     return '<div class="raid-keyart ' + artState + '">'
       + '<img src="assets/system-concepts/raid-encounter-concept.png" alt="">'
       + '<div class="raid-keyart-stamp">' + raidSiteIconHtml(raid, "in-keyart") + '<i></i><span>' + artEyebrow + '</span></div>'
       + '<span class="raid-keyart-code">CONTACT / ' + esc(nodeId) + '</span>'
       + '<div class="raid-keyart-title"><small>RAIDER ENCOUNTER · THREAT BAND ' + String(raid.band).padStart(2, "0") + '</small>'
-      + '<b>' + esc(raid.name) + (raid.elite ? ' <i>精锐</i>' : "") + '</b></div>'
+      + '<b>' + esc(raid.name) + '</b></div>'
       + '</div>';
   }
 
@@ -2105,7 +2103,6 @@
     return '<div class="raid-site-meta"><b>' + raidSiteIconHtml(raid, "in-heading") + '<span>' + esc(factionName) + ' · 劫掠编队</span></b><div class="raid-site-tags">'
       + '<span class="tag">安全 ' + raid.secLevel + ' · ' + raid.secName + '</span>'
       + fleetLevelTag(raid.band, raid.faction)
-      + (raid.elite ? '<span class="tag bad">精锐目标</span>' : '')
       + '</div></div>'
       + '<div class="raid-summary-stats">'
       + '<div><span>敌方威胁</span><b>' + tier + '</b></div>'
@@ -2118,6 +2115,18 @@
     const nodeId = raidSel.nodeId;
     const raid = (Data.Raids && Data.Raids.raidAt) ? Data.Raids.raidAt(state.starMap, nodeId) : null;
     if (!raid) return "<div class='dim'>目标星系不存在。</div>";
+    // ★ 死亡空间：顶部两个标签；切换只重建 body，不关浮层
+    const dsTab = raidDlgTab === "ds";
+    const tabsHtml = '<div class="raid-tabs">'
+      + '<button class="raid-tab' + (dsTab ? "" : " on") + '" data-raidtab="belt">海盗星带</button>'
+      + '<button class="raid-tab' + (dsTab ? " on" : "") + '" data-raidtab="ds">死亡空间</button>'
+      + "</div>";
+    if (dsTab) return tabsHtml + raidDeathspaceBody(nodeId, raid);
+    return tabsHtml + raidBeltBody(nodeId, raid);
+  }
+
+  // 原海盗星带派遣体（逻辑从 raidDispatchBody 原样拆出）
+  function raidBeltBody(nodeId, raid) {
     const pf = (Data.Factions && Data.Factions.factionById) ? Data.Factions.factionById(raid.faction) : null;
     const cap = Engine.Combat.squadCapacity(state);
     const sel = raidSel.ids;
@@ -2152,6 +2161,47 @@
     return html;
   }
 
+  // ★ 死亡空间面板：本星系按 band+势力恰好 1 个副本（12 星域映射），有钥匙即可进入。
+  function raidDeathspaceBody(nodeId, raid) {
+    const DS = Engine.DeathSpace;
+    if (!DS || !Data.DeathSpace) return "<div class='dim'>死亡空间引擎未就绪。</div>";
+    DS.ensure(state);
+    const site = DS.siteForNode(state, nodeId);
+    const node = Data.StarMap.nodeById(state.starMap, nodeId);
+    let html = '<div class="ds-head"><b>死亡空间 · 深渊信标</b><span>' + esc((node && node.name) || "") + '</span></div>';
+    if (!site || site.band === 0) {
+      html += '<div class="ds-empty">本星带无对应死亡空间（先驱 10/10 暂未开放）。</div>';
+      return html;
+    }
+    const have = DS.ticketCount(state, site.ticket);
+    const reserve = DS.reserveOf(state);
+    const run = state.dsRuns && state.dsRuns[nodeId];
+    const fullLp = (site.waveLp || 1) * site.waves.length + (site.clearLpBonus || 0);
+    const rarities = [site.coreMaterial, site.protocolMaterial].filter(Boolean);
+
+    html += '<div class="ds-card">'
+      + '<div class="ds-card-title">' + esc(site.name) + '<span class="ds-tier">' + esc(site.dedTier ? site.dedTier + "/10" : "") + '</span></div>'
+      + '<div class="ds-card-sub">' + site.maxWave + ' 层 · 每层 ' + (site.waveLp || 1) + ' 功勋 · 全通共 ' + fullLp + ' 功勋</div>'
+      + '<div class="ds-card-sub">钥匙 <b>' + esc(site.ticketName || site.ticket) + '</b> ×' + have + '（保留 ' + reserve + '）</div>'
+      + '<div class="ds-card-sub">稀有掉落：' + (rarities.length ? esc(rarities.map(k => resName(k)).join("、")) : "—") + '</div>';
+    if (run) {
+      html += '<div class="ds-running">解析中 · 第 ' + run.wave + ' / ' + site.maxWave + ' 层'
+        + '<span class="dim">（自动续本，每本回血）</span></div>'
+        + '<div class="raid-actions"><button class="sm ghost" data-dsleave="' + nodeId + '">撤离（不返还密钥）</button></div>';
+    } else {
+      const chk = DS.canEnter(state, nodeId);
+      html += '<div class="raid-actions"><button class="sm primary" data-dsenter="' + nodeId + '"'
+        + (chk.ok ? "" : " disabled") + '>进入死亡空间 · 消耗 1 密钥</button></div>';
+      if (!chk.ok) html += '<div class="ds-warn">' + esc(chk.reason || "") + '</div>';
+    }
+    html += '</div>';
+    html += '<div class="ds-reserve"><label>密钥保留阈值 <input type="number" min="0" max="99" value="' + reserve
+      + '" data-dsreserve="1" class="ds-reserve-input"></label>'
+      + '<span class="dim">自动续本不会刷低于此值</span></div>';
+    html += '<div class="raid-dispatch-note">密钥由据点精英 / BOSS 按 5% 掉落；死亡空间内部不产出密钥。失败 / 撤离不返还。</div>';
+    return html;
+  }
+
   function refreshRaidDlg() {
     const body = document.getElementById("raid_dlg_body");
     if (body) body.innerHTML = raidDispatchBody();
@@ -2182,8 +2232,35 @@
       + "</div>";
     document.body.appendChild(el);
     el.addEventListener("click", function (ev) {
+      const tabBtn = ev.target.closest("[data-raidtab]");
+      if (tabBtn) {
+        raidDlgTab = tabBtn.getAttribute("data-raidtab");
+        refreshRaidDlg();
+        return;
+      }
+      const enterBtn = ev.target.closest("[data-dsenter]");
+      if (enterBtn) {
+        const r = Engine.DeathSpace.enter(state, enterBtn.getAttribute("data-dsenter"));
+        toast(r.ok ? "已进入 " + r.site.name : (r.reason || "无法进入"));
+        refreshRaidDlg();
+        return;
+      }
+      const leaveBtn = ev.target.closest("[data-dsleave]");
+      if (leaveBtn) {
+        Engine.DeathSpace.leave(state, leaveBtn.getAttribute("data-dsleave"), "主动撤离");
+        toast("已撤离死亡空间（密钥不返还）");
+        refreshRaidDlg();
+        return;
+      }
       if (ev.target.closest("[data-raidclose]")) { closeRaidDispatch(); return; }
       if (!ev.target.closest(".wh-detail")) closeRaidDispatch();
+    });
+    el.addEventListener("change", function (ev) {
+      if (ev.target && ev.target.hasAttribute("data-dsreserve")) {
+        Engine.DeathSpace.setReserve(state, ev.target.value);
+        if (Persistence) Persistence.save(state); else Core.save(state);
+        refreshRaidDlg();
+      }
     });
     raidDlgEl = el;
   }

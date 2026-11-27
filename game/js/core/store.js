@@ -16,10 +16,12 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_KEY = "nsk_save_v7";
+  const SAVE_KEY = "nsk_save_v8";
   // v7：星域安全等级改 EVE 式 secLevel 分档（弃用旧 sec 浮点）；新增玩家持久战斗小队 squad + base.squadTier。
   //     旧 v6 存档 region 无 secLevel、无 squad，作废重开。
-  const STATE_VERSION = 8;
+  // v8（2026-11-27，STATE_VERSION 9）：星图 9→12 星域（4 安等×3 势力）+ 据点 band 改节点级。
+  //     旧档 9 域固定星图无法平移到 12 域（节点坐标/归属/band 全变），用户授权强制升级 ⇒ 旧档作废重开。
+  const STATE_VERSION = 9;
 
   // 本地存档 NSK2：轻量混淆 + 完整性摘要。仅用于阻止误改/随手改，不等同于服务端防作弊签名。
   // 与 EVE 的 DSI2 同算法，前缀 / 掩码解耦为本作字面。无 NSK2 前缀的旧明文档走 JSON.parse 兼容。
@@ -108,6 +110,30 @@
     if (!s.legion || typeof s.legion !== "object") s.legion = { formed: false };
     if (typeof s.legion.formed !== "boolean") s.legion.formed = false;
     if (typeof s.starMapDone !== "boolean") s.starMapDone = false;
+
+    // —— 2026-11-27：星域定义幂等刷新（REGION_DEFS 为唯一真值）——
+    //   SAVE_KEY v8 已让 9 域旧档作废重开；此段对新档幂等无害（region 本就等于定义），
+    //   仅作保险：覆盖 secLevel/stage/pirate/rich/trialOpen，不碰坐标/size。
+    //   刷新必须在 RaidsData.attach 之前：attach 按 region.secLevel/pirate 重算据点 band/势力。
+    const SData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
+      ? window.NSK.Data.StarMap : null;
+    if (SData && SData.REGION_DEFS && s.starMap && Array.isArray(s.starMap.regions)) {
+      SData.REGION_DEFS.forEach((def, i) => {
+        const reg = s.starMap.regions[i];
+        if (!reg || reg.name !== def.name) return;   // 按名称对齐，防序错位改
+        reg.secLevel = def.secLevel;
+        reg.stage = def.stage;
+        reg.pirate = def.pirate;
+        reg.rich = def.rich;
+        reg.trialOpen = def.stage <= 1;
+      });
+      // 只刷试玩门禁（由 stage 派生、无副作用）；节点 richness/abundance/bodies 是生成时
+      // 烘焙的内容，重算要动主 PRNG 且会改玩家既有产出，本次范围外 —— 旧档保持原值。
+      for (const n of (s.starMap.nodes || [])) {
+        const reg = s.starMap.regions.find(r => r.id === n.region);
+        if (reg) n.trialOpen = reg.trialOpen !== false;
+      }
+    }
 
     // —— 2026-11-01：战斗小队改为「具名据点 + 科技编制」，旧档迁移 ——
     // ① 星图补据点（幂等重算，覆盖旧值）：raid 挂在 node.raid 上，见 data/raids.js
@@ -365,6 +391,37 @@
     for (const nid in s.combatTargeting) {
       if (!VALID_TARGET_MODES[s.combatTargeting[nid]]) delete s.combatTargeting[nid];
     }
+
+    // ★ 2026-11-27 死亡空间（幂等补字段，不升 STATE_VERSION）
+    //   · dsRuns: nodeId → {siteId,ticket,wave}；siteId 非法/波次越界 → 删（自动出本）
+    //   · dsClears: siteId → 非负整数；dsTicketReserve 钳到 [0,99]
+    //   · 成员 mode:"deathspace" 与 dsRuns 必须一致：无 run 的悬挂标记清掉，防幽灵锁定
+    const DSD = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.DeathSpace : null;
+    if (!s.dsRuns || typeof s.dsRuns !== "object" || Array.isArray(s.dsRuns)) s.dsRuns = {};
+    if (!s.dsClears || typeof s.dsClears !== "object" || Array.isArray(s.dsClears)) s.dsClears = {};
+    s.dsTicketReserve = Math.max(0, Math.min(99, Math.round(Number(s.dsTicketReserve) || 0)));
+    for (const nid in s.dsRuns) {
+      const run = s.dsRuns[nid];
+      const site = (DSD && DSD.byId) ? DSD.byId(run && run.siteId) : null;
+      if (!run || !site || !(site.waves && site.waves.length)) { delete s.dsRuns[nid]; continue; }
+      run.siteId = site.id;
+      run.ticket = site.ticket;
+      const w = Math.round(Number(run.wave) || 1);
+      run.wave = Math.max(1, Math.min(site.waves.length, w));
+    }
+    for (const sid in s.dsClears) {
+      let c = Math.floor(Number(s.dsClears[sid]) || 0);
+      if (c <= 0 || (DSD && DSD.byId && !DSD.byId(sid))) delete s.dsClears[sid];
+      else s.dsClears[sid] = c;
+    }
+    for (const m of (s.members || [])) {
+      if (m.assignment && m.assignment.mode === "deathspace" && !s.dsRuns[m.assignment.nodeId]) {
+        delete m.assignment.mode;
+      }
+    }
+    if (!s.stats) s.stats = {};
+    if (!s.stats.deathspace || typeof s.stats.deathspace !== "object") s.stats.deathspace = { clears: 0, waves: 0, lastSite: null };
+    for (const k of ["clears", "waves"]) s.stats.deathspace[k] = Math.max(0, Math.floor(Number(s.stats.deathspace[k]) || 0));
 
     // ★ 2026-11-27 打捞臂主动打捞开关（1 代 settings.salvageArmActive）
     //   · 幂等：旧档没有就补 { active:false }；非对象整段重建；active 强制布尔

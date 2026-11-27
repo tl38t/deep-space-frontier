@@ -179,7 +179,35 @@
     cargo_XL: { id: "cargo_XL", name: "货柜 XL", icon: "🎁", cat: "cargo", desc: "超大型货柜：开 3 次，奖励量 ×4.2。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC, TITAN, CARGO);
+  // ================================================================
+  // 死亡空间通行密钥（2026-11-27：复用 1 代 ticketMaterial 命名结构）
+  // ⚠️ 16 键**必须进 ALL**：否则 store.js 读档按「不在 ALL」清空 state.res，
+  //    掉到手的密钥读档即消失（月矿/货柜踩过同一个坑）。
+  // ⚠️ 显示名本作化：天使→苍穹劫团、血袭者→赤誓教团、萨沙→静默集群（IP 铁律）；
+  //    内部键全 ASCII，与 data/deathspace.js 的 SITES[].ticket 一一对应。
+  //    8/10 静默撞 6/10 已改「同化中枢」；4/10 静默按自身副本名「同化枢纽」避免二次撞名。
+  // ⚠️ 掉落挂点与进入消耗属引擎接线（后续步骤），当前只注册资源，不产不耗。
+  // ================================================================
+  const DS_TICKET = {
+    ds_tk_angel_2:  { id: "ds_tk_angel_2",  name: "苍穹劫团秘密补给站通行密钥", icon: "🔑", cat: "special", desc: "进入苍穹劫团2/10秘密补给站的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_blood_2:  { id: "ds_tk_blood_2",  name: "赤誓教团仪式地窖通行密钥",   icon: "🔑", cat: "special", desc: "进入赤誓教团2/10仪式地窖的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_sansha_2: { id: "ds_tk_sansha_2", name: "静默集群控制哨所通行密钥",   icon: "🔑", cat: "special", desc: "进入静默集群2/10控制哨所的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_angel_3:  { id: "ds_tk_angel_3",  name: "苍穹劫团劫掠者船坞通行密钥", icon: "🔑", cat: "special", desc: "进入苍穹劫团3/10劫掠者船坞的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_blood_3:  { id: "ds_tk_blood_3",  name: "赤誓教团献祭圣所通行密钥",   icon: "🔑", cat: "special", desc: "进入赤誓教团3/10献祭圣所的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_sansha_3: { id: "ds_tk_sansha_3", name: "静默集群同步节点通行密钥",   icon: "🔑", cat: "special", desc: "进入静默集群3/10同步节点的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_angel_4:  { id: "ds_tk_angel_4",  name: "苍穹劫团舰队集结区通行密钥", icon: "🔑", cat: "special", desc: "进入苍穹劫团4/10舰队集结区的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_blood_4:  { id: "ds_tk_blood_4",  name: "赤誓教团深红修道院通行密钥", icon: "🔑", cat: "special", desc: "进入赤誓教团4/10深红修道院的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_sansha_4: { id: "ds_tk_sansha_4", name: "静默集群同化中枢通行密钥",   icon: "🔑", cat: "special", desc: "进入静默集群4/10同化中枢的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_angel_6:  { id: "ds_tk_angel_6",  name: "苍穹劫团军事复合体通行密钥", icon: "🔑", cat: "special", desc: "进入苍穹劫团6/10军事复合体的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_blood_6:  { id: "ds_tk_blood_6",  name: "赤誓教团海军造船厂通行密钥", icon: "🔑", cat: "special", desc: "进入赤誓教团6/10海军造船厂的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_sansha_6: { id: "ds_tk_sansha_6", name: "静默集群战争设施通行密钥",   icon: "🔑", cat: "special", desc: "进入静默集群6/10战争设施的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_angel_8:  { id: "ds_tk_angel_8",  name: "苍穹劫团边疆堡垒通行密钥",   icon: "🔑", cat: "special", desc: "进入苍穹劫团8/10边疆堡垒的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_blood_8:  { id: "ds_tk_blood_8",  name: "赤誓教团深红圣所通行密钥",   icon: "🔑", cat: "special", desc: "进入赤誓教团8/10深红圣所的通行密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_sansha_8: { id: "ds_tk_sansha_8", name: "静默集群战争设施准入密钥",   icon: "🔑", cat: "special", desc: "进入静默集群8/10同化中枢的准入密钥。据点精英/BOSS 掉落，进入时消耗 1 枚。" },
+    ds_tk_precursor_10: { id: "ds_tk_precursor_10", name: "先驱深渊回响通行密钥", icon: "🔑", cat: "special", desc: "进入先驱10/10深渊回响的通行密钥。先驱副本入口暂未开放，密钥数据先落库。" },
+  };
+
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC, TITAN, CARGO, DS_TICKET);
 
   // 增强剂瓶身（booster:<id>）与战术材料（tactic:*）的显示名回退：
   // 增强剂数据由 js/lib/eveidle/data/boosters.js 运行时全局加载（window.BOOSTER_ITEMS），

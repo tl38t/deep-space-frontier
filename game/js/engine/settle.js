@@ -347,7 +347,29 @@
       }
       const memberById = {};
       for (const mm of state.members) memberById[mm.id] = mm;
+      // ★ 2026-11-27 死亡空间：逐节点判断，副本节点走独立状态机（3~6 波 + A3 折叠），
+      //   普通据点仍走 Combat.advance 的 20 波引擎。两套完全隔离。
+      const DS = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.DeathSpace : null;
       for (const nid in combatNodes) {
+        const dsRun = DS && state.dsRuns && state.dsRuns[nid];
+        if (dsRun) {
+          const dr = DS.advance(state, nid, dt, state.combatFocus === nid);
+          if (dr.rep) state.res.rep += dr.rep;
+          if (dr.ammoUsed) for (const k in dr.ammoUsed) state.res[k] = Math.max(0, (state.res[k] || 0) - dr.ammoUsed[k]);
+          if (dr.drops) for (const k in dr.drops) if (dr.drops[k] > 0) state.res[k] = (state.res[k] || 0) + dr.drops[k];
+          if (dr.damage > 0) applyCombatDamage(state, nid, dr.damage);
+          // 密钥掉落：据点精英/BOSS 5%（用普通战斗的击坠账本在下方另记，这里只处理副本内不重复掉）
+          const b = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
+          b.waves += dr.waves || 0;
+          b.rep += dr.rep || 0;
+          if (dr.dsClears) b.dsClears = (b.dsClears || 0) + dr.dsClears;
+          if (dr.waves > 0) b.lastTs = now;
+          b.simmed = !!dr.simmed;
+          const dsSite = (window.NSK && window.NSK.Data && window.NSK.Data.DeathSpace)
+            ? window.NSK.Data.DeathSpace.byId(dr.siteId) : null;
+          if (dsSite) b.band = dsSite.band;
+          continue;
+        }
         const focus = (state.combatFocus === nid);
         // ★ 2026-11-27 P1a：敌方状态真相已改为 state.combatEnemies（逐敌血量）。
         //   combatWaveHp 只作为**旧档一次性迁移源**传进去，advance 内部摊成逐敌血量后会自行删除。
@@ -380,6 +402,15 @@
         if (Cargo && Cargo.drawKills && r.kills) {
           const got = Cargo.drawKills(state, r.kills, r.faction, Math.random, salvageEff);
           cargoGot = got.total || 0;
+        }
+        // ★ 2026-11-27 死亡空间密钥：据点精英/BOSS 按 1 代 ticketChances 各 5% 掉落。
+        //   只从普通据点击坠产出（死亡空间内部不掉落，与 1 代 combat-render.js:1316 一致）。
+        if (DS && DS.dropTickets && r.kills) {
+          const tk = DS.dropTickets(state, r.kills, r.faction, r.band, Math.random);
+          if (tk > 0) {
+            const bt = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
+            bt.dsTickets = (bt.dsTickets || 0) + tk;
+          }
         }
         // ★ 2026-11-27 打捞臂主动打捞：耗同位素 → 掉舰船组件（引擎/数值见 engine/salvage.js）
         //   与货柜并列、互不干扰：货柜是容器，组件是造船原料（本作 recipes.js 有真实消费点）。

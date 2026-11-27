@@ -303,7 +303,9 @@
   // 预聚合某节点战斗参数（O(成员) 一次）。无参战成员返回 null。
   // ★ 2026-11-27 P0：第三参 compId 指定本波编队（"2_normal" / "3_normal_1_elite" / "boss" …）。
   //   省略时 pirates.fleetFor 退回 BAND_COMPOSITION 默认编队 —— 保证探针与旧调用点行为不变。
-  function prepareNode(state, nodeId, compId) {
+  // ★ 2026-11-27 死亡空间：`override` 为可选注入（仅 deathspace.js 传），普通调用不传 → 零影响。
+  //   { fleet, band, faction, iskMult, repMult, noLoot } —— 用来替换据点默认的 band/faction 编队与掉落。
+  function prepareNode(state, nodeId, compId, override) {
     const Data = _Data(), Settle = _Settle(), Pirates = _Pirates();
     if (!Data || !Settle) return null;
     const Tch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Tech) ? window.NSK.Engine.Tech : null;
@@ -311,11 +313,15 @@
     // 普通采矿节点不再产战斗：否则「去哪个节点打」不构成决策，207 个节点等于难度自选菜单。
     const Raids = (Data && Data.Raids) ? Data.Raids : null;
     const raid = (Raids && state.starMap) ? Raids.raidAt(state.starMap, nodeId) : null;
-    if (!raid) return null;
+    if (!raid && !(override && override.fleet)) return null;
 
-    const band = raid.band || 1;
-    const fleet = Pirates ? Pirates.fleetFor(band, raid.faction, compId) : null;
+    // ★ 死亡空间注入：用自定义编队/档位/势力，跳过据点 band 编队池。
+    //   dropCredits/dropRep 由 deathspace 引擎自己结算（LP 走 waveLp/clearLpBonus），这里置 0 避免双发。
+    const ov = override || {};
+    const band = ov.band || (raid && raid.band) || 1;
+    const fleet = ov.fleet || (Pirates ? Pirates.fleetFor(band, (raid && raid.faction), compId) : null);
     if (!fleet) return null;
+    const faction = ov.faction || (raid && raid.faction);
 
     // ⚠️ 2026-11-01：这里原本算过一个 masteryYield（精通点 combat 节点 +8% 赏金/级），
     //    但既没乘进掉落也没别的用处 —— 纯死变量，已删。精通点 combat 节点目前**未接线**。
@@ -400,8 +406,8 @@
     // 每波掉落（成员星币倍率进掉落，声望不吃）
     // ⚠️ 科技树·战利品协议是赏金**唯一**活乘区；精通点的 combatYieldMult 是死代码（本作不接）。
     const bountyMult = (Tch && Tch.bountyMult) ? Tch.bountyMult(state) : 1;
-    const dropCredits = DROP_CREDIT_BASE * raid.iskMult * modCreditSum * bountyMult;
-    const dropRep = DROP_REP_BASE * raid.repMult * cnt;
+    const dropCredits = ov.noLoot ? 0 : DROP_CREDIT_BASE * (ov.iskMult !== undefined ? ov.iskMult : (raid ? raid.iskMult : 1)) * modCreditSum * bountyMult;
+    const dropRep = ov.noLoot ? 0 : DROP_REP_BASE * (ov.repMult !== undefined ? ov.repMult : (raid ? raid.repMult : 1)) * cnt;
 
     const fleetHp = fleet.totalHp;
     // 一波真实耗时 = 盾段 + 甲段 + 构段，每段含该层克制（与 fireSegments 同一口径）。
@@ -452,7 +458,7 @@
       split: fleet.split,
       band: band,
       compId: compId || "default",
-      faction: raid.faction,
+      faction: faction,
       waveSec: waveSec,
     };
   }
@@ -1352,13 +1358,13 @@
   // focus = 该节点是否正被玩家注视（真仿真），返回 O(1)。
   // ★ 2026-11-27 P0：本函数被降级为「只负责推进当前这一波」的原语，由外层 advance() 做
   //   波次循环 / 整轮折叠 / 抽签。新增 compId 参数指定本轮编队（省略则走默认编队）。
-  function advanceCore(state, nodeId, dtSec, waveHp, focus, compId, resOverride, hpBudget) {
+  function advanceCore(state, nodeId, dtSec, waveHp, focus, compId, resOverride, hpBudget, siteOverride) {
     const dt = Math.max(0, dtSec || 0);
     let wHp = Math.max(0, waveHp || 0);
     // ★ 2026-11-27 P0：多波循环时外层要传「已扣过前几段弹药」的虚拟资源视图，
     //   否则第二段会读到未扣的存量而白打（本函数只读 res 的弹药，不写回）。
     const resView = resOverride || state.res;
-    const P = prepareNode(state, nodeId, compId);
+    const P = prepareNode(state, nodeId, compId, siteOverride);
     if (!P) {
       return {
         waves: 0, credits: 0, rep: 0, waveHp: wHp, damage: 0, fightSec: 0,
@@ -1395,7 +1401,9 @@
     let wiped = false;
 
     // ★ P1a：逐敌状态（缺失 / 与当前编队不符 → 重建；旧档 combatWaveHp 作一次性迁移源）
-    const ens = ensureEnemies(state, nodeId, P.fleet, wHp);
+    //   ★ 死亡空间：siteOverride.stateKey 用独立键，与同节点普通据点完全隔离。
+    const stKey = (siteOverride && siteOverride.stateKey) || nodeId;
+    const ens = ensureEnemies(state, stKey, P.fleet, wHp);
     const enemies = ens.list;
     // ★ P1b：索敌模式（队内无 classTier>=3 的船 → 强制按编队顺序，与 1 代 capital-only 同规则）
     const tMode = targetModeOf(state, nodeId, P.targetUnlocked);
@@ -1473,8 +1481,9 @@
     }
 
     // ★ P1a：提交逐敌状态；旧口径 combatWaveHp 彻底退役（不留两本账）
-    state.combatEnemies[nodeId] = nextEnemies;
-    if (state.combatWaveHp) delete state.combatWaveHp[nodeId];
+    //   ★ 死亡空间：stKey 在 ensureEnemies 处已按 siteOverride.stateKey 算好，写进独立键。
+    state.combatEnemies[stKey] = nextEnemies;
+    if (state.combatWaveHp) delete state.combatWaveHp[stKey];
 
     const remainTotal = enemiesRemainTotal(nextEnemies);
     const allDead = remainTotal <= 1e-9;
@@ -2086,5 +2095,6 @@
     // ★ 2026-11-27 P1c 敌方火力变量化
     enemyShotProfile, aliveFire, waveOutcomeOfFleet,
     fleetAuraMult, fleetRepairSuppr, fleetHasHealer,
+    maxCapacitorLevel, enemiesFromFleet,   // ★ 死亡空间 A3 折叠：燃料闸门 + 逐敌重建
   };
 });

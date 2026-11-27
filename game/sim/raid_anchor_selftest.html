@@ -104,7 +104,7 @@ let BACKUP=null, KEY=null;
   // 断言随之改为查那三个类名（只查文案会让「图标被删」这类回归漏过去）。
   const hostile=["reticle","brackets","ship"].filter(c=>el.querySelector(".sys-raid-"+c));
   ok("锚点带敌对标记（锁定框/准星/敌舰剪影）", hostile.length===3, hostile.join("+")||"无");
-  ok("精锐据点显示「精锐」", !target.raid.elite || (el.textContent||"").indexOf("精锐")>=0, target.raid.elite?"精锐":"常规");
+  ok("据点锚点不再显示「精锐」", (el.textContent||"").indexOf("精锐")<0, "精锐设定已取消");
 
   // 画布内（用屏幕坐标换算回 0~400 用户单位）
   const svg=D().querySelector(".sys-svg");

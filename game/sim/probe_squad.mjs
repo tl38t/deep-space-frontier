@@ -78,19 +78,23 @@ const worstDup = Math.max(...Object.values(dupMap));
 ok(worstDup <= 3, "同域同名据点 ≤ 3 次（12 词循环）", "最大 " + worstDup + " 次");
 ok(all.every(r => r.raid.name && r.raid.name.length >= 3), "每个据点都有名字");
 
-// band：精锐 = 常规 +1（封顶 5），且全档 1~5 都出现
+// band：节点级高档 = 星域档 +1（封顶 5），且全档 1~5 都出现
 const bandSet = {};
 for (const r of all) bandSet[r.raid.band] = 1;
 ok([1, 2, 3, 4, 5].every(b => bandSet[b]), "据点覆盖 band 1~5（不出现难度断层）", Object.keys(bandSet).join(","));
-// 每域恰好 1 个精锐，且 band 比同域常规高一档（0.0 域封顶 5，不高于 5）
-const elitePerRegion = {};
-for (const r of all) if (r.raid.elite) elitePerRegion[r.region] = (elitePerRegion[r.region] || 0) + 1;
-ok(map.regions.every(r => elitePerRegion[r.id] === 1), "每星域恰好 1 个精锐", JSON.stringify(elitePerRegion));
+// 据点不再有「精锐」标记：强度梯度由节点级高档承担，倍率只看安等
+ok(all.every(r => r.raid.elite === undefined), "据点无 elite 字段（精锐设定已取消）");
 const SEC_BAND_T = { "1.0-0.8": 1, "0.7-0.5": 2, "0.4-0.3": 3, "0.2-0.1": 4, "0.0": 5 };
 ok(all.every(r => {
   const base = SEC_BAND_T[r.raid.secLevel] || 1;
-  return r.raid.band === Math.min(5, base + (r.raid.elite ? 1 : 0));
-}), "band 逐星系符合安等（精锐 +1 封顶 5）");
+  return r.raid.band === Math.min(5, base + (r.raid.highBand ? 1 : 0));
+}), "band 逐星系符合安等（高档 +1 封顶 5）");
+// 每个 band 三势力齐（12 星域 = 4 安等 × 3 种族的核心目标）
+for (const b of [1, 2, 3, 4, 5]) {
+  const facs = {};
+  for (const r of all) if (r.raid.band === b) facs[r.raid.faction] = 1;
+  ok(Object.keys(facs).length === 3, "band " + b + " 三势力齐", Object.keys(facs).join("/"));
+}
 
 // 3) 每个节点都能剿匪（不再是「只有 18 个据点可打」）
 const everyNodeHasRaid = map.nodes.every(n => n.raid && n.raid.band >= 1);
@@ -236,8 +240,8 @@ Settle.settle(stLo, Date.now());
 const bLo = stLo.battles[RAID_NODE];
 ok(!!bLo && bLo.waves === 0 && bLo.credits === 0, "无武器剿匪 → 0 波 0 星币（不是挂机白拿钱）");
 
-// 8) 每波掉落按据点 iskMult 缩放（0.0 精锐 ÷ 高安常规 与两者 iskMult 之比一致）
-const hiRaid = all.find(r => !r.raid.elite && r.raid.band === 1);
+// 8) 每波掉落按据点 iskMult 缩放（0.0 据点 ÷ 高安据点 与两者 iskMult 之比一致）
+const hiRaid = all.find(r => r.raid.band === 1);
 const loRaid = all.filter(r => r.raid.band === 5).sort((a, b) => b.raid.iskMult - a.raid.iskMult)[0];
 ok(!!hiRaid && !!loRaid, "找到高安常规与 0.0 据点", (hiRaid ? hiRaid.raid.name : "-") + " / " + (loRaid ? loRaid.raid.name : "-"));
 const stA = mkState(1), stB = mkState(1);
@@ -250,7 +254,7 @@ const wantRatio = loRaid.raid.iskMult / hiRaid.raid.iskMult;
 ok(!!PA && !!PB && Math.abs(PB.dropCredits / PA.dropCredits - wantRatio) < 1e-6,
   "每波掉落 = 据点 iskMult 缩放：" + PB.dropCredits.toFixed(1) + " ÷ " + PA.dropCredits.toFixed(1) +
   " = " + (PB.dropCredits / PA.dropCredits).toFixed(3) + "（应 " + wantRatio.toFixed(3) + "）");
-// 精锐据点血更厚（band 更高 → 1 代 ENEMY_DATABASE 档位更高）
+// 高档据点血更厚（band 更高 → 1 代 ENEMY_DATABASE 档位更高）
 ok(PB.fleetHp > PA.fleetHp, "0.0 编队血量 > 高安（" + PB.fleetHp + " / " + PA.fleetHp + "）");
 
 // 9) 事件库：已删 mine_pirate，com_win 仍在

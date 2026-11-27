@@ -91,11 +91,20 @@
         probeSavingRemainder: 0,
         selectedProbe: null,   // 手动指定探针 id；null / 非法 / 缺货时引擎自动回退最强可用探针
       },
+      // ★ 2026-11-27 死亡空间（1 代 DED 16 副本）：nodeId → {siteId, ticket, wave, startedAt}
+      //   · 独立有限副本（3~6 波打穿 final 出本），与普通 20 波引擎（combatWave）零交叉。
+      //   · 逐敌状态写 combatEnemies["ds@"+nodeId]，与同节点据点隔离。
+      dsRuns: {},
+      dsClears: {},             // siteId → 全通次数
+      dsTicketReserve: 1,       // 钥匙保留阈值（A3 自动续本不刷光）
       combatFocus: null,        // 当前被玩家注视的战场节点（焦点走逐轮真仿真，其余走闭式）
       // ★ 2026-11-27 P3 战斗统计（1 代 core/statistics.js:214-253 的本作子集）
       //   maxWave 历史最高波数 / waves 累计打穿波数 / rounds 累计肃清轮数（Σ combatClears）
       //   bossKills·eliteKills 累计击坠 / defeats 战败次数（wiped）
-      stats: { combat: { maxWave: 0, waves: 0, rounds: 0, bossKills: 0, eliteKills: 0, defeats: 0 } },
+      stats: {
+        combat: { maxWave: 0, waves: 0, rounds: 0, bossKills: 0, eliteKills: 0, defeats: 0 },
+        deathspace: { clears: 0, waves: 0, lastSite: null },
+      },
       battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,waveSec,progress,squadDps,...}
       ships: [],               // {id, shipId, name, status:'idle'|'mission', nodeId}
       factions: factions,
