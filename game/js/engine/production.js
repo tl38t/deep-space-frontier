@@ -29,6 +29,15 @@
   function _Invention() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Invention : null; }
   // 科技树（④ 泰坦子系统 requiresTech 门禁校验用）：惰性取用，避免 load-time 捕获为 null
   function _Tech() { return (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Tech : null; }
+  // 考古内容表（探针制造配方真值）：Node 探针环境与浏览器双通道惰性取用
+  function _AC() {
+    if (typeof window !== "undefined" && window.NSK && window.NSK.Data && window.NSK.Data.ArchaeologyContent)
+      return window.NSK.Data.ArchaeologyContent;
+    if (typeof require === "function") {
+      try { return require("../data/archaeology-content.js"); } catch (e) { return null; }
+    }
+    return null;
+  }
   // 读取某科技节点已达等级（1 代同义：state.tech.levels[id]，未研究=0）
   function techLevelOf(state, id) {
     const lv = state && state.tech && state.tech.levels ? state.tech.levels[id] : 0;
@@ -267,6 +276,12 @@
         } else if (it.outType === "equipment") {
           state.equipment[it.out] = (state.equipment[it.out] || 0) + outQty;
           log.push({ out: it.out, qty: outQty, outType: "equipment" });
+        } else if (it.outType === "probe") {
+          // 探针唯一真值池 = state.archaeology.probes，不入 state.res（避免读档清洗/双真值）
+          const A = state.archaeology || (state.archaeology = {});
+          A.probes = A.probes || {};
+          A.probes[it.out] = (A.probes[it.out] || 0) + outQty;
+          log.push({ out: it.out, qty: outQty, outType: "probe" });
         } else if (it.outType === "fuel") {
           // 燃料进唯一池；无容量上限，产出全量入池（原料已在入队/续批时扣除）。
           const before = (state.base && state.base.fuel) || 0;
@@ -439,6 +454,42 @@
     const q = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
     q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: eqCost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
     return { ok: true, equip: Eq };
+  }
+
+  // ---- 考古探针制造（2026-11-27 S6）----
+  // 1 代「基础探针在装备工程制造」→ 本作制造车间（equipQueue）：与装备共用槽位、
+  // 共用「装备制造速度」增强剂，但产出写 state.archaeology.probes（唯一真值池，不镜像 state.res）。
+  // 复原/深层探针 craft 字段缺失 → 只能从考古稀有池掉落，此处拒绝。
+  function probeCostOf(probeId) {
+    const AC = _AC();
+    const p = AC && AC.probeById ? AC.probeById(probeId) : null;
+    if (!p || !p.craft) return null;
+    const cost = Object.assign({}, p.craft.cost || {});
+    if (p.craft.credits) cost.credits = (cost.credits || 0) + p.craft.credits;
+    if (p.repCost) for (const fid in p.repCost) cost.rep = (cost.rep || 0) + p.repCost[fid];
+    return cost;
+  }
+  function buildProbe(state, probeId, repeat) {
+    const AC = _AC();
+    const p = AC && AC.probeById ? AC.probeById(probeId) : null;
+    if (!p || !p.craft) return { ok: false, err: "该探针不可制造（仅考古稀有掉落）" };
+    const gate = equipGateLevel(p.level);
+    if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
+    const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
+    if ((state.base.industry.equipQueue || []).length >= plan.equip)
+      return { ok: false, err: "制造车间槽位已满（需升级舰基）" };
+    const cost = probeCostOf(probeId) || {};
+    if (!canAfford(state.res, cost)) return { ok: false, err: "原料不足" };
+    spend(state.res, cost);   // 入队即扣第 1 批（与其余队列同口径）
+    const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "equip") : 1;
+    const q = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
+    q.push({
+      recipeId: probeId, outType: "probe", out: probeId,
+      qty: Math.max(1, p.craft.batch || 1), in: cost,
+      dur: Math.max(1, p.craft.time || 1) * durationMult,
+      startedAt: Date.now(), repeat: repeat || 1, done: 0,
+    });
+    return { ok: true, probe: p };
   }
 
   // 装备拆解回收精炼料（2026-11-10）：拆未装配的库存装备 → 按精炼回收率无损返还制造成本材料，
@@ -690,5 +741,5 @@
     });
   }
 
-  return { enqueue, enqueueFuel, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processModuleQueue, processEnhanceQueue, buildShip, enqueueModule, enhanceShip, buildEquipment, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
+  return { enqueue, enqueueFuel, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processModuleQueue, processEnhanceQueue, buildShip, enqueueModule, enhanceShip, buildEquipment, probeCostOf, buildProbe, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
 });

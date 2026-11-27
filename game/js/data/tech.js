@@ -165,6 +165,92 @@
       effects: ["跃迁燃料消耗 -8%", "消耗 -16%（累计）"],
       desc: "回收跃迁余辉、优化曲速包络，让每次跃迁少喝一口燃料。",
     },
+    // ★ 2026-11-27 行星财政管理：1 代 research.js:281 planfin 逐值（每级 -1.8%，5 级 -9%）。
+    //   1 代前置 dataan@1，本作无对应节点 → 设为根节点；cost/sec 为本作提议值（待标定）。
+    //   消费点现成：sites.js renewCostOf 已走 Tech.bonusSum(state,"planCost")，无需改引擎。
+    //   另作考古协议 autosell/autoconv 的前置（1 代要求 planfin@4）。
+    {
+      id: "planfin",
+      name: "行星财政管理",
+      cat: "logistics",
+      maxLevel: 5,
+      requires: [],
+      cost: { credits: 10000 },
+      sec: 45 * 60,
+      xp: 50,                    // 45 min 档，每级 50（全树定稿分档）
+      bonus: { planCost: 0.018 },
+      effects: [
+        "行星基地维护费 -1.8%",
+        "维护费 -3.6%（累计）",
+        "维护费 -5.4%（累计）",
+        "维护费 -7.2%（累计）",
+        "维护费 -9%（累计）",
+      ],
+      desc: "统筹行星基地的进销账目，按级降低采集装置的续期费用；也是文物自动出售/兑换的前置。",
+    },
+
+    // ===== 考古支线（2026-11-27 S4）：1 代 research.js 的 arch / signal / deeparch /
+    //   backlash / probe / dataarch / autosell / autoconv 逐值搬。1 代 cat=exploration/protocol，
+    //   本作无这两列 → 统一归 logistics（不新增列，避免改 UI 布局；planfin 同列）。
+    //   cost/sec 为本作提议值待标定；xp 按 45min→50 / 60min→60 档。
+    {
+      id: "arch", name: "遗迹分析效率", cat: "logistics", maxLevel: 5, requires: [],
+      cost: { credits: 9000 }, sec: 45 * 60, xp: 50,
+      bonus: { archEff: 0.012 },
+      effects: ["考古效率 +1.2%", "效率 +2.4%（累计）", "效率 +3.6%（累计）", "效率 +4.8%（累计）", "效率 +6%（累计）"],
+      desc: "提升遗址解析速度；与深层解析同乘区相加。",
+    },
+    {
+      id: "deeparch", name: "深层遗迹解析", cat: "logistics", maxLevel: 5, requires: [{ id: "arch", level: 5 }],
+      cost: { credits: 18000 }, sec: 60 * 60, xp: 60,
+      bonus: { archEff: 0.024 },
+      effects: ["考古效率 +2.4%", "效率 +4.8%（累计）", "效率 +7.2%（累计）", "效率 +9.6%（累计）", "效率 +12%（累计）"],
+      desc: "深层遗迹的高密度数据结构解析，大幅压缩考古周期。",
+    },
+    {
+      id: "signal", name: "信号解析", cat: "logistics", maxLevel: 5, requires: [{ id: "arch", level: 1 }],
+      cost: { credits: 8000 }, sec: 45 * 60, xp: 50,
+      bonus: { archSuccess: 0.006 },
+      effects: ["考古成功率 +0.6pp", "成功率 +1.2pp（累计）", "+1.8pp", "+2.4pp", "+3pp"],
+      desc: "提高信号解码准确率，直接抬升遗址解析成功率。",
+    },
+    {
+      id: "backlash", name: "反冲隔离", cat: "logistics", maxLevel: 5, requires: [{ id: "arch", level: 1 }],
+      cost: { credits: 8000 }, sec: 45 * 60, xp: 50,
+      bonus: { backlash: 0.012 },
+      effects: ["反噬伤害 -1.2%", "伤害 -2.4%（累计）", "-3.6%", "-4.8%", "-6%"],
+      desc: "降低遗迹反噬对舰体的破坏性。",
+    },
+    {
+      id: "probe", name: "探针经济学", cat: "logistics", maxLevel: 5, requires: [{ id: "signal", level: 2 }],
+      cost: { credits: 12000 }, sec: 60 * 60, xp: 60,
+      bonus: { probe: 0.012 },
+      effects: ["探针消耗 -1.2%", "消耗 -2.4%（累计）", "-3.6%", "-4.8%", "-6%"],
+      desc: "优化探针使用，每周期攒下的小数节省会累计到免扣一整支。",
+    },
+    {
+      id: "dataarch", name: "数据归档", cat: "logistics", maxLevel: 5, requires: [{ id: "signal", level: 3 }, { id: "probe", level: 3 }],
+      cost: { credits: 20000 }, sec: 60 * 60, xp: 60,
+      bonus: { archExp: 0.012 },
+      effects: ["考古经验 +1.2%", "经验 +2.4%（累计）", "+3.6%", "+4.8%", "+6%"],
+      desc: "优化考古数据的存储与分析效率；也是文物自动协议的前置。",
+    },
+    {
+      id: "autosell", name: "文物自动出售协议", cat: "logistics", maxLevel: 1,
+      requires: [{ id: "dataarch", level: 4 }, { id: "planfin", level: 4 }],
+      cost: { credits: 24000 }, sec: 45 * 60, xp: 50,
+      bonus: {},
+      effects: ["解锁自动出售协议"],
+      desc: "研究后可在考古面板开启：每次成功周期自动把普通/独特文物换成星币。校准基体永不自动处理。",
+    },
+    {
+      id: "autoconv", name: "文物自动兑换协议", cat: "logistics", maxLevel: 1,
+      requires: [{ id: "dataarch", level: 5 }, { id: "planfin", level: 4 }],
+      cost: { credits: 30000 }, sec: 60 * 60, xp: 60,
+      bonus: {},
+      effects: ["解锁自动兑换协议"],
+      desc: "研究后可在考古面板开启：每次成功周期自动把功勋信标换成功勋。",
+    },
 
     // ===== ④ 泰坦子系统（2026-11-10）：8 研究节点，门禁泰坦制造链 =====
     // 基础 4（无前置或仅 titan_materials）→ 进阶 4（需基础分支）。

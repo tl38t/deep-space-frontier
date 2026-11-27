@@ -379,8 +379,9 @@
     // 敌方每秒伤害 = Σ 每艘敌舰 baseDamage × 命中系数（1 代 calcCombatDamage 逐敌判定）
     //   baseDamage 是「每轮」量，一轮 ROUND_SEC 秒 ⇒ 除 ROUND_SEC 得每秒。
     // ★ P1b 编队光环（1 代 combat.js:1967）：指挥舰在场时其余敌舰伤害 ×auraDamage（自身不吃）。
-    //   ⚠️ 本作按「编队满员」算，aura 持有者被打死后敌方 DPS 不会随之下降（1 代逐轮重算存活者）。
-    //   这条与「敌舰逐只阵亡 ⇒ 敌方 DPS 应递减」是同一个待修项，见路线图 P1b 遗留。
+    // ⚠️ 这里算的是「**满编**起手值」，只用于 UI 展示与探针；
+    //   真正结算的承伤走 fireLedger（逐段只统计存活者，见 P1c 段）。
+    //   两者不等是正常的：敌舰陆续阵亡后实际火力低于此值。
     const auraMult = fleetAuraMult(fleet);
     let incomingRaw = 0;
     for (const s of (fleet.ships || [])) {
@@ -855,6 +856,118 @@
 
   const KIND_CODE = { normal: "n", elite: "e", boss: "b" };
 
+  // ================================================================
+  // P1c · 敌方火力变量化（2026-11-27，用户拍板 A：严格 1 代口径，不做平衡补偿）
+  // ----------------------------------------------------------------
+  // 1 代 `systems/combat.js` 每轮重算「存活敌舰」的火力，本作 P1b 之前是「按满编一次算」，
+  // 后果：① 索敌模式只有进攻收益、打掉最凶的那只不减少挨打；② aura 持有者死后光环不消失；
+  // ③ enrageMul 是「随自身血量变化」的量，火力不变量化就无处落脚。
+  //
+  // 关键约束（§14.5 红线）：敌方火力是**分段常数** —— 一套编队至多 6 舰，每死一舰变一次，
+  // 所以一整波最多 6 段闭式，成本 O(6) 而非 O(dt)。**禁止逐 volley 模拟**。
+  // 与耗时的等价性：段内火力恒定 ⇒ ∫DPS·dt = Σ(该段存活者火力 × 该段时长)，是精确值不是近似。
+  // ================================================================
+
+  // 每舰的静态系数（一次算，逐段复用）。hitCoeff 内含 Math.pow(hit^1.4)，
+  // 放进逐段循环会让 6 舰 × 数十段 = 数百次 pow，故预计算。
+  function enemyShotProfile(P, fleet) {
+    const ships = (fleet && fleet.ships) || [];
+    const out = [];
+    for (let i = 0; i < ships.length; i++) {
+      const s = ships[i] || {};
+      const mh = s.maxHp || {};
+      const maxTotal = (Math.max(0, mh.shield || 0) + Math.max(0, mh.armor || 0) + Math.max(0, mh.structure || 0))
+        || (Number(s.total) || 0);
+      out.push({
+        dps: (Number(s.baseDamage) || 0) * hitCoeff(s.hit, P.playerDodge) / ROUND_SEC,
+        aura: Number(s.auraDamage) || 0,
+        suppr: Number(s.repairSuppr) || 0,
+        enrageMul: Number(s.enrageMul) || 0,
+        enrageAt: Number(s.enrageAt) || 0,
+        maxTotal: maxTotal,
+      });
+    }
+    return out;
+  }
+
+  // 当前**存活者**的瞬时火力（含光环 / 狂暴）+ 抑制修理强度。
+  // ★ 光环只由存活者提供（1 代 :1967），持有者被打死 → 其余敌舰立刻掉回原伤害。
+  // ★ 狂暴按「自身」血量比判定（不是队伍均值），1 代 useEnrage 的语义。
+  function aliveFire(profile, list) {
+    const n = list ? list.length : 0;
+    let aura = 1, suppr = 0;
+    for (let i = 0; i < n; i++) {
+      if (!enemyAlive(list[i])) continue;
+      const p = profile[i];
+      if (!p) continue;
+      if (p.aura > aura) aura = p.aura;
+      if (p.suppr > suppr) suppr = p.suppr;
+    }
+    let raw = 0;
+    for (let i = 0; i < n; i++) {
+      if (!enemyAlive(list[i])) continue;
+      const p = profile[i];
+      if (!p) continue;
+      let d = p.dps * (p.aura > 0 ? 1 : aura);
+      if (p.enrageMul > 1 && p.enrageAt > 0 && p.maxTotal > 0) {
+        if (enemyTotalHp(list[i]) / p.maxTotal < p.enrageAt) d *= p.enrageMul;
+      }
+      raw += d;
+    }
+    return { raw: raw, suppr: Math.min(0.95, suppr) };
+  }
+
+  // 我方承伤账本。三段累计量足以精确还原净伤：
+  //   net = Σ(raw×(1−减伤) − 维修) = rawSec×(1−减伤) − repSec   ← (1−减伤) 是常数，可提出求和号
+  // hpPool：本次最多还能挨多少净伤（advance 逐段传 hpLeft）→ 打空即止，不再需要
+  //   「先算出 fireSec 再按 pool/incoming 截断重推」那套（P1a 的旧办法在火力变量化后失效）。
+  function fireLedgerNew(P, profile, opts) {
+    const o = opts || {};
+    const pool = o.hpPool;
+    return {
+      rawSec: 0, repSec: 0, net: 0, wiped: false,
+      hpPool: (pool === undefined || pool === null || !isFinite(pool)) ? Infinity : Math.max(0, pool),
+      shield: Math.max(0, o.shield || 0),
+      armor: Math.max(0, o.armor || 0),
+      structure: Math.max(0, o.structure || 0),
+      emergency: Math.max(0, o.emergencyRepair || 0),
+      red: Math.max(0, Math.min(1, (P && P.dmgReduction) || 0)),
+      repairRaw: Math.max(0, (P && P.repairRaw) || 0),
+      profile: profile,
+    };
+  }
+
+  // 段首取一次：本段的瞬时火力与维修量。
+  // 紧急维修用**当前累计净伤**推结构比（1 代 structureEmergencyRepair 的原意），
+  //   而不是 P1a 那样「用满编火力乘总时长当上界」——那个上界在火力递减后偏大，会过早触发。
+  function fireLedgerTick(led, list) {
+    const st = aliveFire(led.profile, list);
+    let mult = 1;
+    if (led.emergency > 0 && led.structure > 0) {
+      const eaten = Math.max(0, led.net - led.shield - led.armor);   // 穿透盾/甲打到结构的净伤
+      if (Math.max(0, led.structure - eaten) / led.structure < 0.7) mult = 1 + led.emergency;
+    }
+    const rep = Math.min(REPAIR_CAP * st.raw, led.repairRaw * mult * (1 - st.suppr));
+    return { raw: st.raw, rep: rep, netRate: st.raw * (1 - led.red) - rep };
+  }
+
+  function fireLedgerPost(led, raw, rep, sec) {
+    if (!(sec > 0)) return;
+    led.rawSec += raw * sec;
+    led.repSec += rep * sec;
+    led.net = led.rawSec * (1 - led.red) - led.repSec;
+  }
+
+  // 本段最多能走多久：血池先空就在中途截断
+  function fireLedgerCap(led, netRate, sec) {
+    if (!isFinite(led.hpPool) || !(netRate > 0)) return { sec: sec, cut: false };
+    const avail = led.hpPool - led.net;
+    if (!(avail > 0)) return { sec: 0, cut: true };
+    const tE = avail / netRate;
+    if (tE < sec) return { sec: Math.max(0, tE), cut: true };
+    return { sec: sec, cut: false };
+  }
+
   function enemiesFromFleet(fleet) {
     if (!fleet || !Array.isArray(fleet.ships)) return null;
     const list = [];
@@ -960,11 +1073,13 @@
   // 在副本上推，**不改入参** —— 因为外层还要按血池/燃料比例截断，确定后才能提交。
   // 成本 = 船数 × 3 层 × (弹尽段数 + 回血次数 + 1) 次除法，与 dt 完全无关。
   // mode：索敌模式（P1b），省略 = "formation"（1 代默认，行为与 P1a 完全一致）。
-  function drainEnemies(P, list, dtSec, res, dryMaskIn, mode) {
+  function drainEnemies(P, list, dtSec, res, dryMaskIn, mode, opts) {
     const dt = Math.max(0, dtSec || 0);
     const next = cloneEnemies(list);
     const ships = (P.fleet && P.fleet.ships) || [];
     const tMode = normalizeTargetMode(mode);
+    const profile = enemyShotProfile(P, P.fleet);     // ★ P1c：逐舰静态系数（一次算，逐段复用）
+    const led = fireLedgerNew(P, profile, opts);      // ★ P1c：我方承伤账本（逐段累加存活者火力）
     const stock = {};
     let hasWeapon = false;
     for (const t of AMMO_TYPES) {
@@ -972,10 +1087,10 @@
       stock[t] = Math.max(0, (res && res[AMMO_OF[t]]) || 0);
     }
     if (!hasWeapon) {
-      return { next: next, fireSec: 0, dmg: 0, killed: [], ammoUsed: null, allDry: false, noWeapon: true };
+      return { next: next, fireSec: 0, dmg: 0, killed: [], ammoUsed: null, allDry: false, noWeapon: true, ledger: led, wiped: false };
     }
     if (!(dt > 0)) {
-      return { next: next, fireSec: 0, dmg: 0, killed: [], ammoUsed: null, allDry: false, noWeapon: false };
+      return { next: next, fireSec: 0, dmg: 0, killed: [], ammoUsed: null, allDry: false, noWeapon: false, ledger: led, wiped: led.hpPool <= 0 };
     }
 
     const dryMask = {
@@ -1054,13 +1169,19 @@
       }
 
       const tLayer = target.hp[L] / d;
-      const step = Math.max(0, tEnd - t);
+      // ★ P1c：本段先结算「存活者火力 → 我方承伤」，再看血池能撑多久。
+      //   旧办法（先按满编算 fireSec，再 pool/incoming 截断）在火力变量化后不成立：
+      //   敌舰陆续阵亡 ⇒ 后半段承伤速率更低，同一个 pool 能撑的秒数变长。
+      const tick = fireLedgerTick(led, next);
+      const cap = fireLedgerCap(led, tick.netRate, Math.max(0, tEnd - t));
+      const step = cap.sec;
 
       if (tLayer <= step + 1e-12) {
         // 打空这一层（该层血量精确归零，避免 1e-12 残留让下一轮又选中它）
         t += tLayer;
         dmg += target.hp[L];
         for (const ty of AMMO_TYPES) if (P.dpsByType[ty] > 0 && !dryMask[ty]) usedAmmo[ty] += (P.ammoRate[ty] || 0) * tLayer;
+        fireLedgerPost(led, tick.raw, tick.rep, tLayer);
         target.hp[L] = 0;
         if (!enemyAlive(target)) killed.push(ti);
         flipDry();
@@ -1072,7 +1193,9 @@
       dmg += dd;
       target.hp[L] = Math.max(0, target.hp[L] - dd);
       for (const ty of AMMO_TYPES) if (P.dpsByType[ty] > 0 && !dryMask[ty]) usedAmmo[ty] += (P.ammoRate[ty] || 0) * step;
+      fireLedgerPost(led, tick.raw, tick.rep, step);
       if (!enemyAlive(target)) killed.push(ti);
+      if (cap.cut) { led.wiped = true; break; }      // 血池在本段中途打空 → 当场撤离
       if (t >= dt - 1e-9) break;
 
       // 相位重构：按 maxTotal × bossHealPct 补血，盾→甲→构顺序，受各自上限（1 代 :2032-2043）
@@ -1102,18 +1225,20 @@
       if (!(usedAmmo[ty] > 0)) continue;
       ammoUsed[AMMO_OF[ty]] = Math.min(stock[ty], usedAmmo[ty]);
     }
-    return { next: next, fireSec: t, dmg: dmg, killed: killed, ammoUsed: ammoUsed, allDry: allDry, noWeapon: false };
+    return { next: next, fireSec: t, dmg: dmg, killed: killed, ammoUsed: ammoUsed, allDry: allDry, noWeapon: false, ledger: led, wiped: led.wiped };
   }
 
   // ---- 焦点：逐敌逐轮真掷骰（替代 simulateVolley 的主路径）----
   // 每轮按索敌模式挑目标、按它当前层判克制，再逐武器掷命中；
   // 一轮内打死后剩余伤害 carry 到下一只（与 applyDamage 同口径）。
   // 成本 = 轮数(≤2) × 武器数，与 dt 无关（SIM_MAX_ROUNDS 封顶）。
-  function volleyEnemies(P, list, res, sec, mode) {
+  function volleyEnemies(P, list, res, sec, mode, opts) {
     const span = Math.max(0, sec || 0);
     const next = cloneEnemies(list);
     const ships = (P.fleet && P.fleet.ships) || [];
     const tMode = normalizeTargetMode(mode);
+    const profile = enemyShotProfile(P, P.fleet);      // ★ P1c
+    const led = fireLedgerNew(P, profile, opts);       // ★ P1c
     const healers = [];
     for (let i = 0; i < next.length; i++) {
       const s = ships[i];
@@ -1138,6 +1263,8 @@
       let L = 0;
       for (let i = 0; i < 3; i++) { if (target.hp[i] > 1e-9) { L = i; break; } }
       const layer = LAYER_ORDER[L];
+      // ★ P1c：本轮承伤按「本轮开始时存活者」计（1 代逐轮重算存活者的本作映射）
+      const tick = fireLedgerTick(led, next);
 
       let roundDmg = 0;
       for (const w of P.weapons) {
@@ -1156,6 +1283,10 @@
       const res2 = applyDamage(next, roundDmg, ti);        // 从当前目标起摊，溢出向后顺延
       for (const idx of res2.killed) killed.push(idx);
       fireSec += roundSecTotal;
+      fireLedgerPost(led, tick.raw, tick.rep, roundSecTotal);
+
+      // 血池打空：本条腿是随机路径，结果不作数 —— 交给 advanceCore 用解析式重推（保证确定性）
+      if (isFinite(led.hpPool) && led.net >= led.hpPool - 1e-9) { led.wiped = true; break; }
 
       // 相位重构（焦点路径）：每 every 轮回一次。⚠️ 用**本段内**轮序，不是 1 代整场 roundSeq
       //   （本作无该字段）；详见 drainEnemies 同名注释。
@@ -1189,6 +1320,7 @@
     return {
       next: next, dmg: dmg, hits: hits, misses: misses, fireSec: fireSec,
       killed: killed, ammoUsed: ammoUsed, allDry: P.weapons.length > 0 && !anyLeft,
+      ledger: led, wiped: led.wiped,
     };
   }
 
@@ -1220,7 +1352,7 @@
   // focus = 该节点是否正被玩家注视（真仿真），返回 O(1)。
   // ★ 2026-11-27 P0：本函数被降级为「只负责推进当前这一波」的原语，由外层 advance() 做
   //   波次循环 / 整轮折叠 / 抽签。新增 compId 参数指定本轮编队（省略则走默认编队）。
-  function advanceCore(state, nodeId, dtSec, waveHp, focus, compId, resOverride) {
+  function advanceCore(state, nodeId, dtSec, waveHp, focus, compId, resOverride, hpBudget) {
     const dt = Math.max(0, dtSec || 0);
     let wHp = Math.max(0, waveHp || 0);
     // ★ 2026-11-27 P0：多波循环时外层要传「已扣过前几段弹药」的虚拟资源视图，
@@ -1247,11 +1379,20 @@
       pool += Math.max(0, sh) + Math.max(0, ar) + Math.max(0, st);
       shieldTotal += Math.max(0, sh); armorTotal += Math.max(0, ar); structureTotal += Math.max(0, st);
     }
-    const baseIncoming = P.incomingDps;
-    let effIncoming = baseIncoming;
+
+    // ★ P1c：承伤账本参数。hpBudget 由外层逐段传（多段循环里 hpLeft 已被前几段吃掉），
+    //   缺省用本队满血池。紧急维修的结构比在账本内部按「累计净伤」动态判定，
+    //   不再是 P1a 那套「满编火力 × 总时长当上界」的事后补算（火力递减后那个上界偏大）。
+    const ledOpts = {
+      hpPool: (typeof hpBudget === "number" && isFinite(hpBudget)) ? hpBudget : pool,
+      shield: shieldTotal, armor: armorTotal, structure: structureTotal,
+      emergencyRepair: P.emergencyRepair || 0,
+    };
 
     let dmg = 0, fireSec = 0, ammoUsed = null, allDry = false, hits = 0, misses = 0, simmed = false, fuelStarved = false;
     let noWeapon = false;
+    let led = null;
+    let wiped = false;
 
     // ★ P1a：逐敌状态（缺失 / 与当前编队不符 → 重建；旧档 combatWaveHp 作一次性迁移源）
     const ens = ensureEnemies(state, nodeId, P.fleet, wHp);
@@ -1263,7 +1404,7 @@
 
     if (focus && dt > 0 && dt <= SIM_MAX_SEC) {
       simmed = true;
-      const sv = volleyEnemies(P, enemies, resView, dt, tMode);
+      const sv = volleyEnemies(P, enemies, resView, dt, tMode, ledOpts);
       fireSec = P.weapons.length > 0 ? sv.fireSec : 0;   // 没武器 = 打不动（1 代同规则）
       dmg = sv.dmg;
       ammoUsed = sv.ammoUsed;
@@ -1273,8 +1414,10 @@
       noWeapon = P.weapons.length === 0;
       nextEnemies = sv.next;
       killed = sv.killed;
+      led = sv.ledger;
+      wiped = sv.wiped;
     } else {
-      const fp = drainEnemies(P, enemies, dt, resView, null, tMode);
+      const fp = drainEnemies(P, enemies, dt, resView, null, tMode, ledOpts);
       fireSec = fp.fireSec;
       ammoUsed = fp.ammoUsed;
       allDry = fp.allDry;
@@ -1282,43 +1425,29 @@
       dmg = fp.dmg;
       nextEnemies = fp.next;
       killed = fp.killed;
+      led = fp.ledger;
+      wiped = fp.wiped;
     }
 
-    // 舰船级紧急维修（1 代 structureEmergencyRepair：结构比 <0.7 额外加成）。
-    // fireSec 仅由我方进攻决定（与 repair 无关），故先算 fireSec 再判定防御，无循环依赖。
-    // 单遍判定：用基准（无紧急）damage 推 structureRatio；emergency 只增 repair（基准 damage 是上界），结构比只会更高，判定保守且正确。
-    if (P.emergencyRepair > 0 && structureTotal > 0) {
-      const baseDmg = baseIncoming * fireSec;
-      let rem = baseDmg;
-      rem = Math.max(0, rem - shieldTotal);
-      rem = Math.max(0, rem - armorTotal);
-      const remStruct = Math.max(0, structureTotal - rem);
-      if (remStruct / structureTotal < 0.7) {
-        const repairRawE = (P.repairRawEff !== undefined ? P.repairRawEff : P.repairRaw) * (1 + P.emergencyRepair);
-        const repairPerSecE = Math.min(REPAIR_CAP * P.incomingRaw, repairRawE);
-        effIncoming = Math.max(0, P.incomingRaw * (1 - P.dmgReduction) - repairPerSecE);
-      }
-    }
-    const maxFightSec = effIncoming > 0 ? (pool / effIncoming) : dt;
-
-    // 血池封顶：被打穿就当场撤离，剩余时间不再产出（离线 8 小时不会凭空吃伤害）。
-    // ★ P1a：逐敌血量不能按比例缩放（会造出「半层血」），改成「按截断后的秒数解析重推一遍」。
-    //   解析式重推 = 微秒级，且不重掷骰（焦点路径也走解析重推，避免 wiped 时结果随机）。
-    const wiped = fireSec > maxFightSec + 1e-9;
-    if (wiped && fireSec > 0) {
-      const rr = drainEnemies(P, enemies, Math.max(0, maxFightSec), resView, null, tMode);
+    // 血池在本段内被打空：当场撤离，剩余时间不再产出（离线 8 小时不会凭空吃伤害）。
+    // ★ P1c：截断点已经由账本（fireLedgerCap）在闭式循环里精确求出，不再「先算 fireSec 再按
+    //   pool/incoming 截断重推」——那个办法要求承伤速率恒定，火力变量化后不成立。
+    //   焦点路径例外：掷骰结果不可复现，改用解析式重推一遍（同一 hpPool，截断点确定）。
+    if (wiped && simmed) {
+      const rr = drainEnemies(P, enemies, dt, resView, null, tMode, ledOpts);
       nextEnemies = rr.next;
       killed = rr.killed;
       dmg = rr.dmg;
       fireSec = rr.fireSec;
       ammoUsed = rr.ammoUsed;
+      led = rr.ledger;
+      wiped = rr.wiped;
       allDry = false;                       // 这次不是弹尽，是血尽
     }
 
     // 燃料截断（对回 1 代「燃料耗尽即停火」：战斗燃料按每齐射扣，烧光则本场停火）。
     // 本作唯一燃料池 = base.fuel（与跃迁共用，资源描述已声明「派遣小队与基地迁移」）。
     // perSec = 参战装备每齐射燃料 × 电容折扣 ÷ ROUND_SEC；capMult = 1/(1+最高电容等级×0.02)（1 代 selectors.js:2671）。
-    // 燃料不足以支撑整场时，按可用秒数等比缩放产出（与上方「血尽」同口径）。
     const fuelPool = (state.base && typeof state.base.fuel === "number") ? state.base.fuel : 0;
     const fuelPerVolley = (P.fuelPerVolley || 0);
     if (fuelPerVolley > 0 && fuelPool > 0) {
@@ -1327,15 +1456,17 @@
       const perSec = fuelPerVolley * capMult / ROUND_SEC;
       const fuelMaxSec = fuelPool / perSec;
       if (fuelMaxSec < fireSec - 1e-9) {
-        const rr = drainEnemies(P, enemies, Math.max(0, fuelMaxSec), resView, null, tMode);
+        const rr = drainEnemies(P, enemies, Math.max(0, fuelMaxSec), resView, null, tMode, ledOpts);
         nextEnemies = rr.next;
         killed = rr.killed;
         dmg = rr.dmg;
         fireSec = rr.fireSec;
         ammoUsed = rr.ammoUsed;
+        led = rr.ledger;
         setCombatFuel(state, 0);      // 烧光（1 代 clamp 到 0 后门禁停火）
         fuelStarved = true;
         allDry = false;
+        wiped = rr.wiped;             // 燃料先于血池打空 ⇒ 这不是战败
       } else {
         setCombatFuel(state, fuelPool - perSec * fireSec);
       }
@@ -1350,7 +1481,11 @@
     const waves = allDead ? 1 : 0;                              // 单波原语：本段最多打穿 1 波
     wHp = allDead ? 0 : Math.max(0, P.fleetHp - remainTotal);   // 本波已打掉的伤害（兼容口径）
 
-    const damage = effIncoming * fireSec;
+    // ★ P1c：damage 不再是「一个速率 × 总时长」，而是账本逐段累加的净伤
+    //   （敌舰阵亡 → 火力递减 → 同样的秒数挨得更少）。这是本轮唯一的数值变化来源。
+    const damage = led ? Math.max(0, led.net) : 0;
+    // 面板显示的「敌方火力 /s」用本段平均（起手满编值会一直骗人）。无战斗时长时回落到满编值。
+    const avgIncoming = fireSec > 1e-9 ? (damage / fireSec) : P.incomingDps;
     const progress = P.fleetHp > 0 ? Math.max(0, Math.min(1, wHp / P.fleetHp)) : 1;
 
     // 战术材料掉落（band N → tactic:tN）：与 credits/rep 同口径按 waves 缩放；这是 tactic 唯一获取途径。
@@ -1379,7 +1514,7 @@
       squadDps: P.squadDps,
       weaponDps: P.weaponDps,
       fleetDps: P.fleetDps,
-      incomingDps: effIncoming,
+      incomingDps: avgIncoming,
       repairPerSec: P.repairPerSec,
       dmgReduction: P.dmgReduction,
       band: P.band,
@@ -1449,17 +1584,20 @@
   // ⚠️ 不清空 combatWaveHp —— 调用方负责归零（新波从 0 血开始）。
   function advanceWavePointer(state, nodeId, band, n) {
     const steps = Math.max(1, Math.round(n || 1));
+    let rounds = 0;
     for (let i = 0; i < steps; i++) {
       const w = Math.min(MAX_WAVE, Math.max(1, Math.round(Number(state.combatWave[nodeId]) || 1)));
       if (w >= MAX_WAVE) {
         state.combatClears[nodeId] = (state.combatClears[nodeId] || 0) + 1;   // 对应 1 代 zoneClears++
         state.combatWave[nodeId] = 1;                                         // 对应 1 代 c.wave = 1
+        rounds++;
       } else {
         state.combatWave[nodeId] = w + 1;
       }
       const p = planForWave(state.combatWave[nodeId], band);
       state.combatWavePlan[nodeId] = { compId: p.compId };
     }
+    return rounds;   // ★ P2：本次推进完成了几轮（0/1/…），用于发肃清功勋
   }
 
   // 一整波耗时（任意 dpsByType / 三防总量 / 弹种掩码）—— 折叠与逐波都用它
@@ -1493,14 +1631,18 @@
     return s;
   }
 
-  // 某个编队「打穿一次」的真实耗时。
-  // 无特殊机制 → 纯除法（O(1)，折叠热路径用这个）；
-  // 含回血 boss → 血量不单调，改让 drainEnemies 实算（成本 ≤ 数百次乘除，且只在有回血时走）。
-  function waveSecOfFleet(Pc, f, dryMask) {
-    if (!fleetHasHealer(f)) return waveSecFrom(Pc.dpsByType, f.hpSum, dryMask);
-    const rr = drainEnemies(Pc, enemiesFromFleet(f), REMAIN_PROBE_MAX, INF_AMMO_RES, dryMask, "formation");
-    if (enemiesAliveCount(rr.next) > 0) return Infinity;
-    return rr.fireSec;
+  // 某个编队「打穿一次」的耗时 + **我方净承伤**（P1c 起两者一次算完）。
+  // ★ 为什么不再用 waveSecFrom：承伤现在是逐段积分（敌舰阵亡 → 火力递减），
+  //   「一次打穿的净伤」不再等于 速率 × 总时长，必须顺着同一个分段闭式走一遍。
+  //   成本 = ≤6 舰 × 3 层 = 常数段（GUARD ≈200 是防呆上界，真实段数远小于它），与 dt 无关。
+  //   dt 传 Infinity：走的分支与「打穿为止」完全一致；回血 boss 打不穿时由存活判定返回 null。
+  function waveOutcomeOfFleet(Pc, f, dryMask, mode) {
+    const list = enemiesFromFleet(f);
+    if (!list) return null;
+    const rr = drainEnemies(Pc, list, Infinity, INF_AMMO_RES, dryMask, normalizeTargetMode(mode), { hpPool: Infinity });
+    if (enemiesAliveCount(rr.next) > 0) return null;    // 打不穿（无火力 / 某层打不动 / 回血抵过输出）
+    if (!isFinite(rr.fireSec)) return null;
+    return { sec: rr.fireSec, net: rr.ledger ? Math.max(0, rr.ledger.net) : 0 };
   }
 
   // 某个编队对我方的有效每秒伤害（与 prepareNode 同口径，但可对任意编队求值）
@@ -1525,25 +1667,30 @@
   //   dps 不同（band2 实测：普通 109.51 / 带精英 104.34 / boss 96.31）。原实现复用当前波的 P
   //   去算池里全部编队，导致整轮期望偏短 4~5%（表现为「离线比在线多算 4% 波数」）。
   //   ⇒ 传入 state + nodeId 后，逐编队 prepareNode 取各自 dps；不传则退回旧口径（仅兼容）。
-  function expectedRound(P, band, faction, dryMask, state, nodeId) {
+  // ★ 2026-11-27 P1c：承伤也改成逐编队积分（第 7 参 mode = 索敌模式）。
+  //   ⚠️ 之前折叠用「满编火力 × 时长」，在线逐波用同一条公式 ⇒ 两边一致但都高估。
+  //   P1c 之后在线逐波按存活者递减，折叠若仍用满编公式，8h 离线会系统性多算承伤
+  //   ⇒ 必须把 tMode 一起透传，让在线与离线走**同一条**分段路径。
+  function expectedRound(P, band, faction, dryMask, state, nodeId, mode) {
     const Pirates = _Pirates();
     if (!Pirates) return null;
     const pool = Pirates.BAND_FORMATION_POOLS[band] || Pirates.BAND_FORMATION_POOLS[1];
     const np = MAX_WAVE - 1;                       // 普通波数量（第 20 波是 boss）
+    const tMode = normalizeTargetMode(mode);
     let wSec = 0, wHp = 0, wDmg = 0;
     const wAmmo = { laser: 0, missile: 0, cannon: 0 };
     for (const c of pool) {
       const f = Pirates.fleetFor(band, faction, c.id);
       if (!f || !(f.totalHp > 0)) continue;
       const Pi = (state && nodeId) ? (prepareNode(state, nodeId, c.id) || P) : P;
-      const T = waveSecOfFleet(Pi, f, dryMask);
-      if (!isFinite(T)) return null;                 // 打不动某组合 → 不能折叠
-      wSec += c.chance * T;
+      const o = waveOutcomeOfFleet(Pi, f, dryMask, tMode);
+      if (!o) return null;                           // 打不动某组合 → 不能折叠
+      wSec += c.chance * o.sec;
       wHp += c.chance * f.totalHp;
-      wDmg += c.chance * effIncomingOf(P, f) * T;
+      wDmg += c.chance * o.net;
       for (const ty of AMMO_TYPES) {
         if (dryMask && dryMask[ty]) continue;
-        wAmmo[ty] += c.chance * (Pi.ammoRate[ty] || 0) * T;
+        wAmmo[ty] += c.chance * (Pi.ammoRate[ty] || 0) * o.sec;
       }
     }
     if (!(wSec > 0)) return null;
@@ -1552,21 +1699,37 @@
     const ammo = { laser: 0, missile: 0, cannon: 0 };
     for (const ty of AMMO_TYPES) ammo[ty] = wAmmo[ty] * np;
 
+    // ★ P2 货柜：折叠路径拿不到真实击坠，用「每轮期望击坠数（按 kind）」代替。
+    //   与折叠本身同口径（整轮用期望、余数真抽签），误差量级同样是 CV/√轮数。
+    const kills = { normal: 0, elite: 0, boss: 0 };
+    for (const c of pool) {
+      const f = Pirates.fleetFor(band, faction, c.id);
+      for (const s of ((f && f.ships) || [])) {
+        const k = (s.kind === "elite" || s.kind === "boss") ? s.kind : "normal";
+        kills[k] += c.chance;
+      }
+    }
+    for (const k in kills) kills[k] *= np;
+
     // 第 20 波：boss 固定编队（不抽签）
     const bf = Pirates.fleetFor(band, faction, "boss");
     if (bf && bf.totalHp > 0) {
       const Pb = (state && nodeId) ? (prepareNode(state, nodeId, "boss") || P) : P;
-      const Tb = waveSecOfFleet(Pb, bf, dryMask);
-      if (!isFinite(Tb)) return null;
-      sec += Tb;
+      const ob = waveOutcomeOfFleet(Pb, bf, dryMask, tMode);
+      if (!ob) return null;
+      sec += ob.sec;
       hp += bf.totalHp;
-      dmgTaken += effIncomingOf(P, bf) * Tb;
+      dmgTaken += ob.net;
       for (const ty of AMMO_TYPES) {
         if (dryMask && dryMask[ty]) continue;
-        ammo[ty] += (Pb.ammoRate[ty] || 0) * Tb;
+        ammo[ty] += (Pb.ammoRate[ty] || 0) * ob.sec;
+      }
+      for (const s of ((bf.ships) || [])) {
+        const k = (s.kind === "elite" || s.kind === "boss") ? s.kind : "normal";
+        kills[k] += 1;
       }
     }
-    return { sec: sec, hp: hp, dmgTaken: dmgTaken, ammo: ammo, waves: MAX_WAVE };
+    return { sec: sec, hp: hp, dmgTaken: dmgTaken, ammo: ammo, waves: MAX_WAVE, kills: kills };
   }
 
   // ------------------------------------------------------------------
@@ -1590,7 +1753,7 @@
       combatants: [], drops: null, fuelStarved: false, noWeapon: false,
       wave: state.combatWave[nodeId] || 1, clears: state.combatClears[nodeId] || 0,
       compId: compId, isBossWave: compId === "boss",
-      killed: [], enemiesLeft: 0,
+      killed: [], kills: { normal: 0, elite: 0, boss: 0 }, enemiesLeft: 0,
     };
     if (!P0) return EMPTY;
 
@@ -1616,6 +1779,8 @@
       waves: 0, credits: 0, rep: 0, damage: 0, fightSec: 0, hits: 0, misses: 0,
       simmed: false, wiped: false, allDry: false, fuelStarved: false,
       killed: [],
+      // ★ P2 货柜：按 kind 的击坠计数（折叠路径是浮点期望值，逐波路径是整数真实值）
+      kills: { normal: 0, elite: 0, boss: 0 },
     };
     const ammoTotal = {};
     const dropsTotal = {};
@@ -1645,8 +1810,9 @@
       if (r.killed && r.killed.length) {
         const fships = (r.fleet && r.fleet.ships) || [];
         for (const idx of r.killed) {
-          const sh = fships[idx];
-          acc.killed.push(sh ? sh.kind : "normal");
+          const kd = fships[idx] ? (fships[idx].kind || "normal") : "normal";
+          acc.killed.push(kd);
+          acc.kills[kd === "elite" || kd === "boss" ? kd : "normal"] += 1;
         }
       }
       lastFight = r;
@@ -1685,7 +1851,7 @@
 
         // ---- 整轮折叠：只允许在「轮首 + 满血 + 大 dt」发生 ----
         if (!focus && !acc.allDry && wHp <= 1e-9 && (state.combatWave[nodeId] || 1) === 1 && remaining > SIM_MAX_SEC) {
-          const e = expectedRound(P, band, P.faction, dryMask, state, nodeId);
+          const e = expectedRound(P, band, P.faction, dryMask, state, nodeId, targetModeOf(state, nodeId, P.targetUnlocked));
           if (e && isFinite(e.sec) && e.sec > 1e-9) {
             // 弹药约束：折叠不能跨过最早打空时刻
             let foldSec = remaining;
@@ -1714,6 +1880,18 @@
               }
               state.combatClears[nodeId] = (state.combatClears[nodeId] || 0) + k;
               state.combatWave[nodeId] = 1;
+              // ★ P2 肃清功勋：折叠跨过的 k 轮各发一次 clearLp（与逐波口径一致）
+              {
+                const Pirates0 = _Pirates();
+                const clp = (Pirates0 && Pirates0.clearLpOf) ? Pirates0.clearLpOf(P.band) : 0;
+                if (clp > 0) acc.rep += clp * k;
+              }
+              // ★ P2 货柜：折叠跨过的 k 轮，其击坠按「每轮期望 × k」记账（浮点，settle 再抽样）
+              if (e.kills) {
+                acc.kills.normal += (e.kills.normal || 0) * k;
+                acc.kills.elite += (e.kills.elite || 0) * k;
+                acc.kills.boss += (e.kills.boss || 0) * k;
+              }
               const np = planForWave(1, band);
               state.combatWavePlan[nodeId] = { compId: np.compId };
               // ★ P1a：整轮折叠跨过 k 轮 → 逐敌状态必须作废（下轮按新编队满血重建）
@@ -1730,23 +1908,19 @@
         const ensW = ensureEnemies(state, nodeId, P.fleet, wHp);
         const need = enemiesRemainSec(P, ensW.list, dryMask, targetModeOf(state, nodeId, P.targetUnlocked));
         if (!isFinite(need) || need <= 1e-9) break;         // 打不穿（无武器/被弹种锁死）→ 停
-        let segSec = Math.min(need, remaining);
-        // 血池约束：本段能承受多久
-        let hpCapped = false;
-        const inc = P.incomingDps;
-        if (inc > 1e-9) {
-          const secByHp = hpLeft / inc;
-          if (secByHp < segSec) { segSec = Math.max(0, secByHp); hpCapped = true; }
-        }
-        if (segSec <= 1e-9) { acc.wiped = true; break; }
+        // ★ P1c：血池截断不再预判「hpLeft / incomingDps」（那要求承伤速率恒定，
+        //   而敌舰陆续阵亡后速率是递减的）—— 改把 hpLeft 当预算交给账本，
+        //   由 fireLedgerCap 在段内精确求出「打到第几秒血尽」。
+        const segSec = Math.min(need, remaining);
+        if (segSec <= 1e-9) break;
 
-        const r = advanceCore(state, nodeId, segSec, wHp, focus, curComp, resView);
+        const r = advanceCore(state, nodeId, segSec, wHp, focus, curComp, resView, hpLeft);
         absorb(r);
         wHp = r.waveHp || 0;
         remaining -= (r.fightSec || 0);
         hpLeft = Math.max(0, hpLeft - (r.damage || 0));
         if (acc.allDry || acc.wiped || acc.fuelStarved) break;
-        if (hpCapped || hpLeft <= 1e-9) { acc.wiped = true; break; }
+        if (hpLeft <= 1e-9) { acc.wiped = true; break; }
 
         const cleared = r.waves || 0;
         // 浮点兜底：分段误差可能让 wHp 差一点点没到 fleetHp，此时仍应判定打穿，
@@ -1767,7 +1941,13 @@
           //   （如 3_normal → 3_normal）会通过 ensureEnemies 的结构校验，留下全 0 血的编队，
           //   下一段 enemiesRemainSec 返回 0 → 永远卡在「打不动」，实测在线 8h 只推进 1 波。
           if (state.combatEnemies) delete state.combatEnemies[nodeId];
-          advanceWavePointer(state, nodeId, band, 1);
+          const roundDone = advanceWavePointer(state, nodeId, band, 1);
+          // ★ P2 肃清功勋：打穿第 20 波（= 完成一轮）额外发 clearLp（1 代 :1374-1380）
+          if (roundDone > 0) {
+            const Pirates0 = _Pirates();
+            const clp = (Pirates0 && Pirates0.clearLpOf) ? Pirates0.clearLpOf(P.band) : 0;
+            if (clp > 0) acc.rep += clp * roundDone;
+          }
           continue;                                       // 继续下一波
         }
         break;                                            // 没打穿：时间用完了
@@ -1825,6 +2005,7 @@
       compId: curC,
       isBossWave: curC === "boss",
       killed: acc.killed,
+      kills: acc.kills,          // ★ P2 货柜：按 kind 的击坠数（折叠段为浮点期望）
       enemiesLeft: enemiesAliveCount(ensF.list),
     };
   }
@@ -1902,6 +2083,8 @@
     // ★ 2026-11-27 P1b 索敌模式 + boss 特殊机制
     TARGET_MODES, TARGET_UNLOCK_TIER, normalizeTargetMode, targetModeName, targetModeOf,
     targetUnlockedFor, setTargetMode, pickTarget,
+    // ★ 2026-11-27 P1c 敌方火力变量化
+    enemyShotProfile, aliveFire, waveOutcomeOfFleet,
     fleetAuraMult, fleetRepairSuppr, fleetHasHealer,
   };
 });

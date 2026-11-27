@@ -61,6 +61,20 @@
     fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5 },          bonuses: { archaeologyFuelEfficiency: 0.74 }, cat: "archaeology" },
     fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40 },      bonuses: { archaeologyFuelEfficiency: 0.68 }, cat: "archaeology" },
 
+    // ★ 2026-11-27 S5：1 代考古稀有池专属 7 件（research.js/data/archaeology.js 逐值）。
+    //   资源键按 display-names 冻结映射：三钛→fe_alloy、类银→ni_alloy、类晶体胶矿→mx_alloy、
+    //   同位聚合体→bo_alloy、超噬矿→px_alloy、超新星诺克石→no_alloy、钷→pm_moon、
+    //   磁场聚合物→planet_mag、稀有气体→he_gas、等离子体→planet_plasma。
+    //   ⚠️ 这 7 件**必须** requiresBlueprint:true 且被 RARE_BLUEPRINT_ONLY 排除在 BP_GRANT_ALL 之外，
+    //      否则稀有池掉的蓝图在建档时已被全授予 = 死数据。
+    archaeo_analyzer_frontier_i:   { id:"archaeo_analyzer_frontier_i",   name:"边疆遗迹分析仪 I",   slot:"high", level:1,  time:25,  xp:18,  cost:{ fe_alloy:60,   ni_alloy:25 },                                  bonuses:{ archaeologyScan:7,  archaeologyCycleReduction:0.02 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_stabilizer_station_ii: { id:"archaeo_stabilizer_station_ii", name:"环站信号稳定器 II",  slot:"mid",  level:15, time:45,  xp:40,  cost:{ fe_alloy:200,  ni_alloy:80, mx_alloy:20 },                   bonuses:{ archaeologyStabilizer:0.08, archaeologyNonFatalAvoid:0.05 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_decoder_fleet_iii:     { id:"archaeo_decoder_fleet_iii",     name:"舰墓文物译码器 III", slot:"low",  level:35, time:75,  xp:65,  cost:{ fe_alloy:450,  bo_alloy:120, he_gas:10 },                   bonuses:{ archaeologyDecoder:0.19, archaeologyCopyChance:0.04 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_analyzer_forbidden_iv: { id:"archaeo_analyzer_forbidden_iv", name:"禁区遗迹分析仪 IV",  slot:"high", level:55, time:130, xp:120, cost:{ fe_alloy:1000, no_alloy:50, planet_plasma:25, pm_moon:5 }, bonuses:{ archaeologyScan:23, archaeologyCycleReduction:0.05 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_analyzer_pioneer_v:    { id:"archaeo_analyzer_pioneer_v",    name:"先驱遗迹分析仪 V",   slot:"high", level:80, time:210, xp:190, cost:{ fe_alloy:2200, px_alloy:20, rb_moon:12, planet_mag:50 },     bonuses:{ archaeologyScan:32, archaeologyCycleReduction:0.06 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_stabilizer_pioneer_v:  { id:"archaeo_stabilizer_pioneer_v",  name:"先驱信号稳定器 V",   slot:"mid",  level:80, time:210, xp:190, cost:{ fe_alloy:2200, px_alloy:20, rb_moon:12, planet_mag:50 },     bonuses:{ archaeologyStabilizer:0.20, archaeologyNonFatalAvoid:0.12 }, cat:"archaeology", requiresBlueprint:true },
+    archaeo_decoder_pioneer_v:     { id:"archaeo_decoder_pioneer_v",     name:"先驱文物译码器 V",   slot:"low",  level:80, time:210, xp:190, cost:{ fe_alloy:2200, bo_alloy:500, rb_moon:12, planet_mag:50 },   bonuses:{ archaeologyDecoder:0.28, archaeologyCopyChance:0.07 }, cat:"archaeology", requiresBlueprint:true },
+
     // —— 高槽：采矿/气采/武器 ——
     t1_mining_laser: { id: "t1_mining_laser", name: "T1采矿激光器", slot: "high", level: 1, time: 15, xp: 8, cost: {fe_alloy: 20, ni_alloy: 10}, bonuses: {miningEfficiency: 0.05}, cat: "mining" },
     t1_gas_harvester: { id: "t1_gas_harvester", name: "T1气云采集器", slot: "high", level: 1, time: 15, xp: 8, cost: {fe_alloy: 20, crude_fullerene: 6}, bonuses: {gasEfficiency: 0.05}, cat: "gas" },
@@ -197,6 +211,16 @@
   //    要真门禁需配合一次性回落（清空该字段后重新授予），那属于商店上线时的迁移工作。
   const BP_GRANT_ALL = true;
 
+  // ★ 2026-11-27 S5：考古稀有池专属蓝图**不参与**全授予。
+  //   这 7 件的唯一来源是考古稀有发现（data/archaeology-content.js LOCATIONS[].equipmentBlueprints），
+  //   若跟着 BP_GRANT_ALL 建档全发，稀有池掉落就是死数据（拿到也没意义）。
+  //   其余势力装备维持「门不拦人」的临时口径，等势力商店实装后统一收回。
+  const RARE_BLUEPRINT_ONLY = {
+    archaeo_analyzer_frontier_i:1, archaeo_stabilizer_station_ii:1, archaeo_decoder_fleet_iii:1,
+    archaeo_analyzer_forbidden_iv:1, archaeo_analyzer_pioneer_v:1, archaeo_stabilizer_pioneer_v:1,
+    archaeo_decoder_pioneer_v:1,
+  };
+
   // 把所有需要蓝图的装备一次性授予该存档（幂等，返回本次新授予数量）
   function grantAllBlueprints(state) {
     if (!state || typeof state !== "object") return 0;
@@ -205,6 +229,7 @@
     let n = 0;
     for (const eq of all()) {
       if (!eq.requiresBlueprint) continue;
+      if (RARE_BLUEPRINT_ONLY[eq.id]) continue;   // 考古专属：只走稀有池
       const key = bpKey(eq.id);
       if (!state.ownedBlueprints.includes(key)) { state.ownedBlueprints.push(key); n++; }
     }

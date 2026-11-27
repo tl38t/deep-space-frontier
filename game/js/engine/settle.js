@@ -77,6 +77,20 @@
   const ARCH_XP_BY_BAND = { 1: 50, 2: 150, 3: 400, 4: 900, 5: 2000 };
   function archXpForBand(band) { return ARCH_XP_BY_BAND[band] || ARCH_XP_BY_BAND[1]; }
 
+  // 遗址解析周期（秒）：结算主循环与 UI 浮层共用同一公式，禁止在 UI 复制第二份（避免数值漂移）。
+  // 乘区顺序与 1 代一致：基础 120s × 装配缩短 × 科技 ÷ 增强剂 × 异地物流衰减。
+  function archaeologyPeriod(state, m, nodeId) {
+    const Arch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
+    const cycRed = Arch ? Arch.cycleReduction(m) : 0;
+    let period = 120 * (1 - Math.min(0.50, cycRed));
+    if (Arch && Arch.archResearchMult) period /= Arch.archResearchMult(state);
+    const Booster = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) || null;
+    const bEff = (Booster && Booster.getEffectState) ? Booster.getEffectState(state) : null;
+    if (bEff) period *= bEff.archaeologySpeedMultiplier;
+    if (Logistics) period /= Math.max(ARCH_HOP_FLOOR, Logistics.jobEfficiency(state, nodeId));
+    return period;
+  }
+
   // 战斗经验对回 1 代：按「齐射」发（1 代每齐射普通武器 +2 / defense +1，combat.js 真值）。
   //   1 代 1 齐射 = ROUND_SEC 秒；2 代锚点取 advance 的 r.fightSec（本次实际战斗秒数，O(1)，离线同在线），
   //   故每成员每武器技能经验 = VOLLEY_XP × (fightSec/ROUND_SEC) × 烈度(band)。不复用 ×dt 占位。
@@ -354,6 +368,34 @@
             state.res[k] = (state.res[k] || 0) + r.drops[k];
           }
         }
+        // ★ 2026-11-27 P2 货柜（S2）：按本 tick 击坠的 kind 逐档掷（1 代掉率原值，
+        //   与据点安等无关；折叠段用期望击坠数，见 Combat.expectedRound 的 kills）。
+        //   drawKills 内部直接把 cargo_* 写进 state.res，这里只留战报计数。
+        //   第五参是打捞臂被动效率（1 代 data/cargo.js:539：×(1+Σeff)，上限 50%）。
+        let cargoGot = 0;
+        const Eng = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+        const Cargo = Eng ? Eng.Cargo : null;
+        const Salvage = Eng ? Eng.Salvage : null;
+        const salvageEff = (Salvage && Salvage.efficiencyOf) ? Salvage.efficiencyOf(state, nid) : 0;
+        if (Cargo && Cargo.drawKills && r.kills) {
+          const got = Cargo.drawKills(state, r.kills, r.faction, Math.random, salvageEff);
+          cargoGot = got.total || 0;
+        }
+        // ★ 2026-11-27 打捞臂主动打捞：耗同位素 → 掉舰船组件（引擎/数值见 engine/salvage.js）
+        //   与货柜并列、互不干扰：货柜是容器，组件是造船原料（本作 recipes.js 有真实消费点）。
+        let salvaged = null;
+        if (Salvage && Salvage.rollComponents && r.kills) {
+          const rs = Salvage.rollComponents(state, nid, r.kills, r.faction, r.band, Math.random);
+          if (rs && rs.ok) {
+            let n = 0;
+            for (const k in rs.parts) {
+              state.res[k] = (state.res[k] || 0) + rs.parts[k];
+              n += rs.parts[k];
+            }
+            rs.total = n;
+            salvaged = rs;
+          }
+        }
         // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
         if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
         // 战斗经验对回 1 代（按「齐射=ROUND_SEC 战斗秒」发，O(1)；复用 grantBatchXp 接 passionMult×xpMultOf）：
@@ -379,6 +421,13 @@
         b.waves += r.waves;
         b.credits += r.credits;
         b.rep += r.rep;
+        if (cargoGot) b.cargo = (b.cargo || 0) + cargoGot;
+        // 打捞臂战报：只写标量（与下方「只写标量、不建数组」同纪律），明细去仓库看
+        if (salvaged) {
+          b.parts = (b.parts || 0) + salvaged.total;
+          b.isoSpent = (b.isoSpent || 0) + salvaged.isoSpent;
+          b.salvageTier = Salvage ? Salvage.tierCn(salvaged.tier) : "";
+        }
         if (r.waves > 0) b.lastTs = now;
         b.waveSec = r.waveSec;
         b.progress = r.progress;
@@ -397,6 +446,23 @@
           resetWaveOf(state, nid);
           withdrawSquad(state, nid, "弹药耗尽，剿匪小队已撤离返港（保留已得战利品）。");
           delete state.battles[nid];
+        }
+        // ★ 2026-11-27 P3 战斗统计（1 代 statistics.combat 的本作子集）
+        //   ⚠️ rounds 用「Σ 各节点 combatClears」重算而不是增量累加：
+        //     折叠一次跨 k 轮、断弹重置、切节点都会让增量口径漂移，重算是唯一幂等的写法。
+        const SC = (state.stats && state.stats.combat) ? state.stats.combat : null;
+        if (SC) {
+          SC.waves += Math.max(0, r.waves || 0);
+          const curW = Math.round((state.combatWave && state.combatWave[nid]) || 1);
+          if (curW > SC.maxWave) SC.maxWave = Math.min(20, curW);
+          if (r.kills) {
+            SC.bossKills += Math.max(0, Math.floor(r.kills.boss || 0));
+            SC.eliteKills += Math.max(0, Math.floor(r.kills.elite || 0));
+          }
+          if (r.wiped) SC.defeats += 1;
+          let rsum = 0;
+          for (const cn in (state.combatClears || {})) rsum += Math.max(0, Number(state.combatClears[cn]) || 0);
+          SC.rounds = Math.floor(rsum);
         }
       }
       // 战斗结束（节点已无参战成员）时清空该节点战报与余量，保证「本场」语义正确
@@ -477,21 +543,9 @@
         state.res[ore] = (state.res[ore] || 0) + y;
         m.skills[mineKey] = (m.skills[mineKey] || 0) + miningXpRate(node, isGas) * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
       } else if (a.type === "explore" && node) {
-        // 残骸场考古：装配 analyzer 的 archaeologyCycleReduction 缩短遗址周期（封顶 0.50）
+        // 残骸场考古周期：统一走 archaeologyPeriod()（浮层预览同一公式，避免两处漂移）。
         const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
-        const cycRed = Arch ? Arch.cycleReduction(m) : 0;
-        let period = 120 * (1 - Math.min(0.50, cycRed));
-        // 增强剂（遗迹解析液 archaeologySpeed，-8%/-16%/-25% → 周期 ×0.92/0.84/0.75）
-        const Bm = (window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
-        const bEff = Bm ? Bm.getEffectState(state) : null;
-        if (bEff) period *= bEff.archaeologySpeedMultiplier;
-        // ① 异地采集衰减（考古版）：远处遗址解析更慢——周期按距母舰跳数放大（加解析时间），
-        // 与采矿/采气同根（Logistics.jobEfficiency = clamp(1 - pen×hops + comp/100, 0,1)），
-        // 但用其倒数并设下限避免归零奇点；母舰本星 hops=0 ⇒ ×1 无影响。不改奖励（保 1 代保真）。
-        if (Logistics) {
-          const effLogiArch = Logistics.jobEfficiency(state, a.nodeId);
-          period /= Math.max(ARCH_HOP_FLOOR, effLogiArch);
-        }
+        const period = archaeologyPeriod(state, m, a.nodeId);
         a.exploreProgress += dt / period;
         const ebody = Dispatch.bodyById ? Dispatch.bodyById(state.starMap, a.nodeId, a.bodyId) : null;
         if (ebody && ebody.kind === "derelict") {
@@ -515,17 +569,28 @@
               const fuelPool = (state.base && typeof state.base.fuel === "number") ? state.base.fuel : 0;
               const fuelCost = archaeologyFuelCost(state, m);
               if (fuelPool < fuelCost) break;
+              // ★ S3 探针门禁：预检库存，缺货则本周期不推进（1 代「照搬停摆」）。
+              //   必须在扣燃料/扣进度**之前**判定，否则停摆会白烧燃料和进度。
+              //   cycle 内部还会真扣（含节省累计器），这里预检只是提前 break。
+              if (Arch && Arch.selectedProbeOf) {
+                const pc = Arch.probeCostState(state);
+                if (pc.charged >= 0.5 && !Arch.selectedProbeOf(state)) break;
+              }
               _setFuel(state, fuelPool - fuelCost);
               a.exploreProgress -= 1;
               if (!Arch) break;
               const res = Arch.cycle(state, m, ebody, focus, fit);
+              // 探针停摆（cycle 内二次判定，double-check）：撤销进度并退还本周期燃料
+              if (res.probeBlocked) { a.exploreProgress += 1; _setFuel(state, fuelPool); break; }
               if (res.drops.credits) state.res.credits = (state.res.credits || 0) + res.drops.credits;
               if (res.drops.bp) state.res.bp = (state.res.bp || 0) + res.drops.bp;
               if (res.drops.rep) state.res.rep = (state.res.rep || 0) + res.drops.rep;
               if (res.success) {
                 const band = ebody.band || 1;
+                // ★ S4 dataarch 科技（1 代 archExp 组）：考古经验 ×(1+Σ archExp)
                 m.skills.archaeology = (m.skills.archaeology || 0)
-                  + archXpForBand(band) * passionMult(m, "archaeology") * xpMultOf(state, m, "archaeology");
+                  + archXpForBand(band) * passionMult(m, "archaeology") * xpMultOf(state, m, "archaeology")
+                  * (Arch && Arch.archExpMult ? Arch.archExpMult(state) : 1);
               }
               pushReport(state, "考古 · " + Data.Archaeology.profileById(focus).name, res.lines);
               if (m.destroyed) { a.exploreProgress = 0; break; }
@@ -695,6 +760,6 @@
     MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
     ARCH_XP_BY_BAND, archXpForBand,
     COMBAT_VOLLEY_XP, COMBAT_DEF_XP, COMBAT_INTENSITY_BY_BAND, combatIntensity,
-    fuelEfficiencyMult, archaeologyFuelCost,
+    fuelEfficiencyMult, archaeologyFuelCost, archaeologyPeriod,
   };
 });

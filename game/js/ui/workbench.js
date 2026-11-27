@@ -41,7 +41,13 @@
   function Base() { return window.NSK.Engine && window.NSK.Engine.Base; }
   function BEngine() { return window.NSK.Engine && window.NSK.Engine.Booster; }
   function EData() { return (window.NSK.Data && window.NSK.Data.Equipment) || null; }
-  function eqName(id) { const E = EData(); const e = E && E.byId ? E.byId(id) : null; return e ? e.name : id; }
+  // 考古探针制造（S6）：与装备共用「制造车间」，配方取 Data.ArchaeologyContent.PROBES[].craft
+  function probeDef(id) { const D = Data(); const AC = D && D.ArchaeologyContent; return AC && AC.probeById ? AC.probeById(id) : null; }
+  function probeCraftable() { const D = Data(); const AC = D && D.ArchaeologyContent; return AC && AC.PROBES ? AC.PROBES.filter(p => !!p.craft) : []; }
+  function eqName(id) {
+    const p = probeDef(id); if (p) return p.name;
+    const E = EData(); const e = E && E.byId ? E.byId(id) : null; return e ? e.name : id;
+  }
   function boosterName(itemId) { const B = BEngine(); const it = B && B.getItem(itemId); return it ? it.name : itemId; }
   // 队列项产出名：精炼 / 发明 / 部件的队列项里存的是**资源内部键**（fe_alloy / struct / bp），
   // 直接上屏会露出英文标识符（玩家反馈「精炼下面还是显示的英文」）。一律过 Resources 显示名，
@@ -235,7 +241,10 @@
     if (isModule()) {
       const d = Data().Ships.baseModuleByType(recipeId); return d ? d.name : recipeId;
     }
-    if (cur.type === "equip") return eqName(recipeId) + " ×1";
+    if (cur.type === "equip") {
+      const pr = probeDef(recipeId);
+      return eqName(recipeId) + (pr && pr.craft ? " ×" + (pr.craft.batch || 1) + " 支" : " ×1");
+    }
     if (cur.type === "booster") {
       const it = BEngine() && BEngine().getItem(recipeId);
       const r = it || (recipeTable().find(x => x.id === recipeId)) || {};
@@ -280,6 +289,7 @@
       return (B && B.craftCost(st, recipeId)) || null;
     }
     if (cur.type === "equip") {
+      if (probeDef(recipeId)) return Prod().probeCostOf(recipeId);  // 探针成本含 credits/声望，不套装备材料折扣
       const E = EData();
       const eq = E && E.byId ? E.byId(recipeId) : null;
       if (!eq) return null;
@@ -357,15 +367,24 @@
       gateText = gateOk ? "" : "同类已满 " + S.MODULE_INSTANCE_CAP;
       can = gateOk && Prod().canAfford(st.res, cost);
     } else if (cur.type === "equip") {
-      const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
-      if (!eq) { gateOk = false; gateText = "—"; can = false; }
-      else {
-        const gate = Prod().equipGateLevel(eq.level);
+      const pr = probeDef(id);
+      if (pr && pr.craft) {
+        const gate = Prod().equipGateLevel(pr.level);
         const lvOk = st.base.bodyLevel >= gate;
-        const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
-        gateOk = lvOk && bpOk;
-        gateText = !lvOk ? "需核心 Lv" + (gate + 1) : (!bpOk ? "需蓝图" : "");
-        can = gateOk && Prod().canAfford(st.res, eq.cost || {});
+        gateOk = lvOk;
+        gateText = lvOk ? "" : "需核心 Lv" + (gate + 1);
+        can = gateOk && Prod().canAfford(st.res, Prod().probeCostOf(id) || {});
+      } else {
+        const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
+        if (!eq) { gateOk = false; gateText = "—"; can = false; }
+        else {
+          const gate = Prod().equipGateLevel(eq.level);
+          const lvOk = st.base.bodyLevel >= gate;
+          const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
+          gateOk = lvOk && bpOk;
+          gateText = !lvOk ? "需核心 Lv" + (gate + 1) : (!bpOk ? "需蓝图" : "");
+          can = gateOk && Prod().canAfford(st.res, eq.cost || {});
+        }
       }
     } else if (cur.type === "booster") {
       const B = BEngine(); const cost = B && B.craftCost(st, id); const r = B && B.getRecipe(id);
@@ -391,6 +410,7 @@
       return (st.base.modules.owned || []).filter(function (m) { return m.type === id; }).length;
     }
     if (cur.type === "equip") {
+      if (probeDef(id)) return ((st.archaeology && st.archaeology.probes && st.archaeology.probes[id]) || 0);
       return (st.equipment && st.equipment[id]) || 0;
     }
     if (cur.type === "booster") {
@@ -432,6 +452,8 @@
       return Math.round(t * durMult) + "s / 个";
     }
     if (cur.type === "equip") {
+      const pr = probeDef(id);
+      if (pr && pr.craft) return Math.round(pr.craft.time * durMult) + "s / 批";
       const E = EData(); const eq = E && E.byId ? E.byId(id) : null;
       return (eq ? Math.round(eq.time * durMult) : 0) + "s / 批";
     }
@@ -805,8 +827,9 @@
   const EQ_SLOT_META = [{ id: "high", name: "高槽" }, { id: "mid", name: "中槽" }, { id: "low", name: "低槽" }, { id: "rig", name: "改装件" }];
   function equipCatList() {
     const E = EData();
-    if (!E) return [];
-    return EQ_SLOT_META.map(m => ({ id: m.id, name: m.name, n: E.bySlot(m.id).length })).filter(c => c.n > 0);
+    const list = E ? EQ_SLOT_META.map(m => ({ id: m.id, name: m.name, n: E.bySlot(m.id).length })).filter(c => c.n > 0) : [];
+    list.push({ id: "probe", name: "考古探针", n: probeCraftable().length });
+    return list;
   }
   function equipCat() {
     const list = equipCatList();
@@ -815,6 +838,7 @@
   }
   function equipCards() {
     if (cur.type === "equip" && cur.tab === "dismantle") return dismantleCards();
+    if (equipCat() === "probe") return probeCards();
     const st = state();
     const E = EData();
     if (!E) return '<div class="wb-empty">装备数据未就绪。</div>';
@@ -825,6 +849,17 @@
       const tier = Math.min(5, Math.floor((eq.level - 1) / 20) + 1);
       const adjDur = Math.round(eq.time * durMult);
       return recipeCardHTML(eq.id, eq.name + " T" + tier, 1, "", adjDur + "s / 批");
+    }).join("");
+  }
+  // 探针卡：一次入队产出 craft.batch 支，卡片显示「×N 支」与考古池库存。
+  function probeCards() {
+    const st = state();
+    const P = probeCraftable();
+    if (!P.length) return '<div class="wb-empty">探针数据未就绪。</div>';
+    const durMult = Base().queueDurationMultiplier(st, "equip");
+    return P.map(p => {
+      const adj = Math.round(p.craft.time * durMult);
+      return recipeCardHTML(p.id, p.name + " ×" + (p.craft.batch || 1) + " 支", 1, "🔬 ", adj + "s / 批");
     }).join("");
   }
   function dismantleCards() {
@@ -943,6 +978,8 @@
       ? '<div class="wb-note">装备制造（改装件）仍在舰基页下方「装备制造」块。总装槽位由部件 / 造船 / 舱段共用。</div>'
       : (cur.type === "booster")
       ? '<div class="wb-note">瓶身入库后，到舰基页下方「增强剂」面板装入 16 个全局槽位，效果整军团共享、自动续瓶。</div>'
+      : (cur.type === "equip" && equipCat() === "probe")
+      ? '<div class="wb-note">一次入队产出整批探针，成品直接进考古探针池（仓库「消耗品」可见），考古页选中后消耗。与装备共用制造车间槽位；复原/深层探针只从考古稀有池掉落。</div>'
       : (cur.type === "equip")
       ? '<div class="wb-note">成品入「已存装备」库存，到「舰队」页点「装配」按成员装上舰；制造车间为独立产线，不再占用总装船坞槽位。</div>'
       : "";
@@ -1226,13 +1263,19 @@
         const queued = ((st.base.industry && st.base.industry.moduleQueue) || []).reduce((n, it) => n + (it.moduleType === id ? Math.max(0, (it.repeat || 1) - (it.done || 0)) : 0), 0);
         can = !!(cost && owned + queued < S.MODULE_INSTANCE_CAP && Prod().canAfford(st.res, cost));
       } else if (cur.type === "equip") {
-        const E = EData();
-        const eq = E && E.byId ? E.byId(id) : null;
-        if (!eq) { node.classList.add("dis"); return; }
-        const gate = Prod().equipGateLevel(eq.level);
-        const lvOk = st.base.bodyLevel >= gate;
-        const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
-        can = !!(lvOk && bpOk && Prod().canAfford(st.res, eq.cost || {}));
+        const pr = probeDef(id);
+        if (pr && pr.craft) {
+          const gate = Prod().equipGateLevel(pr.level);
+          can = !!(st.base.bodyLevel >= gate && Prod().canAfford(st.res, Prod().probeCostOf(id) || {}));
+        } else {
+          const E = EData();
+          const eq = E && E.byId ? E.byId(id) : null;
+          if (!eq) { node.classList.add("dis"); return; }
+          const gate = Prod().equipGateLevel(eq.level);
+          const lvOk = st.base.bodyLevel >= gate;
+          const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
+          can = !!(lvOk && bpOk && Prod().canAfford(st.res, eq.cost || {}));
+        }
       } else if (cur.type === "booster") {
         const B = BEngine();
         const cost = B && B.craftCost(st, id);
@@ -1257,7 +1300,11 @@
     else if (isStudy()) r = Prod().enqueueStudy(st, cur.recipeId, cur.studyDir, cur.count);
     else if (cur.type === "invent") r = Prod().enqueue(st, "invent", cur.recipeId, cur.count);
     else if (cur.type === "booster") r = Prod().enqueue(st, "booster", cur.recipeId, cur.count);
-    else if (cur.type === "equip" && cur.tab !== "dismantle") r = Prod().buildEquipment(st, cur.recipeId, cur.count);
+    else if (cur.type === "equip" && cur.tab !== "dismantle") {
+      r = (probeDef(cur.recipeId) && probeDef(cur.recipeId).craft)
+        ? Prod().buildProbe(st, cur.recipeId, cur.count)
+        : Prod().buildEquipment(st, cur.recipeId, cur.count);
+    }
     else if (cur.type === "manufacture" && cur.tab === "component") r = Prod().enqueue(st, "manufacture", cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "fuel") r = Prod().enqueueFuel(st, cur.recipeId, cur.count);
     else if (cur.type === "manufacture" && cur.tab === "ship") r = Prod().buildShip(st, cur.recipeId, cur.count);

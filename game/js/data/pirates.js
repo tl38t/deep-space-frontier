@@ -181,8 +181,27 @@
   // 本作 band5 对应 1 代「0.0 外环」⇒ 1。
   const BOSS_ESCORT = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
 
+  // ★ 2026-11-27 P2：整轮肃清功勋（1 代 data/combat.js 每个据点的 clearLp 字段，
+  //   `systems/combat.js:1374-1380` 在 wave >= maxWave 时按 clearLp 发 currency:lp）。
+  //   1 代按据点**等级**给 7 档真值：lv1→3 / lv20→6 / lv40→10 / lv60→15 / lv80→25 / lv90→30 / 先驱→40。
+  //   本作据点强度只由 band 决定（没有 1 代那套 level 字段），故按 band 取前五档；
+  //   band5 对应 1 代 lv80（lv90/先驱 属死亡空间外围，本作暂无）。
+  const CLEAR_LP_BY_BAND = { 1: 3, 2: 6, 3: 10, 4: 15, 5: 25 };
+  function clearLpOf(band) { return CLEAR_LP_BY_BAND[clampBand(band)] || 0; }
+
   // 该 band 的一轮波数（一轮 = 19 普通波 + 1 boss 波，1 代 maxWave=20）
   const MAX_WAVE = 20;
+
+  // 1 代 ENEMY_DATABASE 的 boss 特殊字段（combat.js 消费）。
+  // fleetFor 是逐字段手抄的，漏掉任何一个 = 该机制静默失效，故集中登记、循环透传。
+  const SPECIAL_FIELDS = [
+    "auraDamage",      // 编队光环：存活时其余敌舰伤害 ×aura（自身不吃）
+    "bossHealPct",     // 相位重构：每 bossHealEvery 轮回复 maxTotal × pct
+    "bossHealEvery",
+    "enrageMul",       // 狂暴：自身血量比 < enrageAt 时，自身伤害 ×enrageMul
+    "enrageAt",
+    "repairSuppr",     // 抑制修理：存活时我方维修 ×(1 - s)
+  ];
 
   function compKinds(compId, band) {
     if (compId === "boss") {
@@ -250,7 +269,7 @@
       if (!tpl) return null;                       // 数据缺失时跳过，不让整队崩掉
       const n = seen[kind]++;
       const maxHp = { shield: tpl.hp.shield, armor: tpl.hp.armor, structure: tpl.hp.structure };
-      return {
+      const ship = {
         id: b + "_" + fac + "_" + tpl.id + "_" + n,
         type: tpl.id,
         name: tpl.name,
@@ -265,6 +284,15 @@
         hp: { shield: maxHp.shield, armor: maxHp.armor, structure: maxHp.structure },
         total: totalOf(maxHp),
       };
+      // ★ P1c 修：boss 特殊机制字段必须**透传**。
+      //   P1b 只在 SHIPS 模板上加了 auraDamage，却忘了 fleetFor 是逐字段手抄的 ——
+      //   combat.js 读 ships[i].auraDamage / bossHealPct / repairSuppr 全是 undefined，
+      //   于是光环、相位重构回血、抑制修理、狂暴四条机制**全是死代码**（本轮一并修）。
+      for (let fi = 0; fi < SPECIAL_FIELDS.length; fi++) {
+        const k = SPECIAL_FIELDS[fi];
+        if (tpl[k] !== undefined) ship[k] = tpl[k];
+      }
+      return ship;
     }).filter(Boolean);   // 数据缺失时剔除，避免后面解引用 null
 
     let totalHp = 0, dps = 0, wDodge = 0;
@@ -307,6 +335,7 @@
     SHIPS: SHIPS,
     BAND_COMPOSITION: BAND_COMPOSITION,
     BAND_FORMATION_POOLS: BAND_FORMATION_POOLS,   // ★ P0：band → 编队池（各安等不同）
+    CLEAR_LP_BY_BAND: CLEAR_LP_BY_BAND,           // ★ P2：整轮肃清功勋（1 代 zone.clearLp）
     COMP_KINDS: COMP_KINDS,
     BOSS_ESCORT: BOSS_ESCORT,
     MAX_WAVE: MAX_WAVE,
@@ -314,6 +343,7 @@
     clampBand: clampBand,
     factionKey: factionKey,
     compKinds: compKinds,
+    clearLpOf: clearLpOf,
     rollFormation: rollFormation,     // ★ P0：每波抽签
     bossFormation: bossFormation,     // ★ P0：第 20 波固定 boss
     fleetFor: fleetFor,               // ★ P0：第三参 compId

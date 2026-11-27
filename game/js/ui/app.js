@@ -16,6 +16,7 @@
     { id: "base", name: "舰基" },
     { id: "fleet", name: "舰队" },
     { id: "warehouse", name: "仓库" },
+    { id: "archaeology", name: "考古" },
     { id: "members", name: "成员" },
     { id: "factions", name: "势力" },
     { id: "tech", name: "科技" },
@@ -25,7 +26,7 @@
   ];
   const TAB_GROUPS = [
     { name: "航行", tabs: ["starmap", "system"] },
-    { name: "运营", tabs: ["base", "fleet", "warehouse"] },
+    { name: "运营", tabs: ["base", "fleet", "warehouse", "archaeology"] },
     { name: "组织", tabs: ["members", "factions", "tech"] },
     { name: "档案", tabs: ["story", "report", "settings"] },
   ];
@@ -594,11 +595,32 @@
         '<div class="dim">' + sub + "</div>" +
         (function () {
           const wk = bodyWorkers(node.id, b.id);
-          const site = (Engine.Sites && b.kind === "planet") ? Engine.Sites.byBody(state, b.id) : null;
-          const siteLine = site ? '<div class="dim">💠 采集装置 Lv' + site.level + " · 缓冲 " + fmt(Math.floor(site.buffer || 0)) + "</div>" : "";
-          return siteLine + (wk.length
+          const S = Engine.Sites;
+          const site = (S && b.kind === "planet") ? S.byBody(state, b.id) : null;
+          if (!site) return wk.length
             ? '<div class="dim wk-line">⛏ 在岗：' + wk.map(m => esc(m.name) + "（" + jobName(m.assignment.type) + "）").join("、") + "</div>"
-            : (site ? "" : '<div class="dim">无人驻守</div>'));
+            : '<div class="dim">无人驻守</div>';
+          // ★ 2026-11-27 S6：装置卡补维护费状态（1 代到期停产、手动续期）
+          const act = S.isActive ? S.isActive(state, b.id) : true;
+          const cost = S.renewCostOf ? S.renewCostOf(state, b.id) : 0;
+          const rem = S.remainingSecOf ? S.remainingSecOf(state, b.id) : 0;
+          const arOn = !!(site.autoRenew && site.autoRenew.enabled);
+          let line = '<div class="dim">💠 采集装置 Lv' + site.level
+            + " · 缓冲 " + fmt(Math.floor(site.buffer || 0))
+            + (act ? " · ⏳ 剩余 " + fmtLong(rem) : ' · <b class="bad">⚠ 已停产</b>')
+            + "</div>";
+          if (!act) {
+            line += '<div class="row"><button class="sm" data-act="site_renew:' + b.id + '">续费 · '
+              + fmt(cost) + "⛁</button>"
+              + '<button class="sm ghost" data-act="site_auto:' + b.id + '" title="到期时自动扣费续期">'
+              + (arOn ? "自动续费 ✓" : "自动续费 ✕") + "</button></div>";
+            if (site.lastRenewFail) line += '<div class="dim bad">上次自动续费失败：' + esc(site.lastRenewFail) + "</div>";
+          } else if (arOn) {
+            line += '<div class="dim">自动续费 已开 · 储备 ' + fmt(site.autoRenew.minIskReserve || 0) + "⛁</div>";
+          }
+          return line + (wk.length
+            ? '<div class="dim wk-line">⛏ 在岗：' + wk.map(m => esc(m.name) + "（" + jobName(m.assignment.type) + "）").join("、") + "</div>"
+            : "");
         })() +
         "<div class='row'>" + actHtml + "</div></div>";
     }
@@ -753,7 +775,7 @@
       + (bt.weaponDps && bt.squadDps
           ? '（' + fmt(Math.round(bt.weaponDps)) + ' 武器）'
           : '')
-      + '　敌方火力 ' + (Math.round((bt.incomingDps || 0) * 10) / 10) + '/s</span>'
+      + '　敌方火力 ' + (Math.round((bt.incomingDps || 0) * 10) / 10) + '/s（均值）</span>'
       + (bt.dmgReduction ? '<span class="tag">减伤 ' + Math.round(bt.dmgReduction * 100) + '%</span>' : '')
       + (bt.repairPerSec ? '<span class="tag">维修 ' + (Math.round(bt.repairPerSec * 10) / 10) + '/s</span>' : '')
       + '</div>';
@@ -779,6 +801,25 @@
         }
       }
       html += '</div>';
+    }
+
+    // ★ 2026-11-27 打捞臂（1 代同位素标记打捞臂，engine/salvage.js）
+    //   1 代口径：只有在出战舰真的装备了打捞臂时才显示这个开关（否则玩家开了也没效果）。
+    //   关 = 仅被动放大货柜掉率；开 = 每击杀耗 1/2/3 个同位素，50% 掉同数量舰船组件。
+    const SV = (Engine.Salvage && Engine.Salvage.infoOf) ? Engine.Salvage.infoOf(state, node.id) : null;
+    if (SV && SV.arm) {
+      const isoLack = SV.active && SV.iso <= 0;
+      html += '<div class="battle-salvage">'
+        + '<span class="dim">打捞臂</span>'
+        + '<span class="tag good" title="装备即生效：放大货柜掉率">效率 +' + Math.round(SV.efficiency * 100) + '%</span>'
+        + '<button class="sm ' + (SV.active ? 'primary' : 'ghost') + '" data-act="salvage:toggle"'
+        + ' title="开启后每击杀一艘消耗 1（普通）/2（精英）/3（BOSS）个同位素，'
+        + '以 ' + Math.round(SV.componentChance * 100) + '% 概率掉同数量的舰船组件；掷不中也扣同位素">'
+        + (SV.active ? '主动打捞 开' : '主动打捞 关') + '</button>'
+        + '<span class="dim">组件 ' + Math.round(SV.componentChance * 100) + '% · 同位素 ' + fmt(SV.iso) + '</span>'
+        + (isoLack ? '<span class="tag bad">同位素不足</span>' : '')
+        + (bt.parts ? '<span class="tag">已获组件 ' + fmt(bt.parts) + '</span>' : '')
+        + '</div>';
     }
 
     // 弹药状态：只列本场真正在消耗的弹种（某弹种打空 → 该型武器哑火；全空 → 整队撤退）
@@ -841,8 +882,19 @@
       + (bt.simmed && ((bt.hits || 0) + (bt.misses || 0)) > 0 ? ' · 本次齐射 命中 ' + bt.hits + ' / 未中 ' + bt.misses : '')
       + '</span>'
       + '<span><b class="good">+' + fmt(Math.round(bt.credits || 0)) + ' ⛁</b>'
-      + '<span class="dim">　+' + fmt(Math.round(bt.rep || 0)) + ' 功勋</span></span>'
+      + '<span class="dim">　+' + fmt(Math.round(bt.rep || 0)) + ' 功勋</span>'
+      + (bt.cargo ? '<span class="dim">　🎁 货柜 ×' + fmt(bt.cargo) + '</span>' : '')
+      + '</span>'
       + '</div>';
+    // ★ 2026-11-27 P3 生涯统计（1 代 statistics.combat 子集）
+    const SC = (state.stats && state.stats.combat) || null;
+    if (SC) {
+      html += '<div class="battle-foot" style="border-top:none;padding-top:0">'
+        + '<span class="dim">生涯 · 最深 ' + (SC.maxWave || 0) + "/20 波 · 肃清 " + fmt(SC.rounds || 0) + " 轮"
+        + " · 累计 " + fmt(SC.waves || 0) + " 波</span>"
+        + '<span class="dim">BOSS ' + fmt(SC.bossKills || 0) + " · 精英 " + fmt(SC.eliteKills || 0)
+        + " · 战败 " + fmt(SC.defeats || 0) + "</span></div>";
+    }
 
     html += '</div>';
     return html;
@@ -947,6 +999,24 @@
         html += '<div class="row"><button class="sm primary" data-act="site_collect:' + nodeId + ":" + bodyId + '"' + (atNode && buf > 0 ? "" : " disabled") + ">回收 " + resIconTxt(resKey) + fmt(Math.floor(buf)) + "</button>" +
           (up ? '<button class="sm" data-act="site_upgrade:' + nodeId + ":" + bodyId + '"' + ((state.res.credits || 0) >= up.credits ? "" : " disabled") + ">升级 Lv" + (site.level + 1) + " · " + up.credits + "⛁</button>" : "") + "</div>";
         if (!atNode) html += '<div class="dim">回收需舰基跃迁到本星系（亲自收菜）。</div>';
+        // ★ 2026-11-27 S6 维护费：1 代每 24h 付费，到期停产（storage 保留），手动或自动续期
+        const sAct = S.isActive(state, bodyId);
+        const sCost = S.renewCostOf(state, bodyId);
+        const sRem = S.remainingSecOf(state, bodyId);
+        const sAr = site.autoRenew || { enabled: false, minIskReserve: 0 };
+        html += '<div class="dim">维护费 <b>' + fmt(sCost) + " ⛁ / 24h</b>　"
+          + (sAct ? "⏳ 剩余 " + fmtLong(sRem) : '<b class="bad">⚠ 已停产</b>（缓冲保留，续期即恢复）') + "</div>";
+        if (!sAct) {
+          html += '<div class="row"><button class="sm primary" data-act="site_renew:' + bodyId + '"'
+            + ((state.res.credits || 0) >= sCost ? "" : " disabled") + ">续费 24h · " + fmt(sCost) + "⛁</button>"
+            + (site.lastRenewFail ? '<span class="dim bad">上次自动续费失败：' + esc(site.lastRenewFail) + "</span>" : "")
+            + "</div>";
+        }
+        html += '<div class="row"><label class="dim"><input type="checkbox" class="site-auto" data-body="' + bodyId + '"'
+          + (sAr.enabled ? " checked" : "") + "> 到期自动续费</label>"
+          + '<input class="site-reserve" data-body="' + bodyId + '" type="number" min="0" step="100" value="' + (sAr.minIskReserve || 0) + '"'
+          + ' title="最低储备金：自动扣费后余额不得低于此值" style="width:96px">'
+          + '<span class="dim">最低储备 ⛁</span></div>';
       }
     }
     if (acts.length) {
@@ -993,12 +1063,34 @@
         }
       }
     }
+    // ★ 探针手动选择 + 扫描读数：残骸场浮层常驻（即使无空闲成员可派遣也能查看/改探针）。
+    //   9 种全列，缺货禁用；空选项 = 自动（引擎按扫描加成挑最强可用）。
+    if (body.kind === "derelict") {
+      const AC = Data.ArchaeologyContent;
+      const archA = (Engine.Archaeology && Engine.Archaeology.ensureArch) ? Engine.Archaeology.ensureArch(state) : null;
+      const curProbe = (archA && archA.selectedProbe) || "";
+      const autoProbe = (Engine.Archaeology && Engine.Archaeology.selectedProbeOf) ? Engine.Archaeology.selectedProbeOf(state) : null;
+      html += '<div class="row"><label class="dim" for="body-probe">探针：</label>'
+        + '<select id="body-probe" class="mbr-sel" style="flex:1">'
+        + '<option value=""' + (curProbe ? "" : " selected") + '>自动（当前：' + (autoProbe ? esc(autoProbe.name) : "无可用探针") + "）</option>";
+      for (const p of (AC && AC.PROBES ? AC.PROBES : [])) {
+        const qty = (archA && archA.probes && archA.probes[p.id]) || 0;
+        html += '<option value="' + p.id + '"' + (curProbe === p.id ? " selected" : "") + (qty ? "" : " disabled")
+          + ">" + esc(p.name) + (p.scanBonus ? " +" + p.scanBonus : "") + " ×" + qty + "</option>";
+      }
+      html += "</select></div>";
+      html += '<div class="dim arch-readout" id="body-arch-info"></div>';
+    }
     // 在岗成员（采矿/开发/勘探都算）——直接可召回
     const wk = bodyWorkers(nodeId, bodyId);
     if (wk.length) {
       html += '<div class="dim wk-line">⛏ 在岗 ' + wk.length + " 人：" + wk.map(m => esc(m.name) + "（" + jobName(m.assignment.type) + "）").join("、") + "</div>";
       html += '<div class="row" style="flex-wrap:wrap;gap:4px">' + wk.map(m =>
         '<button class="sm ghost" data-act="recall:' + m.id + '">召回 ' + esc(m.name) + "</button>").join("") + "</div>";
+      const archWk = wk.find(m => m.assignment && m.assignment.type === "explore"
+        && m.assignment.nodeId === nodeId && m.assignment.bodyId === bodyId);
+      if (archWk) html += '<div class="arch-progress-wrap"><div class="dim">解析进度 <span id="body-arch-progress">0%</span></div>'
+        + '<div class="arch-progress-track"><i id="body-arch-progress-fill"></i></div></div>';
     } else {
       html += '<div class="dim">当前无人驻守此天体。</div>';
     }
@@ -1011,27 +1103,70 @@
     $pop.style.left = Math.max(8, (window.innerWidth - popWidth) / 2) + "px";
     $pop.style.top = "72px";
     $pop.classList.add("show");
+    if (body.kind === "derelict") { refreshBodyRates(); ensureArchPopTimer(); }
   }
 
-  // 换派遣成员 → 就地重算三个考古焦点的成功率（不重渲染浮层，保留下拉焦点与滚动位置）。
+  // 残骸场浮层的解析进度按 1s 局部刷新（只改文本/条宽，不重建浮层，避免丢下拉焦点）。
+  let archPopTimer = null;
+  function ensureArchPopTimer() {
+    if (archPopTimer) return;
+    archPopTimer = setInterval(function () {
+      if (!$pop || !$pop.classList.contains("show") || !$pop.querySelector(".arch-readout")) return;
+      refreshBodyRates();
+    }, 1000);
+  }
+
+  // 换派遣成员 / 探针 → 就地重算焦点成功率与考古读数（不重渲染浮层，保留下拉焦点与滚动位置）。
   // 只对残骸场浮层生效：其它天体没有 .focus-btn。
   function refreshBodyRates() {
-    if (!$pop || !$pop.querySelector(".focus-btn")) return;
+    if (!$pop || (!$pop.querySelector(".focus-btn") && !$pop.querySelector(".arch-readout"))) return;
     const sel = $pop.querySelector("#body-mem");
     const nodeId = $pop.dataset.nodeId, bodyId = $pop.dataset.bodyId;
-    if (!sel || !nodeId || !bodyId) return;
+    if (!nodeId || !bodyId) return;
     const node = Data.StarMap.nodeById(state.starMap, nodeId);
     const body = node && (node.bodies || []).find(b => b.id === bodyId);
-    const m = state.members.find(x => x.id === sel.value);
     const Arch = Engine.Archaeology;
-    if (!body || !m || !Arch) return;
+    if (!body || !Arch) return;
+    let m = sel ? (state.members || []).find(x => x.id === sel.value) : null;
+    // 无空闲成员可派遣时，读数仍按在岗考古成员显示，避免浮层一片空白
+    if (!m) m = (state.members || []).find(x => x.assignment && x.assignment.type === "explore"
+      && x.assignment.nodeId === nodeId && x.assignment.bodyId === bodyId);
+    if (!m) return;
+    const fit = Arch.fittedBonuses(m);
     for (const btn of $pop.querySelectorAll(".focus-btn")) {
       const pid = btn.getAttribute("data-focus");
       const rateEl = btn.querySelector(".focus-rate");
-      if (rateEl && pid) rateEl.textContent = "· " + Math.round(100 * Arch.successChance(m, body, pid)) + "%";
+      // ★ 第 5 参 state 必传：否则科技「信号解析」的成功率加成不进预览（旧代码漏传）
+      if (rateEl && pid) rateEl.textContent = "· " + Math.round(100 * Arch.successChance(m, body, pid, fit, state)) + "%";
     }
     const note = $pop.querySelector("#body-rate-note");
-    if (note) note.textContent = "成功率按「" + m.name + "」的考古等级估算，换成员会变。";
+    if (note) note.textContent = "成功率按「" + m.name + "」的考古等级估算（含科技加成），换成员会变。";
+    const info = $pop.querySelector("#body-arch-info");
+    if (info) {
+      const S = Engine.Settle;
+      const period = (S && S.archaeologyPeriod) ? S.archaeologyPeriod(state, m, nodeId) : 120;
+      const fuel = (S && S.archaeologyFuelCost) ? S.archaeologyFuelCost(state, m) : 0;
+      const pc = Arch.probeCostState(state);
+      const probe = Arch.selectedProbeOf(state);
+      const probeTxt = pc.charged >= 0.5
+        ? (probe ? esc(probe.name) + " ×1" : '<span class="bad">缺货停摆</span>')
+        : "本周期免扣";
+      info.innerHTML = "扫描强度 <b>" + (Math.round(Arch.scanStrength(m, fit) * 10) / 10) + "</b>"
+        + " · 周期 <b>" + (Math.round(period * 10) / 10) + "s</b>"
+        + " · 探针 <b>" + probeTxt + "</b>"
+        + " · 节省 <b>" + Math.round(pc.reduction * 100) + "%（累计 " + Math.round(pc.remainder * 100) + "%）</b>"
+        + " · 燃料 <b>" + (Math.round(fuel * 100) / 100) + "/周期</b>";
+    }
+    const a = (m.assignment && m.assignment.type === "explore"
+      && m.assignment.nodeId === nodeId && m.assignment.bodyId === bodyId) ? m.assignment : null;
+    const pg = $pop.querySelector("#body-arch-progress");
+    const pgFill = $pop.querySelector("#body-arch-progress-fill");
+    if (pg && pgFill) {
+      const pct = a ? Math.max(0, Math.min(100, Math.floor((a.exploreProgress || 0) * 100))) : 0;
+      const pf = a && a.focus ? Data.Archaeology.profileById(a.focus) : null;
+      pg.textContent = pct + "%" + (pf ? " · " + pf.name : "");
+      pgFill.style.width = pct + "%";
+    }
   }
 
   function baseQueueState(type, recipes) {
@@ -1040,11 +1175,12 @@
     const recipe = it && recipes ? recipes.find(r => r.id === it.recipeId) : null;
     if (!it) return { count: 0, label: "待命", progress: 0, detail: "暂无排产" };
     const p = Core.clamp((Date.now() - it.startedAt) / 1000 / it.dur, 0, 1);
-    // 制造车间（equip）队列项存的是装备 id，没有 Recipes 表，直接查 Equipment
+    // 制造车间（equip）队列项存的是装备 id 或探针 id，没有 Recipes 表，直接查对应数据表
     let label;
     if (type === "equip") {
       const E = Data.Equipment, eq = E && E.byId ? E.byId(it.recipeId) : null;
-      label = eq ? eq.name : it.recipeId;
+      const AC = Data.ArchaeologyContent, pr = AC && AC.probeById ? AC.probeById(it.recipeId) : null;
+      label = eq ? eq.name : (pr ? pr.name : it.recipeId);
     } else if (it.outType === "study") {
       // 蓝图效率研究：队列项不存中文名（内部键全 ASCII），显示名由数据表实时派生，
       // 改名后旧档队列项自动跟随，且不会露出 "study:booster:xxx:me" 这种裸 key。
@@ -1485,6 +1621,15 @@
     if (sec < 60) return sec + "s";
     const m = Math.floor(sec / 60), s = sec % 60;
     return m + "m" + (s ? " " + s + "s" : "");
+  }
+  // 长时长（装置维护费到期倒计时，量级到 24h）：h/m，与 fmtDur 分开是因为
+  // fmtDur 在 86400s 上会吐「1440m」，对玩家没有可读性。
+  function fmtLong(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec <= 0) return "0m";
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+    if (h > 0) return h + "h" + (m ? " " + m + "m" : "");
+    return m + "m";
   }
   // 已存装备（2026-11-03 装备制造迁入「制造车间」舱段工作台后，这里只留库存展示）
   // 制造入口：点击舰基页「制造车间」舱段卡片 → 舱段工作台（高槽/中槽/低槽/改装件 分类）。
@@ -2646,7 +2791,11 @@
     { id: "ammo", name: "弹药" },
     { id: "tactic", name: "战术材料" },
     { id: "booster", name: "增强剂" },
+    { id: "special", name: "特殊物资" },
+    { id: "consumable", name: "消耗品" },
     { id: "blueprint", name: "图纸" },
+    { id: "cargo", name: "货柜" },
+    { id: "trade", name: "交易品" },
     { id: "other", name: "其他" },
     { id: "equip", name: "装备" },
   ];
@@ -2657,6 +2806,35 @@
     .filter(id => id !== "all" && id !== "equip" && WH_TOP.indexOf(id) < 0);
   // 分类标签查表（含 other 兜底）
   const WH_CAT_NAME = WH_CATS.reduce((a, c) => { a[c.id] = c.name; return a; }, {});
+
+  // 考古池持有量（2026-11-27 S6）：文物/探针/凭证真值在 state.archaeology，
+  // 不镜像进 state.res（避免双真值）；仓库用命名空间前缀键读取。
+  function archStock(st, key) {
+    const A = (st && st.archaeology) || {};
+    if (typeof key !== "string") return 0;
+    if (key.startsWith("art:")) return (A.artifacts && A.artifacts[key.slice(4)]) || 0;
+    if (key.startsWith("probe:")) return (A.probes && A.probes[key.slice(6)]) || 0;
+    if (key.startsWith("voucher:")) return (A.vouchers && A.vouchers[key.slice(8)]) || 0;
+    return 0;
+  }
+
+  // 手动「一键回收」的可回收件数：星币类文物 + 功勋信标，校准基体是 S7 材料不参与。
+  function archRecyclable() {
+    const AC = Data.ArchaeologyContent;
+    const A = (state.archaeology && state.archaeology.artifacts) || {};
+    let n = 0;
+    if (AC && AC.ARTIFACTS) for (const a of AC.ARTIFACTS) {
+      if (a.category === "calibration") continue;
+      n += A[a.id] || 0;
+    }
+    return n;
+  }
+  function archRecycleBtn(cls) {
+    const n = archRecyclable();
+    return '<button class="' + (cls || "sm ghost") + '" data-act="archRecycle"'
+      + (n ? "" : " disabled") + ' title="星币类文物 + 功勋信标一次回收；校准基体保留">♻ 一键回收文物'
+      + (n ? " (" + n + ")" : "") + "</button>";
+  }
 
   function viewWarehouse() {
     const res = state.res || {};
@@ -2678,9 +2856,25 @@
       totalKinds++;
       if ((res[k] || 0) > 0) ownedKinds++;
     }
+    // 考古池（S6）：文物/探针/凭证按 1 代口径并入仓库分段，数量读 state.archaeology。
+    // 用命名空间前缀键避免与资源键冲突；meta() 动态返回显示名与分类。
+    const stockOf = (k) => archStock(state, k) || (res[k] || 0);
+    const AC = Data.ArchaeologyContent;
+    if (AC) {
+      const addArch = (key) => {
+        const m = Data.Resources.meta(key);
+        if (!m || m.cat === "top" || m.cat === "equip") return;
+        const raw = m.cat || "other";
+        const cat = KNOWN_CAT[raw] ? raw : "other";
+        (groups[cat] = groups[cat] || []).push(key);
+      };
+      (AC.ARTIFACTS || []).forEach(a => addArch("art:" + a.id));
+      (AC.PROBES || []).forEach(p => addArch("probe:" + p.id));
+      Object.keys(AC.VOUCHERS || {}).forEach(id => addArch("voucher:" + id));
+    }
     // 类内：持有量降序，空仓尾随；同量按 HUD 顺序，保证排序稳定不跳动
     for (const cat of Object.keys(groups)) {
-      groups[cat].sort((a, b) => (res[b] || 0) - (res[a] || 0) || (hudIdx[a] || 0) - (hudIdx[b] || 0));
+      groups[cat].sort((a, b) => stockOf(b) - stockOf(a) || (hudIdx[a] || 0) - (hudIdx[b] || 0));
     }
     // 装备库存（独立于资源，走 state.equipment；制造完成入库，成员装配时消耗）
     const eqInv = Object.entries(state.equipment || {}).filter(([k, v]) => (v || 0) > 0);
@@ -2688,6 +2882,7 @@
     let html = '<div class="wh-head"><div><h2>仓库 · 物资库存</h2>'
       + '<div class="wh-desc">军团持有的全部物资；交付势力、排产、派遣产出实时同步。</div></div>'
       + '<div class="wh-head-r">'
+      + archRecycleBtn()
       + '<span class="wh-toggle' + (whShowEmpty ? " on" : "") + '" data-act="wh:toggle">显示空仓</span>'
       + '<div class="wh-tally"><b>' + ownedKinds + '</b><span>/ ' + totalKinds + ' 类在库</span></div>'
       + "</div></div>";
@@ -2705,7 +2900,7 @@
 
     // 分段标签（带各类条目数）；tactic/booster/other 无存量时不占位，避免一排 0
     const catCount = (id) => id === "all" ? totalKinds + eqInv.length : (id === "equip" ? eqInv.length : (groups[id] || []).length);
-    const WH_COND = { tactic: 1, booster: 1, other: 1 };
+    const WH_COND = { tactic: 1, booster: 1, special: 1, consumable: 1, trade: 1, other: 1 };
     html += '<div class="seg-tabs">';
     for (const c of WH_CATS) {
       const n = catCount(c.id);
@@ -2722,7 +2917,7 @@
     for (const cat of WH_ORDER) {
       if (warehouseFilter !== "all" && warehouseFilter !== cat) continue;
       const keys = groups[cat]; if (!keys || !keys.length) continue;
-      const owned = keys.filter(k => (res[k] || 0) > 0).length;
+      const owned = keys.filter(k => stockOf(k) > 0).length;
       if (!whShowEmpty && !forceShow && !owned) continue;
       shown++;
       const label = WH_CAT_NAME[cat] || cat;
@@ -2731,7 +2926,7 @@
       html += '<div class="wh-grid">';
       for (const k of keys) {
         const m = Data.Resources.meta(k);
-        const val = res[k] || 0;
+        const val = stockOf(k);
         const empty = val <= 0;
         if (empty && !whShowEmpty && !forceShow) continue;
         const tier = m.tier ? '<span class="wh-tier t' + m.tier + '">T' + m.tier + "</span>" : "";
@@ -2742,6 +2937,26 @@
           + '<div class="wh-q">' + fmt(val) + "</div></div>";
       }
       html += "</div>";
+      // ★ 2026-11-27 S3：货柜分段尾部给开箱入口（1 代有独立 cargo UI，本作没搬，故内嵌）
+      if (cat === "cargo") {
+        const btn = [];
+        for (const sz of ["S", "M", "L", "XL"]) {
+          const n = Math.floor(res["cargo_" + sz] || 0);
+          if (n <= 0) continue;
+          btn.push('<button class="sm" data-act="cargoOpen:' + sz + ':1">开 1 个</button>');
+          if (n > 1) btn.push('<button class="sm ghost" data-act="cargoOpen:' + sz + ':' + Math.min(n, 20) + '">连开 ' + Math.min(n, 20) + '</button>');
+        }
+        if (btn.length) {
+          const lootN = (Engine.Cargo && Engine.Cargo.lootCount) ? Engine.Cargo.lootCount(state) : 0;
+          if (lootN > 0) btn.push('<button class="sm primary" data-act="cargoSell">兑换战利品 ' + lootN + " 件</button>");
+          html += '<div class="row" style="margin:-2px 0 10px;flex-wrap:wrap;gap:6px">'
+            + '<span class="dim" style="font-size:11px">开箱即揭晓内容；具名战利品进背包，材料直接入仓。</span></div>'
+            + '<div class="row" style="margin:-4px 0 10px;flex-wrap:wrap;gap:6px">' + btn.join("") + "</div>";
+        } else {
+          const lootN = (Engine.Cargo && Engine.Cargo.lootCount) ? Engine.Cargo.lootCount(state) : 0;
+          if (lootN > 0) html += '<div class="row"><button class="sm primary" data-act="cargoSell">兑换战利品 ' + lootN + " 件</button></div>";
+        }
+      }
     }
     // 装备库存（state.equipment）：独立分类，不与资源同网格；仅在筛选「全部」或「装备」时显示
     if (warehouseFilter === "all" || warehouseFilter === "equip") {
@@ -2767,12 +2982,78 @@
     return html;
   }
 
+  // ---------- 考古页（S6）：文物背包 + 一键回收 + 协议（真值在 state.archaeology） ----------
+  function viewArchaeology() {
+    const AC = Data.ArchaeologyContent;
+    const Arch = Engine.Archaeology;
+    const A = state.archaeology || {};
+    const arts = A.artifacts || {};
+    const owned = (AC && AC.ARTIFACTS ? AC.ARTIFACTS : []).filter(a => (arts[a.id] || 0) > 0);
+    const vouchers = A.vouchers || {};
+    let html = '<div class="wh-head"><div><h2>考古 · 文物与协议</h2>'
+      + '<div class="wh-desc">文物背包与仓库共用同一份数据：这里回收后仓库同步减少；校准基体留给改造件强化，不参与回收。</div></div>'
+      + '<div class="wh-head-r">' + archRecycleBtn("sm primary") + "</div></div>";
+
+    html += '<div class="wh-sec" data-cat="trade"><span class="nm">文物背包</span>'
+      + '<span class="cnt">' + owned.length + " 种在库</span><span class=\"ln\"></span></div>";
+    html += '<div class="wh-grid">';
+    if (!owned.length) html += '<div class="wh-note">背包暂无文物。派遣成员在残骸场做遗址解析可获得文物（含货柜与稀有掉落）。</div>';
+    for (const a of owned) {
+      const n = arts[a.id] || 0;
+      const isLp = a.category === "lp";
+      const calib = a.category === "calibration";
+      const rate = calib ? "材料 · 不回收" : (isLp ? ("兑换 " + fmt(a.lpValue || 0) + " 功勋/件") : ("回收 " + fmt(a.iskValue || 0) + "⛁/件"));
+      html += '<div class="wh-item" data-cat="' + (calib ? "special" : "trade") + '">'
+        + '<div class="wh-top"><span class="wh-ic">' + (calib ? "🧬" : isLp ? "📡" : "🏺") + "</span>"
+        + '<span class="wh-nm">' + esc(a.name) + '</span><span class="wh-tier">' + esc(a.tier) + "</span></div>"
+        + '<div class="wh-q">×' + fmt(n) + " <small>" + rate + "</small></div>"
+        + (calib ? "" : '<button class="sm" data-act="archSell:' + a.id + '">' + (isLp ? "兑换 1 件" : "回收 1 件") + "</button>")
+        + "</div>";
+    }
+    html += "</div>";
+
+    html += '<div class="wh-sec" data-cat="special"><span class="nm">自动协议</span>'
+      + '<span class="cnt">成功解析后自动结算</span><span class="ln"></span></div>';
+    const protos = A.protocols || {};
+    const protoRows = [
+      { id: "autosell", name: "自动出售文物", hint: "每次成功解析后，把普通/独特文物自动换成星币（前置：数据归档 Lv4 + 行星财政 Lv4）" },
+      { id: "autoconv", name: "自动兑换功勋信标", hint: "每次成功解析后，把功勋信标自动换成功勋（前置：数据归档 Lv5 + 行星财政 Lv4）" },
+    ];
+    html += '<div class="wh-note" style="margin-top:0">';
+    for (const p of protoRows) {
+      const unlocked = !!(Arch && Arch.protocolUnlocked(state, p.id));
+      html += '<label class="row" style="align-items:center;gap:8px;margin:4px 0">'
+        + '<input type="checkbox" class="arch-proto" data-arch-proto="' + p.id + '"'
+        + (protos[p.id] ? " checked" : "") + (unlocked ? "" : " disabled") + ">"
+        + "<b>" + p.name + "</b><span class=\"dim\">" + esc(p.hint) + "</span></label>";
+    }
+    const vNames = Object.keys(vouchers).map(id => {
+      const v = AC && AC.VOUCHERS ? AC.VOUCHERS[id] : null;
+      return v ? v.name : id;
+    });
+    html += '<div style="margin-top:8px">凭证加成：' + (vNames.length ? esc(vNames.join("、")) + " 已入库（对应回收 +10%）" : "暂无凭证（稀有池掉落）") + "</div></div>";
+
+    html += '<div class="wh-sec" data-cat="consumable"><span class="nm">考古探针</span>'
+      + '<span class="cnt">消耗品 · 缺货停摆</span><span class="ln"></span></div>';
+    html += '<div class="wh-grid">';
+    const probes = (AC && AC.PROBES ? AC.PROBES : []).filter(p => (A.probes && A.probes[p.id] || 0) > 0);
+    if (!probes.length) html += '<div class="wh-note">探针库存为零，遗址解析会停摆。到「舰基 → 制造车间 → 考古探针」制造。</div>';
+    for (const p of probes) {
+      html += '<div class="wh-item" data-cat="consumable"><div class="wh-top"><span class="wh-ic">🔎</span>'
+        + '<span class="wh-nm">' + esc(p.name) + '</span></div>'
+        + '<div class="wh-q">×' + fmt(A.probes[p.id]) + '</div></div>';
+    }
+    html += "</div>";
+    html += '<div class="wh-note">探针制造在「舰基 → 制造车间 → 考古探针」；文物同步显示在「仓库 → 交易品/特殊物资」。</div>';
+    return html;
+  }
+
   // ---------- 仓库卡片点击详情（对齐 EVE-IDLE cargo 卡点开） ----------
   let whDetailEl = null;
   function openWhDetail(key) {
     closeWhDetail();
     const m = Data.Resources.meta(key); if (!m) return;
-    const qty = (state.res && state.res[key]) || 0;
+    const qty = archStock(state, key) || (state.res && state.res[key]) || 0;
     const catName = WH_CAT_NAME[m.cat] || "其他";
     const accent = catColor(m.cat);
     const fromName = m.from ? (Data.Resources.meta(m.from) ? Data.Resources.meta(m.from).name : m.from) : null;
@@ -3236,7 +3517,7 @@
     // 焦点战场：只有正看着星系页、且该星系里有我们在打的仗，才走逐轮真仿真；
     // 其余一律闭式（成本与离线时长无关）。切页签时引擎会自动退回闭式，进度不丢。
     state.combatFocus = (tab === "system" && curSystem) ? curSystem : null;
-    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, fleet: viewFleet, warehouse: viewWarehouse, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
+    const fn = { starmap: viewStarMap, system: viewSystem, base: viewBase, fleet: viewFleet, warehouse: viewWarehouse, archaeology: viewArchaeology, members: viewMembers, factions: viewFactions, tech: viewTech, story: viewStory, report: viewReport, settings: viewSettings }[tab];
     const html = fn ? fn() : "";
     // 内容无变化（如星图缓存命中、仅燃料后台回复）则不重设 innerHTML，
     // 避免 207 节点 SVG 每秒销毁重建导致的整图刷新 / 脉冲重播 / 视角闪烁。
@@ -3327,7 +3608,30 @@
       else warehouseFilter = a;
       renderView(); return;
     }
-    if (cmd === "whinfo") { openWhDetail(a); return; }
+    // 考古条目键自带冒号（art:xxx / probe:xxx / voucher:xxx），不能用 split()[1] 截断
+    if (cmd === "whinfo") { openWhDetail(act.slice(7)); return; }
+    if (cmd === "archRecycle") {
+      const A = Engine.Archaeology;
+      if (!A) { toast("考古引擎未加载"); return; }
+      const r = A.recycleAll(state, "all");
+      if (!r || !r.count) { toast("没有可回收的文物（校准基体保留）"); return; }
+      closeWhDetail();
+      pushReport("考古 · 一键回收文物", [
+        "共回收 " + r.count + " 件文物，获得 " + fmt(r.credits) + "⛁ 与 " + fmt(r.rep) + " 功勋。",
+        "普通/独特文物按凭证加成折算星币，功勋信标按凭证加成折算功勋；校准基体不回收。",
+      ]);
+      toast("一键回收 " + r.count + " 件 · " + fmt(r.credits) + "⛁ / " + fmt(r.rep) + " 功勋");
+      renderView(); return;
+    }
+    if (cmd === "archSell") {
+      const A = Engine.Archaeology;
+      if (!A) { toast("考古引擎未加载"); return; }
+      const art = Data.ArchaeologyContent && Data.ArchaeologyContent.artifactById(a);
+      const r = A.recycleArtifact(state, a, 1);
+      if (!r) { toast("背包里没有这件文物"); return; }
+      toast("回收「" + (art ? art.name : a) + "」→ " + fmt(r.qty) + (r.kind === "rep" ? " 功勋" : "⛁"));
+      renderView(); return;
+    }
     if (cmd === "npc") { openNpcDetail(a); return; }
     if (cmd === "fire") { pendingFireId = a; openNpcDetail(a); return; }
     if (cmd === "fire_confirm") {
@@ -3425,6 +3729,19 @@
       if (!r.ok) toast(r.reason === "locked"
         ? "需队内配有一艘战列舰（旗舰档）才能设置索敌"
         : "无效的索敌模式");
+      renderView();
+    }
+    else if (cmd === "salvage") {
+      if (a !== "toggle") return;
+      const S = Engine.Salvage;
+      if (!S) { toast("打捞模块未加载"); return; }
+      const now = S.isActive(state);
+      const r = S.setActive(state, !now);
+      if (r.ok) {
+        toast(!now
+          ? "主动打捞已开启：每击杀耗同位素换舰船组件"
+          : "主动打捞已关闭：仅保留被动货柜加成");
+      }
       renderView();
     }
     else if (cmd === "raidPick") {
@@ -3526,6 +3843,73 @@
         toast("采集装置已部署");
       } else toast(r.reason || "部署失败");
       if ($pop.classList.contains("show") && $pop.dataset.nodeId) showBody($pop.dataset.nodeId, $pop.dataset.bodyId);
+    }
+    else if (cmd === "site_renew") {
+      const S = Engine.Sites;
+      const r = S ? S.renew(state, a) : { ok: false, reason: "模块未加载" };
+      if (r.ok) {
+        pushReport("行星设施 · 续期 24h", [
+          "已支付维护费 " + r.cost + " ⛁，装置恢复生产。",
+          "缓冲保留未清空；到期时间重置为此刻 +24h（1 代 maintenanceDuration）。",
+        ]);
+        toast("已续费 " + fmt(r.cost) + "⛁，装置恢复生产");
+      } else toast(r.reason || "续费失败");
+      if ($pop.classList.contains("show") && $pop.dataset.nodeId) showBody($pop.dataset.nodeId, $pop.dataset.bodyId);
+      renderView();
+    }
+    else if (cmd === "site_auto") {
+      const S = Engine.Sites;
+      const site = S ? S.byBody(state, a) : null;
+      if (!site) toast("无装置");
+      else {
+        const on = !(site.autoRenew && site.autoRenew.enabled);
+        S.setAutoRenew(state, a, on);
+        toast(on
+          ? "自动续费已开启：到期自动扣 " + fmt(S.renewCostOf(state, a)) + "⛁"
+          : "自动续费已关闭");
+      }
+      if ($pop.classList.contains("show") && $pop.dataset.nodeId) showBody($pop.dataset.nodeId, $pop.dataset.bodyId);
+      renderView();
+    }
+    else if (cmd === "cargoOpen") {
+      const Cg = Engine.Cargo;
+      if (!Cg || !Cg.openMany) { toast("货柜模块未加载"); return; }
+      const size = a;
+      const cnt = Math.max(1, Math.floor(Number(b) || 1));
+      const rr = Cg.openMany(state, size, cnt, Math.random);
+      if (!rr || !rr.opened) { toast("没有可开的 " + size + " 货柜"); return; }
+      // 按「资源名」聚合，避免同一批开出 5 条同名行
+      const agg = {};
+      const order = [];
+      let bpCount = 0;
+      for (const g of (rr.rolls || [])) {
+        if (!g) continue;
+        if (g.blueprint) bpCount++;
+        const key = (g.resKey || g.id || "?") + "|" + (g.name || "");
+        if (!(key in agg)) { agg[key] = { name: g.name || g.id || "?", qty: 0, note: g.note || "", bp: !!g.blueprint }; order.push(key); }
+        agg[key].qty += (Number(g.qty) || 1);
+      }
+      const lines = [];
+      for (const key of order) {
+        const it = agg[key];
+        lines.push((it.bp ? "📘 " : "") + it.name + " ×" + fmt(it.qty) + (it.note ? "（" + it.note + "）" : ""));
+      }
+      if (!lines.length) lines.push("箱内只有残渣，没有可入库的东西。");
+      pushReport("货柜 · 开启 " + rr.opened + " 个 " + size + " 型", lines);
+      toast("开了 " + rr.opened + " 个货柜，得 " + order.length + " 种物品" + (bpCount ? "（含 " + bpCount + " 张蓝图）" : ""));
+      renderView();
+    }
+    else if (cmd === "cargoSell") {
+      const Cg = Engine.Cargo;
+      if (!Cg || !Cg.sellLoot) { toast("货柜模块未加载"); return; }
+      const rr = Cg.sellLoot(state);
+      if (!rr.count) { toast("没有可兑换的战利品"); return; }
+      pushReport("货柜 · 战利品兑换", [
+        "共兑换 " + rr.count + " 件具名战利品。",
+        "星币 +" + fmt(rr.credits) + " ⛁（1 代 ISK ÷" + Cg.ISK_TO_CREDITS + "），功勋 +" + fmt(rr.rep) + "。",
+      ]);
+      toast("兑换 " + rr.count + " 件：+" + fmt(rr.credits) + "⛁ / +" + fmt(rr.rep) + " 功勋");
+      renderView();
     }
     else if (cmd === "site_upgrade") {
       const S = Engine.Sites;
@@ -3765,6 +4149,16 @@
     // ⚠️ 必须挂在 $pop 上：#nsk-pop 是 body 直属节点、在 $view 之外，$view 的 change 委托收不到。
     $pop.addEventListener("change", function (e) {
       if (e.target && e.target.id === "body-mem") refreshBodyRates();
+      if (e.target && e.target.id === "body-probe") {
+        const A = (Engine.Archaeology && Engine.Archaeology.ensureArch) ? Engine.Archaeology.ensureArch(state) : null;
+        if (A) {
+          if (e.target.value) A.selectedProbe = e.target.value;
+          else delete A.selectedProbe;              // 自动 = 引擎按扫描加成挑最强可用
+          refreshBodyRates();
+          if (Persistence) Persistence.save(state); else Core.save(state);
+        }
+        return;
+      }
     });
     document.addEventListener("click", e => {
       // 拖动舱段后紧跟的 click：target 是「落到的那张卡」，会误开右侧详情，用时间窗吞掉。
@@ -3798,6 +4192,30 @@
     $view.addEventListener("change", e => {
       const sysSel = e.target.closest(".sys-sel");
       if (sysSel) { curSystem = sysSel.value; renderView(); return; }
+      // ★ 考古自动协议：开关只写 state.archaeology.protocols，回收仍由引擎 cycle 执行
+      const ap = e.target.closest(".arch-proto");
+      if (ap) {
+        const kind = ap.getAttribute("data-arch-proto");
+        const Arch = Engine.Archaeology;
+        if (!Arch || !Arch.protocolUnlocked(state, kind)) { toast("需先研究「" + (kind === "autosell" ? "文物自动出售协议" : "文物自动兑换协议") + "」科技"); renderView(); return; }
+        Arch.ensureArch(state).protocols[kind] = !!ap.checked;
+        toast(ap.checked ? "协议已开启，成功解析后自动结算" : "协议已关闭");
+        renderView(); return;
+      }
+      // ★ S6 装置自动续费：勾选只改开关，数字框只改储备金（两者互不覆盖）
+      const sa = e.target.closest(".site-auto");
+      if (sa) {
+        const rr = Engine.Sites.setAutoRenew(state, sa.getAttribute("data-body"), sa.checked);
+        if (!rr.ok) toast(rr.reason || "设置失败");
+        else toast(sa.checked ? "到期自动续费已开启" : "到期自动续费已关闭");
+        renderView(); return;
+      }
+      const sr = e.target.closest(".site-reserve");
+      if (sr) {
+        const rr = Engine.Sites.setAutoRenew(state, sr.getAttribute("data-body"), undefined, sr.value);
+        if (!rr.ok) toast(rr.reason || "设置失败");
+        renderView(); return;
+      }
       const sel = e.target.closest(".mbr-sel");
       if (!sel) return;
       const qid = sel.getAttribute("data-qid");
@@ -3886,7 +4304,10 @@
     $pop.style.top = (r.top - $pop.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - $pop.offsetHeight - 8) + "px";
     $pop.classList.add("show");
   }
-  function hidePop() { $pop.classList.remove("show", "body-detail-pop"); }
+  function hidePop() {
+    $pop.classList.remove("show", "body-detail-pop");
+    if (archPopTimer) { clearInterval(archPopTimer); archPopTimer = null; }
+  }
 
   // 星图节点浮层：查看星系 + 跃迁（跃迁按可达性 / 燃料决定可用状态）
   function hideNodeMenu() { if ($nodePop) $nodePop.classList.remove("show"); }

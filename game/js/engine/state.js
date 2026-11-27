@@ -79,7 +79,23 @@
       // ★ 2026-11-27 P1b 索敌模式：nodeId → "formation"|"elite"|"boss"|"highest_damage"|"lowest_hp"|"highest_hp"
       //   · "formation" 是默认值，**不写进存档**（保持干净）；未解锁时引擎强制回落 formation，不清存档
       combatTargeting: {},
+      // ★ 2026-11-27 打捞臂：主动打捞开关（1 代 settings.salvageArmActive 的本作映射）
+      //   关 = 仅被动（打捞效率放大货柜掉率）；开 = 每击杀耗同位素换舰船组件（见 engine/salvage.js）
+      salvage: { active: false },
+      // ★ 2026-11-27 考古复刻（S2）：探针/文物/凭证独立库存（不进 state.res、不进 Resources.ALL）
+      //   probes: {probeId: qty} / artifacts: {artId: qty} / vouchers: {voucherId: 1}（唯一）
+      //   protocols: {autosell:bool, autoconv:bool}；probeSavingRemainder ∈ [0,1) 确定性节省累计器
+      archaeology: {
+        probes: {}, artifacts: {}, vouchers: {},
+        protocols: { autosell: false, autoconv: false },
+        probeSavingRemainder: 0,
+        selectedProbe: null,   // 手动指定探针 id；null / 非法 / 缺货时引擎自动回退最强可用探针
+      },
       combatFocus: null,        // 当前被玩家注视的战场节点（焦点走逐轮真仿真，其余走闭式）
+      // ★ 2026-11-27 P3 战斗统计（1 代 core/statistics.js:214-253 的本作子集）
+      //   maxWave 历史最高波数 / waves 累计打穿波数 / rounds 累计肃清轮数（Σ combatClears）
+      //   bossKills·eliteKills 累计击坠 / defeats 战败次数（wiped）
+      stats: { combat: { maxWave: 0, waves: 0, rounds: 0, bossKills: 0, eliteKills: 0, defeats: 0 } },
       battles: {},              // 剿匪战报累计：nodeId → {waves,credits,rep,lastTs,waveSec,progress,squadDps,...}
       ships: [],               // {id, shipId, name, status:'idle'|'mission', nodeId}
       factions: factions,

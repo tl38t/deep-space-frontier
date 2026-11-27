@@ -135,6 +135,56 @@
     if (!Array.isArray(s.pendingEvents)) s.pendingEvents = [];
     // 行星采集设施（EVE 式收菜，2026-10-27 方案 B）字段兜底
     if (!s.sites || typeof s.sites !== "object") s.sites = {};
+    // ★ 2026-11-27 S5 维护费字段（1 代 data/planets.js：每 24h 付费，到期停产）
+    //   ⚠️ deployedAt 缺失必须补成「现在」：若补 0，`now - 0` 早已超过 duration，
+    //      所有旧档装置在读档瞬间集体停产；若永远 undefined，引擎兜底成 now 则永不到期、
+    //      等于永久免费。两个极端都是 bug，只有「从现在开始计 24h」是玩家能接受的迁移。
+    //   ⚠️ 不升 STATE_VERSION：纯 additive，旧档读入后即带全部新字段。
+    {
+      const nowMs = Date.now();
+      for (const bid in s.sites) {
+        const st = s.sites[bid];
+        if (!st || typeof st !== "object") { delete s.sites[bid]; continue; }
+        let dep = Number(st.deployedAt);
+        if (!isFinite(dep) || dep <= 0) dep = nowMs;
+        st.deployedAt = dep;
+        let dur = Number(st.duration);
+        if (!isFinite(dur) || dur <= 0) dur = 86400;          // 1 代 maintenanceDuration
+        st.duration = dur;
+        if (st.active === undefined) st.active = (dep + dur * 1000) > nowMs;
+        st.active = !!st.active;
+        if (!st.autoRenew || typeof st.autoRenew !== "object") st.autoRenew = { enabled: false, minIskReserve: 0 };
+        st.autoRenew.enabled = !!st.autoRenew.enabled;
+        let minRes = Math.floor(Number(st.autoRenew.minIskReserve) || 0);
+        if (!isFinite(minRes) || minRes < 0) minRes = 0;
+        st.autoRenew.minIskReserve = minRes;
+        if (st.lastRenewFail !== undefined && typeof st.lastRenewFail !== "string") delete st.lastRenewFail;
+      }
+    }
+
+    // ★ 2026-11-27 P3 战斗统计（幂等补字段，不升 STATE_VERSION）
+    //   全部按「有限非负整数」清洗；非法一律归零（1 代 statistics.js 同一口径）
+    if (!s.stats || typeof s.stats !== "object") s.stats = {};
+    if (!s.stats.combat || typeof s.stats.combat !== "object") s.stats.combat = {};
+    {
+      const KEYS = ["maxWave", "waves", "rounds", "bossKills", "eliteKills", "defeats"];
+      for (const k of KEYS) {
+        let v = Number(s.stats.combat[k]);
+        if (!isFinite(v) || v < 0) v = 0;
+        s.stats.combat[k] = Math.floor(v);
+      }
+      if (s.stats.combat.maxWave > 20) s.stats.combat.maxWave = 20;   // 一轮只有 20 波
+    }
+
+    // ★ 2026-11-27 S1 货柜：具名战利品背包（1 代 state.cargoLoot，cargo.js 的 cargoGrantLoot 会懒建）
+    //   这里提前补空数组，保证旧档字段齐全；元素结构 {id,name,kind,value}，非法条目直接丢。
+    if (!Array.isArray(s.cargoLoot)) s.cargoLoot = [];
+    else {
+      s.cargoLoot = s.cargoLoot.filter(function (it) {
+        return it && typeof it === "object" && (it.kind === "isk" || it.kind === "lp")
+          && isFinite(Number(it.value)) && Number(it.value) > 0;
+      });
+    }
     // 舰船装备库存（2026-10-31 总装船坞制造）：旧档补 equipment
     if (!s.equipment || typeof s.equipment !== "object") s.equipment = {};
     const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Ships : null;
@@ -315,6 +365,56 @@
     for (const nid in s.combatTargeting) {
       if (!VALID_TARGET_MODES[s.combatTargeting[nid]]) delete s.combatTargeting[nid];
     }
+
+    // ★ 2026-11-27 打捞臂主动打捞开关（1 代 settings.salvageArmActive）
+    //   · 幂等：旧档没有就补 { active:false }；非对象整段重建；active 强制布尔
+    //   · 不在这里判「队里有没有打捞臂」：装备会拆会换，读档必须纯幂等，
+    //     引擎侧 hasArm() 每次结算现算（salvage.js:rollComponents 有 no_arm 提前退出）
+    if (!s.salvage || typeof s.salvage !== "object" || Array.isArray(s.salvage)) s.salvage = { active: false };
+    s.salvage.active = !!s.salvage.active;
+
+    // ★ 2026-11-27 考古复刻 S2（幂等补字段，不升 STATE_VERSION）
+    //   · 三个库存子对象按注册键白名单清洗：未知 key 删除、数量非正删除（防幽灵库存）
+    //   · 不在这里判「有没有探针/解锁」：读档必须纯幂等，玩家读了档再决定
+    //   · 旧档没有 state.archaeology → 全零库存 = 探针缺货停摆（用户拍板 1 代原样）
+    const AC = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.ArchaeologyContent : null;
+    if (!s.archaeology || typeof s.archaeology !== "object" || Array.isArray(s.archaeology)) {
+      s.archaeology = {};
+    }
+    const A = s.archaeology;
+    const validKeys = (kind) => {
+      const table = !AC ? null : (kind === "probes" ? AC.PROBES : kind === "artifacts" ? AC.ARTIFACTS : null);
+      if (!table) return null;
+      const out = {};
+      for (const it of table) out[it.id] = 1;
+      return out;
+    };
+    function cleanInv(obj, kind) {
+      const allow = validKeys(kind);
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
+      const out = {};
+      for (const k in obj) {
+        if (allow && !allow[k]) continue;
+        const q = Math.floor(Number(obj[k]) || 0);
+        if (q > 0 && isFinite(q)) out[k] = q;
+      }
+      return out;
+    }
+    A.probes = cleanInv(A.probes, "probes");
+    A.artifacts = cleanInv(A.artifacts, "artifacts");
+    if (!A.vouchers || typeof A.vouchers !== "object" || Array.isArray(A.vouchers)) A.vouchers = {};
+    for (const k in A.vouchers) {
+      if (!AC || !AC.VOUCHERS[k]) delete A.vouchers[k];
+      else A.vouchers[k] = 1;                 // 唯一凭证，只认 1
+    }
+    if (!A.protocols || typeof A.protocols !== "object" || Array.isArray(A.protocols)) A.protocols = {};
+    A.protocols.autosell = !!A.protocols.autosell;
+    A.protocols.autoconv = !!A.protocols.autoconv;
+    // 手动探针选择：非法 id 删掉，交给引擎 selectedProbeOf 自动回退（不升 STATE_VERSION）
+    if (typeof A.selectedProbe === "string" && (!AC || !AC.probeById || !AC.probeById(A.selectedProbe))) delete A.selectedProbe;
+    else if (typeof A.selectedProbe !== "string") delete A.selectedProbe;
+    const rem = Number(A.probeSavingRemainder);
+    A.probeSavingRemainder = (isFinite(rem) && rem > 0) ? (rem - Math.floor(rem)) : 0;
 
     return s;
   }

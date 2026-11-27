@@ -166,7 +166,20 @@
     titan_core_assembly:      { id: "titan_core_assembly",      name: "泰坦核心总成",   icon: "🛰", img: "assets/icons/ship-components/base_hull.webp", cat: "titan", desc: "泰坦 3×3×3 总装第三阶：核心类 3 部件合成。" },
   };
 
-  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC, TITAN);
+  // ================================================================
+  // 货柜（★ 2026-11-27 S1：接 1 代 cargo.js 的 special:货柜S/M/L/XL）
+  // ⚠️ 这四键**必须进 ALL**（见下方 Object.assign）：否则 store.js 读档按「不在 ALL」清空，
+  //    玩家开箱前后货柜凭空消失 —— 与月矿当年的坑同一个。
+  // ⚠️ 不进 HUD_ORDER（顶部资源胶囊只放常驻产出，货柜是背包物）。
+  // ================================================================
+  const CARGO = {
+    cargo_S:  { id: "cargo_S",  name: "货柜 S",  icon: "📦", cat: "cargo", desc: "小型货柜：开 1 次。击坠海盗按敌人档位低概率掉落。" },
+    cargo_M:  { id: "cargo_M",  name: "货柜 M",  icon: "📦", cat: "cargo", desc: "中型货柜：开 1 次，奖励量 ×1.6。" },
+    cargo_L:  { id: "cargo_L",  name: "货柜 L",  icon: "🎁", cat: "cargo", desc: "大型货柜：开 2 次，奖励量 ×2.6。" },
+    cargo_XL: { id: "cargo_XL", name: "货柜 XL", icon: "🎁", cat: "cargo", desc: "超大型货柜：开 3 次，奖励量 ×4.2。" },
+  };
+
+  const ALL = Object.assign({}, TOP, ORE, GAS, MINERAL, COMPONENT, BLUEPRINT, AMMO, PLANET, MOON_ORE, TACTIC, TITAN, CARGO);
 
   // 增强剂瓶身（booster:<id>）与战术材料（tactic:*）的显示名回退：
   // 增强剂数据由 js/lib/eveidle/data/boosters.js 运行时全局加载（window.BOOSTER_ITEMS），
@@ -177,6 +190,43 @@
     if (typeof id === "string" && id.startsWith("booster:")) {
       const it = (typeof window !== "undefined" && window.BOOSTER_ITEMS) ? (window.BOOSTER_ITEMS[id.slice(8)] || null) : null;
       if (it) return { id: it.itemId, name: it.name, icon: "🧪", cat: "booster", desc: it.description || "" };
+    }
+    // 考古池（2026-11-27 S6）：文物/探针/凭证真值在 state.archaeology.*，不镜像进 state.res，
+    // 故不进 ALL（否则 store.js 读档会按「不在 ALL」清空 state.res 里的同名键）。
+    // 显示名走这里动态查表，与 booster 同模式；仓库分类按 1 代：
+    //   文物(非校准)→trade 交易品 / 校准基体+凭证→special 特殊物资 / 探针→consumable 消耗品。
+    if (typeof id === "string") {
+      const NSK2 = (typeof window !== "undefined" && window.NSK) ? window.NSK : null;
+      const AC = NSK2 && NSK2.Data && NSK2.Data.ArchaeologyContent;
+      if (AC) {
+        if (id.startsWith("art:")) {
+          const a = AC.artifactById ? AC.artifactById(id.slice(4)) : null;
+          if (a) {
+            const cal = a.category === "calibration";
+            return {
+              id: id, name: a.name,
+              icon: a.category === "lp" ? "🎖" : (cal ? "🧪" : "📜"),
+              cat: cal ? "special" : "trade",
+              tier: Math.max(1, ["I", "II", "III", "IV", "V"].indexOf(a.tier) + 1),
+              desc: cal ? "考古校准基体：留给改造件强化，不回收"
+                : (a.category === "lp" ? "考古功勋文物：可兑换 " + a.lpValue + " 功勋"
+                  : "考古文物：可回收 " + a.iskValue + " 星币"),
+            };
+          }
+        }
+        if (id.startsWith("probe:")) {
+          const p = AC.probeById ? AC.probeById(id.slice(6)) : null;
+          if (p) return {
+            id: id, name: p.name, icon: "🔬", cat: "consumable",
+            tier: Math.max(1, Math.min(5, Math.floor((p.level - 1) / 20) + 1)),
+            desc: "考古探针：扫描 +" + (p.scanBonus || 0) + "，周期 -" + Math.round((p.cycleReduction || 0) * 100) + "%",
+          };
+        }
+        if (id.startsWith("voucher:")) {
+          const v = AC.VOUCHERS[id.slice(8)];
+          if (v) return { id: id, name: v.name, icon: "🎫", cat: "special", desc: v.desc || "考古凭证" };
+        }
+      }
     }
     return null;
   }
@@ -214,5 +264,5 @@
     "planet_lava", "planet_gas", "planet_ice", "planet_plasma", "planet_bio", "planet_mag",
     "ga_moon", "pt_moon", "hf_moon", "os_moon", "pm_moon", "rb_moon"];
 
-  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, TITAN, ALL, HUD_ORDER, startingResources, meta };
+  return { TOP, ORE, GAS, MINERAL, MOON_ORE, COMPONENT, BLUEPRINT, AMMO, PLANET, TACTIC, TITAN, CARGO, ALL, HUD_ORDER, startingResources, meta };
 });
