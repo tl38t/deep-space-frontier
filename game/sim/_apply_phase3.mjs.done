@@ -1,3 +1,6 @@
+// ⚠ 已停用（2026-11-28）：一次性补丁脚本，图纸是 11-10 的 33 艘舰快照。改名 .done 防批量误跑。
+//    再跑会整块覆盖 ships.js（11 艘工业舰 + titan + SLOT_LAYOUT/EXTRA_CELLS/ENERGY_OUTPUT 全丢）。
+//    事故记录见 .workbuddy/memory/2026-11-28.md。
 // Phase 3 应用脚本：把生成的 SHIPS / SLOT_LAYOUT 块替换进 ships.js（块级正则替换，避免 whitespace 误配）
 import fs from "fs";
 const SHIPS_JS = "D:/深空星疆：商业与战争/game/js/data/ships.js";

@@ -1,3 +1,5 @@
+// ⚠ 已停用（2026-11-28）：一次性补丁脚本，锚定的行形状是 11-10 的文件形态。改名 .done 防批量误跑。
+//    事故记录见 .workbuddy/memory/2026-11-28.md。
 // 把 _phase5_bonuses.json 的 combat bonuses 注入深空 ships.js 的 28 战斗舰对象（单行插入，锚定 id）
 import fs from "fs";
 import path from "path";
