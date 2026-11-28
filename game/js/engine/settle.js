@@ -84,7 +84,8 @@
   function archaeologyPeriod(state, m, nodeId) {
     const Arch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
     const cycRed = Arch ? Arch.cycleReduction(m, state) : 0;
-    let period = 120 * (1 - Math.min(0.50, cycRed));
+    // 1 代原式：分析仪 0.50 + rig 无封顶，总封顶 0.95（cycleReduction 已封顶，此处不再压 0.50）
+    let period = 120 * (1 - Math.min(0.95, cycRed));
     if (Arch && Arch.archResearchMult) period /= Arch.archResearchMult(state);
     const Booster = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) || null;
     const bEff = (Booster && Booster.getEffectState) ? Booster.getEffectState(state) : null;
@@ -210,7 +211,12 @@
     const goal = (m && m.mods && m.mods.goalXp) || 1;
     const Bm = (state && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) ? window.NSK.Engine.Booster : null;
     const bXp = Bm ? Bm.skillXpMultiplierFor(state, key) : 1;
-    return base * goal * bXp;
+    // 1 代 production.js:885-893：神经训练 rig 的 skillXpBonus 只作用于「该舰当前被指派的工作」。
+    // xpMultOf 的调用点正是各工作分支的技能发放处，故在此乘一层天然满足 job 作用域。
+    const ArchM = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) ? window.NSK.Engine.Archaeology : null;
+    const fit = (ArchM && ArchM.fittedBonuses && m) ? ArchM.fittedBonuses(m, state) : null;
+    const rigXp = fit ? (1 + Math.max(0, fit.skillXpBonus || 0)) : 1;
+    return base * goal * bXp * rigXp;
   }
 
   // rng 解耦：种子只依赖存档 rngSeed + 语义盐 + 单调计数器，与 now/调用频率无关 → 在线离线 parity。
@@ -308,7 +314,7 @@
     if (!Ships || !Ships.maxHpOf || !Ships.maxHp) return;
     for (const m of (state.members || [])) {
       if (!m || m.destroyed || !m.hp) continue;
-      const cap = Ships.maxHpOf(m);
+      const cap = Ships.maxHpOf(m, state);   // 含 rig 谐振容量（1 代 priority50 乘区）
       const base = Ships.maxHp(m.shipId, m.enhancementLevel);   // 不含技能容量的旧上限 = 满血判据
       for (const k of ["shield", "armor", "structure"]) {
         const c = cap[k] || 0;
@@ -340,15 +346,20 @@
   // 1) 船体燃料效率 ship.fuelEfficiency（本作扩展字段，1 代无对应；提议值待标定）
   // 2) 考古燃料效率改装件（rig 槽，bonuses.archaeologyFuelEfficiency，与 archaeologyScan 等同置于 bonuses）
   // 两者均乘性叠加进 eff；调用方 archaeologyFuelCost 不变。
+  // 1 代原式照搬（selectors.js:2634-2658 / archaeology.js:550-563）：
+  //   油耗系数 = max(0, 船体系数 − 改装件节省 − 其它装备节省)
+  //   archaeologyFuelEfficiency 是「节省比例」(0.04~0.10)，不是乘性系数。
+  //   ⚠️ 2026-11-28 用户拍板：本作原乘性口径(0.92~0.68)是自造机制，撤回；改回 1 代加算。
   function fuelEfficiencyMult(state, m) {
     const Data = (typeof window !== "undefined" && window.NSK) ? window.NSK.Data : null;
-    let mult = 1;
+    let shipMult = 1;
     // 船体燃料效率：smaller 探索舰更省、capital/supercapital 更费（提议值，见数值标定清单）
     if (Data && Data.Ships && Data.Ships.shipById && m && m.shipId) {
       const ship = Data.Ships.shipById(m.shipId);
-      if (ship && typeof ship.fuelEfficiency === "number") mult *= ship.fuelEfficiency;
+      if (ship && typeof ship.fuelEfficiency === "number") shipMult = ship.fuelEfficiency;
     }
-    // 装配的考古燃料效率改装件（遍历 high/mid/low/rig 四槽，多件乘性叠加）
+    let saving = 0;
+    // 改装件节省：遍历四槽累加（1 代加算，非乘性）
     const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
       ? window.NSK.Core.EquipInstances : null;
     if (Data && Data.Equipment && Data.Equipment.byId && m && m.fitted) {
@@ -357,11 +368,12 @@
           const itemId = EI ? EI.itemIdOf(state, ref) : ref;
           const eq = itemId ? Data.Equipment.byId(itemId) : null;
           const v = eq && eq.bonuses && eq.bonuses.archaeologyFuelEfficiency;
-          if (typeof v === "number") mult *= v;
+          if (typeof v === "number") saving += v;
         }
       }
     }
-    return mult;
+    // 其它装备节省（1 代 equipmentFuelSaving）：本作暂无装备产出该键，留接口
+    return Math.max(0, shipMult - saving);
   }
 
   // 考古每周期燃料（对回 1 代 getArchaeologyFuelCostState：baseFuel = Σ上场装备 combat.fuelCost，
@@ -637,6 +649,34 @@
         const y = BASE_MINE * skillBonus(m.skills, mineKey) * abv * dt * ym * effLogi * fitEff * shipEff * bSpeed * (1 + bDouble);
         state.res[ore] = (state.res[ore] || 0) + y;
         m.skills[mineKey] = (m.skills[mineKey] || 0) + miningXpRate(node, isGas) * dt * passionMult(m, mineKey) * xpMultOf(state, m, mineKey);
+
+        // ★ 伴生矿/气 rig（1 代 miningRichChance/gasRichChance，2026-11-28 移植）
+        //   1 代是离散周期制（每 baseTime 掷一次骰，命中发 qty 基准矿）；本作连续产出，
+        //   故用累加器「假装离散」：每攒满一个名义周期 T 记一次骰机会。
+        //   · 在线（单 tick 跨 <2 周期）：逐周期确定性掷骰，保留随机惊喜。
+        //   · 离线（单 tick 跨 ≥2 周期）：直接发期望 n×chance×qty，O(1) 一次乘法不循环——
+        //     离线可封顶 24h（5760 周期），逐周期掷骰会破坏 §14.5「与离线时长无关」红线。
+        //   两者同均值、仅方差不同（用户 2026-11-28 拍板 A 方案）。
+        //   奖励独立发放：不进任何乘区、不吃双倍/脑插、不给 XP（1 代 production.js:1000 同口径）。
+        const richChance = fitB ? (fitB[isGas ? "gasRichChance" : "miningRichChance"] || 0) : 0;
+        if (richChance > 0) {
+          const RICH_T = isGas ? 22.5 : 15;   // 1 代基准区 baseTime（production.js:1001）
+          const acc = (a.richProgress || 0) + dt / RICH_T;
+          const n = Math.floor(acc);
+          a.richProgress = acc - n;            // 保留余数，跨 tick 续攒
+          if (n > 0) {
+            const bonusRes = isGas ? "crude_fullerene" : "fe_ore";  // 基准矿（resources.js:32,43）
+            if (n >= 2) {
+              // 离线大步：期望一次发清，O(1)，与 dt 大小无关
+              state.res[bonusRes] = (state.res[bonusRes] || 0) + n * richChance;  // qty=1
+            } else {
+              // 在线小步：确定性掷骰，种子 = rngSeed ^ 语义盐 ^ richCounter++
+              state.richCounter = (state.richCounter || 0) + 1;
+              const rng = deriveRng(state, 0x518C, state.richCounter);
+              if (rng() < richChance) state.res[bonusRes] = (state.res[bonusRes] || 0) + 1;
+            }
+          }
+        }
       } else if (a.type === "explore" && node) {
         // 残骸场考古周期：统一走 archaeologyPeriod()（浮层预览同一公式，避免两处漂移）。
         const Arch = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
@@ -688,6 +728,17 @@
                   * (Arch && Arch.archExpMult ? Arch.archExpMult(state) : 1);
               }
               pushReport(state, "考古 · " + Data.Archaeology.profileById(focus).name, res.lines);
+              // ★ 1 代考古干扰锁站（archaeology.js:310-317 / tick.js:602-603）：失败但舰未毁 ⇒ 锁站
+              //   max(3, round(周期×0.15×(1−减免))) 秒。本作无 site.time，用 archaeologyPeriod() 代；
+              //   减免取 rig 的 archaeologyInterferenceReduction（封顶 0.90）。O(1) 折算：进度压为负值，
+              //   后续 dt 先填平负段才推进下一周期（等价 1 代时间戳门禁，与离线时长无关）。
+              if (!res.success && !m.destroyed) {
+                const red = Math.max(0, Math.min(0.90, (fit && fit.archaeologyInterferenceReduction) || 0));
+                const sec = Math.max(3, Math.round(period * 0.15 * (1 - red)));
+                a.exploreProgress = -sec / period;
+                if (state.archaeology) state.archaeology.interferenceUntil = now + sec * 1000;
+                break;
+              }
               if (m.destroyed) { a.exploreProgress = 0; break; }
             }
           }

@@ -428,7 +428,9 @@
       toast(res.err);
       return;
     }
-    toast("已装配 " + (res.equip ? res.equip.name : itemId) + (replaced ? "（替换旧件已退回仓库）" : ""));
+    // 1 代原式：rig 卸下/替换即销毁，不返库存（生产引擎 unfitEquipment 已实现）
+    toast("已装配 " + (res.equip ? res.equip.name : itemId)
+      + (replaced ? (slot.type === "rig" ? "（替换的改装件已销毁）" : "（替换旧件已退回仓库）") : ""));
     refresh();
     if (deps.onChanged) deps.onChanged();
   }
@@ -442,7 +444,7 @@
     const P = ns().Engine && ns().Engine.Production;
     const res = P.unfitEquipment(st, openMemberId, slot.type, slot.ref || slot.equipmentId);
     if (!res.ok) { toast(res.err); return; }
-    toast("已卸下 " + (res.equip ? res.equip.name : "") + "，退回仓库");
+    toast("已卸下 " + (res.equip ? res.equip.name : "") + (res.destroyed ? "，改装件已销毁（不返还）" : "，退回仓库"));
     refresh();
     if (deps.onChanged) deps.onChanged();
   }

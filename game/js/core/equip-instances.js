@@ -89,12 +89,18 @@
     return r ? r.itemId : null;
   }
 
-  // 取装备加成。本阶段 affixes 恒空，直接返回定义 bonuses（浅拷贝，避免调用方改写定义表）。
-  // 预留：词条接入时在此按 affixes[].bonusKey/value 叠加（与 1 代 rigs.js 同口径）。
+  // 取装备加成。基础值来自定义表，affix 词条值直加（1 代 rigs.js:61-63,73-86：
+  // 词条在谐振惩罚之外直加，不参与降序排位）。
   function bonusesOf(s, ref) {
     const r = resolve(s, ref);
     if (!r || !r.def) return {};
     const out = Object.assign({}, r.def.bonuses || {});
+    if (Array.isArray(r.affixes)) {
+      for (const a of r.affixes) {
+        const key = a && a.bonusKey, v = Number(a && a.value);
+        if (key && isFinite(v) && v !== 0) out[key] = (out[key] || 0) + v;
+      }
+    }
     return out;
   }
 

@@ -750,6 +750,9 @@
     return (typeof window !== "undefined" && window.NSK && window.NSK.Core)
       ? window.NSK.Core.EquipInstances : null;
   }
+  function EqOf(state, itemId) {
+    return (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(itemId) : null;
+  }
   function fitEquipment(state, memberId, slot, equipId) {
     if (FIT_SLOTS.indexOf(slot) < 0) return { ok: false, err: "槽位类型非法" };
     const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
@@ -791,9 +794,12 @@
     const itemId = EI ? EI.itemIdOf(state, stored) : stored;
     arr.splice(idx, 1);
     m.fitted[slot] = arr;
-    state.equipment[itemId] = (state.equipment[itemId] || 0) + 1;
+    // 1 代原式：改装件（rig）卸下/被替换即销毁，不返库存（1 代 actions.js:2191,2212,2278
+    //   destroyRigRefFromFitting + rig:destroyed 事件）；普通装备退回库存。
+    const isRig = slot === "rig" || (EqOf(state, itemId) && EqOf(state, itemId).slot === "rig");
+    if (!isRig) state.equipment[itemId] = (state.equipment[itemId] || 0) + 1;
     if (EI && EI.looksLikeUid(stored)) EI.remove(state, stored);
-    return { ok: true, equip: (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(itemId) : null };
+    return { ok: true, equip: EqOf(state, itemId), destroyed: isRig };
   }
 
   function buildStatus(state, now) {

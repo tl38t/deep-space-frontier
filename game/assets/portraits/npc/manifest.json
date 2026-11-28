@@ -91,18 +91,20 @@
     "gas_drifter/gas_drifter_reveal_6.webp"
   ],
   "gas_drifter/reveal_limb": [
-    "gas_drifter/gas_drifter_reveal_limb.webp",
-    "gas_drifter/gas_drifter_reveal_limb_2.webp"
+    "gas_drifter/gas_drifter_reveal_limb_3.webp",
+    "gas_drifter/gas_drifter_reveal_limb_4.webp"
   ],
   "gas_drifter/v2": [
     "gas_drifter/gas_drifter_v2.webp",
     "gas_drifter/gas_drifter_v2_2.webp"
   ],
   "gas_drifter/v2_eye": [
-    "gas_drifter/gas_drifter_v2_eye.webp"
+    "gas_drifter/gas_drifter_v2_eye.webp",
+    "gas_drifter/gas_drifter_v2_eye_2.webp"
   ],
   "gas_drifter/v2_limb": [
-    "gas_drifter/gas_drifter_v2_limb.webp"
+    "gas_drifter/gas_drifter_v2_limb.webp",
+    "gas_drifter/gas_drifter_v2_limb_2.webp"
   ],
   "gas_drifter/v4": [
     "gas_drifter/gas_drifter_v4.webp",
@@ -136,14 +138,16 @@
     "orphan_void/orphan_void_reveal_8.webp"
   ],
   "orphan_void/reveal_limb": [
-    "orphan_void/orphan_void_reveal_limb.webp"
+    "orphan_void/orphan_void_reveal_limb.webp",
+    "orphan_void/orphan_void_reveal_limb_2.webp"
   ],
   "orphan_void/v1": [
     "orphan_void/orphan_void_v1.webp",
     "orphan_void/orphan_void_v1_2.webp"
   ],
   "orphan_void/v1_eye": [
-    "orphan_void/orphan_void_v1_eye.webp"
+    "orphan_void/orphan_void_v1_eye.webp",
+    "orphan_void/orphan_void_v1_eye_2.webp"
   ],
   "pilot/reveal": [
     "pilot/pilot_reveal.webp"
@@ -209,9 +213,8 @@
     "smelter_apprentice/smelter_apprentice_v1.webp"
   ],
   "smelter_apprentice/v1_limb": [
-    "smelter_apprentice/smelter_apprentice_v1_limb.webp",
-    "smelter_apprentice/smelter_apprentice_v1_limb_2.webp",
-    "smelter_apprentice/smelter_apprentice_v1_limb_3.webp"
+    "smelter_apprentice/smelter_apprentice_v1_limb_4.webp",
+    "smelter_apprentice/smelter_apprentice_v1_limb_5.webp"
   ],
   "smelter_apprentice/v2": [
     "smelter_apprentice/smelter_apprentice_v2.webp",
@@ -220,14 +223,12 @@
     "smelter_apprentice/smelter_apprentice_v2_4.webp"
   ],
   "smelter_apprentice/v2_eye": [
-    "smelter_apprentice/smelter_apprentice_v2_eye.webp"
+    "smelter_apprentice/smelter_apprentice_v2_eye.webp",
+    "smelter_apprentice/smelter_apprentice_v2_eye_2.webp"
   ],
   "smelter_apprentice/v2_limb": [
-    "smelter_apprentice/smelter_apprentice_v2_limb.webp",
-    "smelter_apprentice/smelter_apprentice_v2_limb_2.webp",
-    "smelter_apprentice/smelter_apprentice_v2_limb_3.webp",
-    "smelter_apprentice/smelter_apprentice_v2_limb_4.webp",
-    "smelter_apprentice/smelter_apprentice_v2_limb_5.webp"
+    "smelter_apprentice/smelter_apprentice_v2_limb_5.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_6.webp"
   ],
   "smelter_apprentice/v4": [
     "smelter_apprentice/smelter_apprentice_v4.webp",
@@ -236,10 +237,12 @@
     "smelter_apprentice/smelter_apprentice_v4_4.webp"
   ],
   "smelter_apprentice/v4_eye": [
-    "smelter_apprentice/smelter_apprentice_v4_eye.webp"
+    "smelter_apprentice/smelter_apprentice_v4_eye.webp",
+    "smelter_apprentice/smelter_apprentice_v4_eye_2.webp"
   ],
   "smelter_apprentice/v4_limb": [
-    "smelter_apprentice/smelter_apprentice_v4_limb.webp"
+    "smelter_apprentice/smelter_apprentice_v4_limb.webp",
+    "smelter_apprentice/smelter_apprentice_v4_limb_2.webp"
   ],
   "station_rat/reveal": [
     "station_rat/station_rat_reveal.webp",
@@ -251,7 +254,8 @@
     "station_rat/station_rat_reveal_eye_2.webp"
   ],
   "station_rat/reveal_limb": [
-    "station_rat/station_rat_reveal_limb.webp"
+    "station_rat/station_rat_reveal_limb.webp",
+    "station_rat/station_rat_reveal_limb_2.webp"
   ],
   "station_rat/v1": [
     "station_rat/station_rat_v1.webp"
@@ -264,10 +268,12 @@
     "station_rat/station_rat_v2_5.webp"
   ],
   "station_rat/v2_eye": [
-    "station_rat/station_rat_v2_eye.webp"
+    "station_rat/station_rat_v2_eye.webp",
+    "station_rat/station_rat_v2_eye_2.webp"
   ],
   "station_rat/v2_limb": [
-    "station_rat/station_rat_v2_limb.webp"
+    "station_rat/station_rat_v2_limb.webp",
+    "station_rat/station_rat_v2_limb_2.webp"
   ],
   "station_rat/v4": [
     "station_rat/station_rat_v4.webp",
@@ -288,5 +294,304 @@
   ],
   "turret_child/v1": [
     "turret_child/turret_child_v1.webp"
+  ],
+  "gas_drifter/v1_eye": [
+    "gas_drifter/gas_drifter_v1_eye.webp",
+    "gas_drifter/gas_drifter_v1_eye_2.webp"
+  ],
+  "gas_drifter/v1_limb": [
+    "gas_drifter/gas_drifter_v1_limb.webp",
+    "gas_drifter/gas_drifter_v1_limb_2.webp"
+  ],
+  "belt_nomad/v1_eye": [
+    "belt_nomad/belt_nomad_v1_eye.webp",
+    "belt_nomad/belt_nomad_v1_eye_2.webp"
+  ],
+  "belt_nomad/v1_limb": [
+    "belt_nomad/belt_nomad_v1_limb.webp",
+    "belt_nomad/belt_nomad_v1_limb_2.webp"
+  ],
+  "belt_nomad/v2_eye": [
+    "belt_nomad/belt_nomad_v2_eye.webp",
+    "belt_nomad/belt_nomad_v2_eye_2.webp"
+  ],
+  "belt_nomad/v2_limb": [
+    "belt_nomad/belt_nomad_v2_limb.webp",
+    "belt_nomad/belt_nomad_v2_limb_2.webp"
+  ],
+  "belt_nomad/v3_eye": [
+    "belt_nomad/belt_nomad_v3_eye.webp",
+    "belt_nomad/belt_nomad_v3_eye_2.webp"
+  ],
+  "belt_nomad/v3_limb": [
+    "belt_nomad/belt_nomad_v3_limb.webp",
+    "belt_nomad/belt_nomad_v3_limb_2.webp"
+  ],
+  "belt_nomad/v4_eye": [
+    "belt_nomad/belt_nomad_v4_eye.webp",
+    "belt_nomad/belt_nomad_v4_eye_2.webp"
+  ],
+  "belt_nomad/v4_limb": [
+    "belt_nomad/belt_nomad_v4_limb.webp",
+    "belt_nomad/belt_nomad_v4_limb_2.webp"
+  ],
+  "fleet_brat/v1_eye": [
+    "fleet_brat/fleet_brat_v1_eye.webp",
+    "fleet_brat/fleet_brat_v1_eye_2.webp"
+  ],
+  "fleet_brat/v1_limb": [
+    "fleet_brat/fleet_brat_v1_limb.webp",
+    "fleet_brat/fleet_brat_v1_limb_2.webp"
+  ],
+  "fleet_brat/v2_eye": [
+    "fleet_brat/fleet_brat_v2_eye.webp",
+    "fleet_brat/fleet_brat_v2_eye_2.webp"
+  ],
+  "fleet_brat/v2_limb": [
+    "fleet_brat/fleet_brat_v2_limb.webp",
+    "fleet_brat/fleet_brat_v2_limb_2.webp"
+  ],
+  "gas_drifter/reveal_eye": [
+    "gas_drifter/gas_drifter_reveal_eye.webp",
+    "gas_drifter/gas_drifter_reveal_eye_2.webp"
+  ],
+  "gas_drifter/reveal_limb_legacy": [
+    "gas_drifter/gas_drifter_reveal_limb.webp",
+    "gas_drifter/gas_drifter_reveal_limb_2.webp"
+  ],
+  "gas_drifter/v3_eye": [
+    "gas_drifter/gas_drifter_v3_eye.webp",
+    "gas_drifter/gas_drifter_v3_eye_2.webp"
+  ],
+  "gas_drifter/v3_limb": [
+    "gas_drifter/gas_drifter_v3_limb.webp",
+    "gas_drifter/gas_drifter_v3_limb_2.webp"
+  ],
+  "fleet_brat/reveal_eye": [
+    "fleet_brat/fleet_brat_reveal_eye.webp",
+    "fleet_brat/fleet_brat_reveal_eye_2.webp"
+  ],
+  "fleet_brat/reveal_limb": [
+    "fleet_brat/fleet_brat_reveal_limb.webp",
+    "fleet_brat/fleet_brat_reveal_limb_2.webp"
+  ],
+  "fleet_brat/v3_eye": [
+    "fleet_brat/fleet_brat_v3_eye.webp",
+    "fleet_brat/fleet_brat_v3_eye_2.webp"
+  ],
+  "fleet_brat/v3_limb": [
+    "fleet_brat/fleet_brat_v3_limb.webp",
+    "fleet_brat/fleet_brat_v3_limb_2.webp"
+  ],
+  "fleet_brat/v4_limb": [
+    "fleet_brat/fleet_brat_v4_limb.webp",
+    "fleet_brat/fleet_brat_v4_limb_2.webp"
+  ],
+  "smelter_apprentice/v1_limb_legacy": [
+    "smelter_apprentice/smelter_apprentice_v1_limb.webp",
+    "smelter_apprentice/smelter_apprentice_v1_limb_2.webp",
+    "smelter_apprentice/smelter_apprentice_v1_limb_3.webp"
+  ],
+  "smelter_apprentice/v2_limb_legacy": [
+    "smelter_apprentice/smelter_apprentice_v2_limb.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_2.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_3.webp",
+    "smelter_apprentice/smelter_apprentice_v2_limb_4.webp"
+  ],
+  "belt_nomad/reveal_eye": [
+    "belt_nomad/belt_nomad_reveal_eye.webp",
+    "belt_nomad/belt_nomad_reveal_eye_2.webp"
+  ],
+  "belt_nomad/reveal_limb": [
+    "belt_nomad/belt_nomad_reveal_limb.webp",
+    "belt_nomad/belt_nomad_reveal_limb_2.webp"
+  ],
+  "orphan_void/reveal_eye": [
+    "orphan_void/orphan_void_reveal_eye.webp",
+    "orphan_void/orphan_void_reveal_eye_2.webp"
+  ],
+  "relic_kid/reveal_limb": [
+    "relic_kid/relic_kid_reveal_limb.webp",
+    "relic_kid/relic_kid_reveal_limb_2.webp"
+  ],
+  "defector/reveal_eye": [
+    "defector/defector_reveal_eye.webp",
+    "defector/defector_reveal_eye_2.webp"
+  ],
+  "defector/reveal_limb": [
+    "defector/defector_reveal_limb.webp",
+    "defector/defector_reveal_limb_2.webp"
+  ],
+  "corp_heir/reveal_eye": [
+    "corp_heir/corp_heir_reveal_eye.webp",
+    "corp_heir/corp_heir_reveal_eye_2.webp"
+  ],
+  "corp_heir/reveal_limb": [
+    "corp_heir/corp_heir_reveal_limb.webp",
+    "corp_heir/corp_heir_reveal_limb_2.webp"
+  ],
+  "signal_orphan/reveal_eye": [
+    "signal_orphan/signal_orphan_reveal_eye.webp",
+    "signal_orphan/signal_orphan_reveal_eye_2.webp"
+  ],
+  "signal_orphan/reveal_limb": [
+    "signal_orphan/signal_orphan_reveal_limb.webp",
+    "signal_orphan/signal_orphan_reveal_limb_2.webp"
+  ],
+  "frontier/reveal_eye": [
+    "frontier/frontier_reveal_eye.webp",
+    "frontier/frontier_reveal_eye_2.webp"
+  ],
+  "frontier/reveal_limb": [
+    "frontier/frontier_reveal_limb.webp",
+    "frontier/frontier_reveal_limb_2.webp"
+  ],
+  "merc_veteran/reveal_eye": [
+    "merc_veteran/merc_veteran_reveal_eye.webp",
+    "merc_veteran/merc_veteran_reveal_eye_2.webp"
+  ],
+  "merc_veteran/reveal_limb": [
+    "merc_veteran/merc_veteran_reveal_limb.webp",
+    "merc_veteran/merc_veteran_reveal_limb_2.webp"
+  ],
+  "augmented/reveal_eye": [
+    "augmented/augmented_reveal_eye.webp",
+    "augmented/augmented_reveal_eye_2.webp"
+  ],
+  "augmented/reveal_limb": [
+    "augmented/augmented_reveal_limb.webp",
+    "augmented/augmented_reveal_limb_2.webp"
+  ],
+  "pilot/reveal_eye": [
+    "pilot/pilot_reveal_eye.webp",
+    "pilot/pilot_reveal_eye_2.webp"
+  ],
+  "pilot/reveal_limb": [
+    "pilot/pilot_reveal_limb.webp",
+    "pilot/pilot_reveal_limb_2.webp"
+  ],
+  "actress/reveal_eye": [
+    "actress/actress_reveal_eye.webp",
+    "actress/actress_reveal_eye_2.webp"
+  ],
+  "actress/reveal_limb": [
+    "actress/actress_reveal_limb.webp",
+    "actress/actress_reveal_limb_2.webp"
+  ],
+  "noble/reveal_eye": [
+    "noble/noble_reveal_eye.webp",
+    "noble/noble_reveal_eye_2.webp"
+  ],
+  "noble/reveal_limb": [
+    "noble/noble_reveal_limb.webp",
+    "noble/noble_reveal_limb_2.webp"
+  ],
+  "salvage_waif/reveal_eye": [
+    "salvage_waif/salvage_waif_reveal_eye.webp",
+    "salvage_waif/salvage_waif_reveal_eye_2.webp"
+  ],
+  "salvage_waif/reveal_limb": [
+    "salvage_waif/salvage_waif_reveal_limb.webp",
+    "salvage_waif/salvage_waif_reveal_limb_2.webp"
+  ],
+  "abyss_acolyte/reveal_eye": [
+    "abyss_acolyte/abyss_acolyte_reveal_eye.webp",
+    "abyss_acolyte/abyss_acolyte_reveal_eye_2.webp"
+  ],
+  "abyss_acolyte/reveal_limb": [
+    "abyss_acolyte/abyss_acolyte_reveal_limb.webp",
+    "abyss_acolyte/abyss_acolyte_reveal_limb_2.webp"
+  ],
+  "bounty_foundling/reveal_eye": [
+    "bounty_foundling/bounty_foundling_reveal_eye.webp",
+    "bounty_foundling/bounty_foundling_reveal_eye_2.webp"
+  ],
+  "bounty_foundling/reveal_limb": [
+    "bounty_foundling/bounty_foundling_reveal_limb.webp",
+    "bounty_foundling/bounty_foundling_reveal_limb_2.webp"
+  ],
+  "settler_scion/reveal_eye": [
+    "settler_scion/settler_scion_reveal_eye.webp",
+    "settler_scion/settler_scion_reveal_eye_2.webp"
+  ],
+  "settler_scion/reveal_limb": [
+    "settler_scion/settler_scion_reveal_limb.webp",
+    "settler_scion/settler_scion_reveal_limb_2.webp"
+  ],
+  "turret_child/reveal_eye": [
+    "turret_child/turret_child_reveal_eye.webp",
+    "turret_child/turret_child_reveal_eye_2.webp"
+  ],
+  "turret_child/reveal_limb": [
+    "turret_child/turret_child_reveal_limb.webp",
+    "turret_child/turret_child_reveal_limb_2.webp"
+  ],
+  "abyss_acolyte/v1_eye": [
+    "abyss_acolyte/abyss_acolyte_v1_eye.webp",
+    "abyss_acolyte/abyss_acolyte_v1_eye_2.webp"
+  ],
+  "abyss_acolyte/v1_limb": [
+    "abyss_acolyte/abyss_acolyte_v1_limb.webp",
+    "abyss_acolyte/abyss_acolyte_v1_limb_2.webp"
+  ],
+  "abyss_acolyte/v2_eye": [
+    "abyss_acolyte/abyss_acolyte_v2_eye.webp",
+    "abyss_acolyte/abyss_acolyte_v2_eye_2.webp"
+  ],
+  "abyss_acolyte/v2_limb": [
+    "abyss_acolyte/abyss_acolyte_v2_limb.webp",
+    "abyss_acolyte/abyss_acolyte_v2_limb_2.webp"
+  ],
+  "abyss_acolyte/v3_eye": [
+    "abyss_acolyte/abyss_acolyte_v3_eye.webp",
+    "abyss_acolyte/abyss_acolyte_v3_eye_2.webp"
+  ],
+  "abyss_acolyte/v3_limb": [
+    "abyss_acolyte/abyss_acolyte_v3_limb.webp",
+    "abyss_acolyte/abyss_acolyte_v3_limb_2.webp"
+  ],
+  "abyss_acolyte/v4_eye": [
+    "abyss_acolyte/abyss_acolyte_v4_eye.webp",
+    "abyss_acolyte/abyss_acolyte_v4_eye_2.webp"
+  ],
+  "abyss_acolyte/v4_limb": [
+    "abyss_acolyte/abyss_acolyte_v4_limb.webp",
+    "abyss_acolyte/abyss_acolyte_v4_limb_2.webp"
+  ],
+  "actress/v1_eye": [
+    "actress/actress_v1_eye.webp",
+    "actress/actress_v1_eye_2.webp"
+  ],
+  "actress/v1_limb": [
+    "actress/actress_v1_limb.webp",
+    "actress/actress_v1_limb_2.webp"
+  ],
+  "actress/v2_eye": [
+    "actress/actress_v2_eye.webp",
+    "actress/actress_v2_eye_2.webp"
+  ],
+  "actress/v2_limb": [
+    "actress/actress_v2_limb.webp",
+    "actress/actress_v2_limb_2.webp"
+  ],
+  "actress/v3_eye": [
+    "actress/actress_v3_eye.webp",
+    "actress/actress_v3_eye_2.webp"
+  ],
+  "actress/v3_limb": [
+    "actress/actress_v3_limb.webp",
+    "actress/actress_v3_limb_2.webp"
+  ],
+  "actress/v4_eye": [
+    "actress/actress_v4_eye.webp",
+    "actress/actress_v4_eye_2.webp"
+  ],
+  "actress/v4_limb": [
+    "actress/actress_v4_limb.webp",
+    "actress/actress_v4_limb_2.webp"
+  ],
+  "orphan_void/v2_eye": [
+    "orphan_void/orphan_void_v2_eye.webp",
+    "orphan_void/orphan_void_v2_eye_2.webp"
   ]
 }

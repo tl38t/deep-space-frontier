@@ -19,7 +19,7 @@ const files = [
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js",   "js/engine/sites.js", "js/narrative/events.js",
-  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
+  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/rig-resonance.js", "js/engine/archaeology.js", "js/engine/repair.js",
   // 内置 1 代增强剂数据（window.BOOSTER_* 事实来源；booster_selftest 同口径）
   "js/lib/eveidle/host-stubs.js", "js/lib/eveidle/data/boosters.js",
 ];

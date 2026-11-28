@@ -52,14 +52,14 @@
     decoder_t4: { id: "decoder_t4", name: "文物译码器 IV",  slot: "low", level: 55, time: 120, xp:110, cost: { fe_alloy: 900, mx_alloy: 200, hy_gas: 20, morph_alloy: 5 },              bonuses: { archaeologyDecoder: 0.22, archaeologyCopyChance: 0.04 }, cat: "archaeology" },
     decoder_t5: { id: "decoder_t5", name: "文物译码器 V",   slot: "low", level: 80, time: 200, xp:180, cost: { fe_alloy: 2000, mx_alloy: 500, morph_alloy: 12, poly_gas: 40 },           bonuses: { archaeologyDecoder: 0.26, archaeologyCopyChance: 0.07 }, cat: "archaeology" },
 
-    // —— 改装件（rig）：同位素节流器（archaeologyFuelEfficiency，降低考古每周期燃料成本；乘性叠加）——
-    //    仅 battlecruiser 及以上有 rig 槽（slots.js SLOT_LAYOUT），故小舰只能靠船体 fuelEfficiency。
-    //    数值为提议值，待平衡 pass（见数值标定清单）。
-    fe_rig_t1: { id: "fe_rig_t1", name: "同位素节流器 I",   slot: "rig", level: 1,  time: 20,  xp: 14,  cost: { fe_alloy: 40,  ni_alloy: 15, "art:art_i_calib": 1 },                                  bonuses: { archaeologyFuelEfficiency: 0.92 }, cat: "archaeology" },
-    fe_rig_t2: { id: "fe_rig_t2", name: "同位素节流器 II",  slot: "rig", level: 15, time: 40,  xp: 35,  cost: { fe_alloy: 160, ni_alloy: 60, mx_alloy: 15, "art:art_ii_calib": 1 },                       bonuses: { archaeologyFuelEfficiency: 0.86 }, cat: "archaeology" },
-    fe_rig_t3: { id: "fe_rig_t3", name: "同位素节流器 III", slot: "rig", level: 35, time: 70,  xp: 60,  cost: { fe_alloy: 400, ni_alloy: 150, bo_alloy: 25, no_alloy: 12, "art:art_iii_calib": 2 },         bonuses: { archaeologyFuelEfficiency: 0.80 }, cat: "archaeology" },
-    fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5, "art:art_iv_calib": 2 },          bonuses: { archaeologyFuelEfficiency: 0.74 }, cat: "archaeology" },
-    fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40, "art:art_v_calib": 3 },      bonuses: { archaeologyFuelEfficiency: 0.68 }, cat: "archaeology" },
+    // —— 改装件（rig）：同位素节流器（电容回充系，archaeologyFuelEfficiency = 节省比例，1 代加算口径）——
+    //    ⚠ 旧 id 保留为兼容别名（1 代原 id 为 rig_archaeology_fuel_i~v，见文件末尾 buildRigDefinitions），
+    //      避免已装配旧件在存档里变成幽灵条目；两条同 stackGroup，谐振按一组处理。
+    fe_rig_t1: { id: "fe_rig_t1", name: "同位素节流器 I",   slot: "rig", level: 1,  time: 20,  xp: 14,  stackGroup: "rig_archaeology_fuel", rigCategory: "capacitor", rigTier: "I",   cost: { fe_alloy: 40,  ni_alloy: 15, "art:art_i_calib": 1 },                                  bonuses: { archaeologyFuelEfficiency: 0.04 }, cat: "archaeology" },
+    fe_rig_t2: { id: "fe_rig_t2", name: "同位素节流器 II",  slot: "rig", level: 15, time: 40,  xp: 35,  stackGroup: "rig_archaeology_fuel", rigCategory: "capacitor", rigTier: "II",  cost: { fe_alloy: 160, ni_alloy: 60, mx_alloy: 15, "art:art_ii_calib": 1 },                       bonuses: { archaeologyFuelEfficiency: 0.055 }, cat: "archaeology" },
+    fe_rig_t3: { id: "fe_rig_t3", name: "同位素节流器 III", slot: "rig", level: 35, time: 70,  xp: 60,  stackGroup: "rig_archaeology_fuel", rigCategory: "capacitor", rigTier: "III", cost: { fe_alloy: 400, ni_alloy: 150, bo_alloy: 25, no_alloy: 12, "art:art_iii_calib": 2 },         bonuses: { archaeologyFuelEfficiency: 0.07 }, cat: "archaeology" },
+    fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, stackGroup: "rig_archaeology_fuel", rigCategory: "capacitor", rigTier: "IV",  cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5, "art:art_iv_calib": 2 },          bonuses: { archaeologyFuelEfficiency: 0.085 }, cat: "archaeology" },
+    fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, stackGroup: "rig_archaeology_fuel", rigCategory: "capacitor", rigTier: "V",   cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40, "art:art_v_calib": 3 },      bonuses: { archaeologyFuelEfficiency: 0.1 }, cat: "archaeology" },
 
     // ★ 2026-11-27 S5：1 代考古稀有池专属 7 件（research.js/data/archaeology.js 逐值）。
     //   资源键按 display-names 冻结映射：三钛→fe_alloy、类银→ni_alloy、类晶体胶矿→mx_alloy、
@@ -185,6 +185,60 @@
     refinery_pump: { id: "refinery_pump", name: "外接大型精炼泵", slot: "mid", level: 40, time: 100, xp: 70, cost: {fe_alloy: 450, ni_alloy: 160, bo_alloy: 36, poly_gas: 18, planet_plasma: 30}, bonuses: {smeltingSpeed: 0.1}, cat: "industry" },
     refinery_pump_dark: { id: "refinery_pump_dark", name: "暗流体精炼泵", slot: "mid", level: 50, time: 200, xp: 140, cost: {fe_alloy: 800, ni_alloy: 400, bo_alloy: 120, poly_gas: 60, planet_plasma: 80, os_moon: 40, ga_moon: 20}, bonuses: {smeltingSpeed: 0.15}, cat: "industry" },
   };
+
+  // ================================================================
+  // 改装件（rig）13 系 × 5 档 = 65 件 —— 1 代 equipment.js:184-269 逐值照搬
+  //   同 stackGroup 可重复装配，受谐振惩罚（见 engine/rig-resonance.js）；
+  //   校准基体走 "art:art_*_calib" 前缀（production.js artKeyOf 桥接 archaeology.artifacts）。
+  //   ⚠ 电容回充系的 5 件 id 为 rig_archaeology_fuel_i~v；上面 fe_rig_t1~5 是旧 id 别名，
+  //     两者同 stackGroup，谐振聚合时按同一组降序处理。
+  // ================================================================
+  const RIG_SERIES = [
+    // 战斗：三围容量，15% 族
+    { stackGroup:"rig_shield_capacity",    label:"护盾容量",     rigCategory:"combat",      bonusKey:"shieldCapacityPercent",          values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_armor_capacity",     label:"装甲容量",     rigCategory:"combat",      bonusKey:"armorCapacityPercent",           values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_structure_capacity", label:"结构容量",     rigCategory:"combat",      bonusKey:"structureCapacityPercent",       values:[0.05,0.07,0.09,0.12,0.15] },
+    // 工业：采矿/采气/冶炼/伴生矿/伴生气，15% 族
+    { stackGroup:"rig_mining_speed",       label:"采矿速度",     rigCategory:"industry",    bonusKey:"miningEfficiency",               values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_gas_speed",          label:"采气速度",     rigCategory:"industry",    bonusKey:"gasEfficiency",                  values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_smelting_speed",     label:"冶炼速度",     rigCategory:"industry",    bonusKey:"smeltingSpeed",                  values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_mining_rich",        label:"伴生矿物采集", rigCategory:"industry",    bonusKey:"miningRichChance",               values:[0.05,0.07,0.09,0.12,0.15] },
+    { stackGroup:"rig_gas_rich",           label:"伴生气云采集", rigCategory:"industry",    bonusKey:"gasRichChance",                  values:[0.05,0.07,0.09,0.12,0.15] },
+    // 考古：扫描/干扰/速掘 20% 族，电容回充 10% 族
+    { stackGroup:"rig_archaeology_scan",         label:"扫描强度",     rigCategory:"archaeology", bonusKey:"archaeologyScanPercent",         values:[0.08,0.11,0.14,0.17,0.20] },
+    { stackGroup:"rig_archaeology_fuel",         label:"电容回充",     rigCategory:"capacitor",   bonusKey:"archaeologyFuelEfficiency",     values:[0.04,0.055,0.07,0.085,0.10] },
+    { stackGroup:"rig_archaeology_interference", label:"考古干扰缩短", rigCategory:"archaeology", bonusKey:"archaeologyInterferenceReduction", values:[0.08,0.11,0.14,0.17,0.20] },
+    { stackGroup:"rig_archaeology_speed",        label:"遗迹速掘",     rigCategory:"archaeology", bonusKey:"archaeologyCycleReductionPercent", values:[0.08,0.11,0.14,0.17,0.20] },
+    // 训练：技能经验，15% 族
+    { stackGroup:"rig_skill_xp", label:"神经训练", rigCategory:"training", bonusKey:"skillXpBonus", values:[0.05,0.07,0.09,0.12,0.15] },
+  ];
+  const RIG_TIER_META = [
+    { suffix:"i",   roman:"I",   level:1,  time:20,  xp:14,  calib:"art_i_calib",   calibQty:1, minerals:{ fe_alloy:100,  ni_alloy:40  } },
+    { suffix:"ii",  roman:"II",  level:15, time:40,  xp:35,  calib:"art_ii_calib",  calibQty:1, minerals:{ fe_alloy:400,  mx_alloy:60  } },
+    { suffix:"iii", roman:"III", level:35, time:70,  xp:60,  calib:"art_iii_calib", calibQty:2, minerals:{ fe_alloy:800,  bo_alloy:150 } },
+    { suffix:"iv",  roman:"IV",  level:55, time:120, xp:110, calib:"art_iv_calib",  calibQty:2, minerals:{ fe_alloy:1500, no_alloy:40,  pm_moon:5 } },
+    { suffix:"v",   roman:"V",   level:80, time:200, xp:180, calib:"art_v_calib",   calibQty:3, minerals:{ fe_alloy:2500, px_alloy:10,  rb_moon:8 } },
+  ];
+  (function buildRigDefinitions() {
+    const CAT_OF = { combat:"combat", industry:"industry", archaeology:"archaeology", capacitor:"archaeology", training:"training" };
+    for (const s of RIG_SERIES) {
+      for (let t = 0; t < RIG_TIER_META.length; t++) {
+        const meta = RIG_TIER_META[t];
+        const id = s.stackGroup + "_" + meta.suffix;
+        if (EQUIPMENT[id]) continue;   // 幂等：同名不覆盖
+        const cost = { ...meta.minerals };
+        cost["art:" + meta.calib] = meta.calibQty;
+        EQUIPMENT[id] = {
+          id: id,
+          name: s.label + "改装件 " + meta.roman,
+          slot: "rig", level: meta.level, time: meta.time, xp: meta.xp,
+          stackGroup: s.stackGroup, rigCategory: s.rigCategory, rigTier: meta.roman,
+          cost: cost, bonuses: { [s.bonusKey]: s.values[t] },
+          cat: CAT_OF[s.rigCategory] || "other",
+        };
+      }
+    }
+  })();
 
   function byId(id) { return EQUIPMENT[id] || null; }
   function all() { return Object.values(EQUIPMENT); }

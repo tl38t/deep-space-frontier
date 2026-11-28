@@ -1252,6 +1252,61 @@
     return { next: next, fireSec: t, dmg: dmg, killed: killed, ammoUsed: ammoUsed, allDry: allDry, noWeapon: false, ledger: led, wiped: led.wiped };
   }
 
+  // ---- 焦点火力账本：按「轮内击杀」切分，而不是按轮首火力记满整轮 ----
+  // 2026-11-28 P1 修：drainEnemies 在敌舰死亡瞬间就切到存活者火力（段内常数），
+  // volleyEnemies 原先每轮只取一次 tick.raw 再乘整轮秒数 ⇒ 轮内死掉的那只仍按满编
+  // 火力算了剩余时间。实测 dt=6s 网段：volley 253.293 / drain 234.478（+8.02%），
+  // 长程 900s 累积成 +8.8%~10% 的承伤偏差。
+  // 修法：用轮首/轮末血量差反推每只被杀舰「在本轮承受了多少伤害」，按伤害占比
+  // 推出死亡时刻，逐段重算存活者火力。段数 ≤ 舰数（≤6），成本与 dt 无关。
+  // 无击杀 / 零伤害时退化为原来的整轮单段，行为逐值不变。
+  function postVolleyFire(led, before, after, startIdx, killed, roundDmg, span) {
+    if (!(span > 0)) return;
+    if (!killed || !killed.length || !(roundDmg > 0)) {
+      const s = fireLedgerTick(led, after);
+      fireLedgerPost(led, s.raw, s.rep, span);
+      return;
+    }
+    const n = before.length;
+    // 每只本轮承受的伤害（轮首 - 轮末）。必须含**活着的那几只**：
+    // 只累计被杀舰会把死亡时刻提前（实测 dt=6s 从 +8.02% 过冲到 -2.06%）。
+    const taken = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      if (!before[i] || !after[i]) continue;
+      for (let L = 0; L < 3; L++) taken[i] += Math.max(0, before[i].hp[L] - after[i].hp[L]);
+    }
+    const isKilled = {};
+    for (const idx of killed) isKilled[idx] = true;
+    // 复现 applyDamage 的摊伤顺序：从目标起点扫到尾，再从扫到起点之前
+    let cum = 0, prevAt = 0;
+    const cuts = [];
+    for (let pass = 0; pass < 2; pass++) {
+      const lo = pass === 0 ? Math.max(0, startIdx) : 0;
+      const hi = pass === 0 ? n : Math.max(0, startIdx);
+      for (let i = lo; i < hi; i++) {
+        cum += taken[i];
+        if (!isKilled[i]) continue;
+        const at = Math.max(prevAt, Math.min(span, Math.max(0, cum / roundDmg * span)));
+        cuts.push({ idx: i, at: at });
+        prevAt = at;
+      }
+    }
+    const virtual = cloneEnemies(before);
+    let segStart = 0;
+    for (const c of cuts) {
+      if (c.at > segStart + 1e-9) {
+        const s = fireLedgerTick(led, virtual);
+        fireLedgerPost(led, s.raw, s.rep, c.at - segStart);
+      }
+      if (virtual[c.idx]) virtual[c.idx].hp = [0, 0, 0];
+      segStart = c.at;
+    }
+    if (segStart < span - 1e-9) {
+      const s = fireLedgerTick(led, virtual);
+      fireLedgerPost(led, s.raw, s.rep, span - segStart);
+    }
+  }
+
   // ---- 焦点：逐敌逐轮真掷骰（替代 simulateVolley 的主路径）----
   // 每轮按索敌模式挑目标、按它当前层判克制，再逐武器掷命中；
   // 一轮内打死后剩余伤害 carry 到下一只（与 applyDamage 同口径）。
@@ -1287,8 +1342,8 @@
       let L = 0;
       for (let i = 0; i < 3; i++) { if (target.hp[i] > 1e-9) { L = i; break; } }
       const layer = LAYER_ORDER[L];
-      // ★ P1c：本轮承伤按「本轮开始时存活者」计（1 代逐轮重算存活者的本作映射）
-      const tick = fireLedgerTick(led, next);
+      // ★ P1 修：轮首快照用于反推「本轮内哪只舰在何时死」，按击杀切分火力段
+      const before = cloneEnemies(next);
 
       let roundDmg = 0;
       for (const w of P.weapons) {
@@ -1307,7 +1362,8 @@
       const res2 = applyDamage(next, roundDmg, ti);        // 从当前目标起摊，溢出向后顺延
       for (const idx of res2.killed) killed.push(idx);
       fireSec += roundSecTotal;
-      fireLedgerPost(led, tick.raw, tick.rep, roundSecTotal);
+      // ★ P1 修：敌舰在轮内阵亡时按死亡时刻切段重算存活者火力，与 drainEnemies 同口径
+      postVolleyFire(led, before, next, ti, res2.killed, roundDmg, roundSecTotal);
 
       // 血池打空：本条腿是随机路径，结果不作数 —— 交给 advanceCore 用解析式重推（保证确定性）
       if (isFinite(led.hpPool) && led.net >= led.hpPool - 1e-9) { led.wiped = true; break; }

@@ -110,6 +110,7 @@
         trainSkill: opts.trainSkill || "combatLaser",
         exploreProgress: 0,
         eventRoll: 0,
+        richProgress: 0,       // 伴生矿/气 rig 名义周期累加器（0→1，满则掷骰；见 settle.js）
       };
       m.status = "dispatched";
       // 人生目的系统（⑤）：派遣到目标星域节点即达成 visit 目的

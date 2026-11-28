@@ -6,7 +6,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/equip-instances.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/equip-instances.js", "js/core/store.js", "js/engine/rig-resonance.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/ships.js", "js/data/recipes.js",

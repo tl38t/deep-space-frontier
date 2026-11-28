@@ -20,7 +20,7 @@ const files = [
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js", "js/engine/sites.js", "js/narrative/events.js",
-  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
+  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/rig-resonance.js", "js/engine/archaeology.js", "js/engine/repair.js",
 ];
 
 const sandbox = { console, Date, Math, JSON, Object, Array, String, Number, isNaN, parseInt, parseFloat };
@@ -663,10 +663,9 @@ function logisticsRun(lv, sec) {
   ok("迁移:重复规范化不会重复累加（幂等）", st.members[0].skills.gas === 500, "gas=" + st.members[0].skills.gas);
 }
 
-// —— 燃料效率乘区（2026-11-08 接入的两项减免：hull.fuelEfficiency + rig 改装件）——
-// ⚠ 2026-11-28：期望值改为从舰船表 / 装备表读。旧的「护卫舰 0.85 / 泰坦 1.40」是当年提议值，
-//   后来实测标定改成 rookie_corvette=1.00、titan=0.50；写死在测试里的数字一改就全红，
-//   而真正要守的是「乘区取的是 hull.fuelEfficiency 与 rig 的 archaeologyFuelEfficiency，且乘性叠加」。
+// —— 燃料效率乘区（hull.fuelEfficiency + rig 改装件）——
+// ⚠ 2026-11-28 口径改回 1 代原式：archaeologyFuelEfficiency 是「节省比例」(0.04~0.10)，
+//   油耗 = max(0, 船体系数 − Σ节省)，不是乘性系数。旧「乘性叠加」断言已撤回。
 {
   const st0 = St.defaultState(now, Data);
   const fe = (shipId, rigId) => Settle.fuelEfficiencyMult(st0, { shipId, fitted: { high: [], mid: [], low: [], rig: rigId ? [rigId] : [] } });
@@ -675,8 +674,8 @@ function logisticsRun(lv, sec) {
   const EFF_A = effOf("rookie_corvette"), EFF_B = effOf("titan");
   ok("燃料:rookie_corvette hull.fuelEfficiency=" + EFF_A + " 生效", Math.abs(fe("rookie_corvette") - EFF_A) < 1e-9, "mult=" + fe("rookie_corvette"));
   ok("燃料:titan hull.fuelEfficiency=" + EFF_B + " 生效", Math.abs(fe("titan") - EFF_B) < 1e-9, "mult=" + fe("titan"));
-  ok("燃料:rig 节流器 t1(" + rigOf("fe_rig_t1") + ") 乘性叠加到 rookie_corvette", Math.abs(fe("rookie_corvette", "fe_rig_t1") - EFF_A * rigOf("fe_rig_t1")) < 1e-9, "mult=" + fe("rookie_corvette", "fe_rig_t1"));
-  ok("燃料:titan + t5(" + rigOf("fe_rig_t5") + ") 乘性叠加", Math.abs(fe("titan", "fe_rig_t5") - EFF_B * rigOf("fe_rig_t5")) < 1e-9, "mult=" + fe("titan", "fe_rig_t5"));
+  ok("燃料:rig 节流器 t1(" + rigOf("fe_rig_t1") + ") 加算节省到 rookie_corvette", Math.abs(fe("rookie_corvette", "fe_rig_t1") - Math.max(0, EFF_A - rigOf("fe_rig_t1"))) < 1e-9, "mult=" + fe("rookie_corvette", "fe_rig_t1"));
+  ok("燃料:titan + t5(" + rigOf("fe_rig_t5") + ") 加算节省", Math.abs(fe("titan", "fe_rig_t5") - Math.max(0, EFF_B - rigOf("fe_rig_t5"))) < 1e-9, "mult=" + fe("titan", "fe_rig_t5"));
   // 考古燃料成本：baseFuel(小型激光 fuelCost=3) × hullEff × capMult(Lv1=1/1.02)
   const mArch = { shipId: "rookie_corvette", skills: { capacitor: 0 }, fitted: { high: ["t1_small_laser"], mid: [], low: [], rig: [] } };
   const afc = Settle.archaeologyFuelCost(st0, mArch);

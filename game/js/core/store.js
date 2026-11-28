@@ -246,9 +246,14 @@
       }
     } catch (e) { /* 实例表迁移失败不阻断读档 */ }
     const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Ships : null;
+    // 伴生矿/气 rig 掷骰计数器（1 代 miningRichChance/gasRichChance）：旧档幂等补 0，不升版本。
+    if (typeof s.richCounter !== "number" || !isFinite(s.richCounter) || s.richCounter < 0) s.richCounter = 0;
     for (const m of s.members) {
       // develop 岗已退役（行星产出走 Engine.Sites 设施）：旧档驻留行星的成员召回待命
       if (m.assignment && m.assignment.type === "develop") { m.assignment = null; m.status = "idle"; }
+      // 伴生矿/气累加器（richProgress ∈ [0,1)）：旧档/中途派遣幂等补 0，防 NaN
+      if (m.assignment && (typeof m.assignment.richProgress !== "number" || !isFinite(m.assignment.richProgress) || m.assignment.richProgress < 0 || m.assignment.richProgress >= 1))
+        m.assignment.richProgress = 0;
       if (m.origin === undefined) m.origin = "人才市场";
       if (!Array.isArray(m.milestones)) m.milestones = [];
       if (!m.passion) m.passion = {};
@@ -499,6 +504,9 @@
       s.archaeology = {};
     }
     const A = s.archaeology;
+    // 1 代考古干扰锁站字段幂等补 0（1 代 persistence.js:708 同口径）
+    if (typeof A.interferenceUntil !== "number" || !isFinite(A.interferenceUntil) || A.interferenceUntil < 0)
+      A.interferenceUntil = 0;
     const validKeys = (kind) => {
       const table = !AC ? null : (kind === "probes" ? AC.PROBES : kind === "artifacts" ? AC.ARTIFACTS : null);
       if (!table) return null;

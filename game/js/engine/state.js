@@ -51,6 +51,9 @@
       lastSeen: now,
       rngSeed: (Math.random() * 4294967296) >>> 0,
       archCounter: 0,        // 考古结算确定性计数器（每次遗址周期 +1，存档持久化）
+      // 伴生矿/气 rig（1 代 miningRichChance/gasRichChance）：全局掷骰计数器（存档，确定性种子）
+      //   在线逐周期掷骰时 +1；离线走期望不掷骰 → 计数器不动（与 1 代逐周期骰序列口径一致）。
+      richCounter: 0,
       legionName: "深空星疆军团",
       legion: { formed: false },   // ④ 泰坦子系统门禁：需成立军团（军团系统设置 formed=true）
       res: Data.Resources.startingResources(),
@@ -93,6 +96,8 @@
         probes: {}, artifacts: {}, vouchers: {},
         protocols: { autosell: false, autoconv: false },
         probeSavingRemainder: 0,
+        // 1 代考古干扰锁站：失败但舰船未毁时 now+干扰秒数×1000，期间禁止开工（1 代 core/tick.js:603）
+        interferenceUntil: 0,
         selectedProbe: null,   // 手动指定探针 id；null / 非法 / 缺货时引擎自动回退最强可用探针
       },
       // ★ 2026-11-27 死亡空间（1 代 DED 16 副本）：nodeId → {siteId, ticket, wave, startedAt}

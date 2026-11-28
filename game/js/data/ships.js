@@ -398,31 +398,41 @@
   //   2026-11-27 防御技能对回 1 代口径：1 代 shieldOperation/armorReinforcement/hullEngineering
   //   三个技能各管一层容量（selectors.js:2532/2544/2555，均 ×(1+lv×0.03)），本作三合一为 defense，
   //   故同一系数作用于三层。此前 defense 被接进 combat 的 dmgRedRaw（减伤），1 代技能从不产生减伤，已废除。
-  function maxHp(shipId, enhLvl, capBonus) {
+  function maxHp(shipId, enhLvl, capBonus, rigCap) {
     const s = SHIPS[shipId];
     if (!s) return { shield: 100, armor: 100, structure: 100 };
     // 舰船级 HP 容量加成（1 代 shield/armor/structureCapacity，全局生效 = 舰船本体属性，与 1 代一致）
     const b = s.bonuses || {};
     const c = (typeof capBonus === "number" && isFinite(capBonus)) ? capBonus : 0;
+    const rc = rigCap || {};
     const enh = (enhLvl && enhLvl > 0)
       ? (function () { const SE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null; return SE ? SE.getBonuses(shipId, enhLvl).hpMultiplier : 1; })()
       : 1;
     return {
-      // 船体容量与技能容量**连乘**：1 代 selectors.js:2532 是两条独立 multiply
-      // （priority 10 船体、20 技能），combat-modifiers.js:31 逐条 `value *= amount`，不复利合并。
-      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)) * (1 + c) * enh,
-      armor: s.hp.armor * (1 + (b.armorCapacity || 0)) * (1 + c) * enh,
-      structure: s.hp.structure * (1 + (b.structureCapacity || 0)) * (1 + c) * enh,
+      // 三乘区连乘：1 代 selectors.js:2532/2544/2555 + combat-modifiers.js:31
+      //   （priority 10 船体、20 技能、50 rig），逐条 `value *= amount`，不复利合并。
+      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)) * (1 + c) * (1 + (rc.shieldCapacityPercent || 0)) * enh,
+      armor: s.hp.armor * (1 + (b.armorCapacity || 0)) * (1 + c) * (1 + (rc.armorCapacityPercent || 0)) * enh,
+      structure: s.hp.structure * (1 + (b.structureCapacity || 0)) * (1 + c) * (1 + (rc.structureCapacityPercent || 0)) * enh,
     };
   }
-  // 成员级三围上限：maxHp + 防御技能容量。接受「成员对象」（含 shipId/enhancementLevel/skills），
-  // 也接受招募期尚未落库的临时对象（{shipId, enhancementLevel:0, skills}）——state.js 建造成员时用。
-  // Settle 未就绪时退化为不含技能容量（安全降级，repair/settle 之后会按新上限修正）。
-  function maxHpOf(m) {
+  // 成员级三围上限：maxHp + 防御技能容量 + rig 谐振容量。
+  //   可选 state：有则读装配 rig 的 *CapacityPercent（1 代 rig 容量走 priority50 独立乘区）；
+  //   无 state（招募期临时对象、UI 快照）时退化为零加成，行为与改造前完全一致。
+  function maxHpOf(m, state) {
     if (!m) return maxHp(m, 0, 0);
     const eng = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
     const bonus = (eng && eng.Settle && eng.Settle.defenseCapBonus) ? eng.Settle.defenseCapBonus(m) : 0;
-    return maxHp(m.shipId, m.enhancementLevel, bonus);
+    let rigCap = null;
+    if (state && m.fitted && Array.isArray(m.fitted.rig) && m.fitted.rig.length && eng && eng.RigResonance) {
+      const mods = eng.RigResonance.modifiersOf(state, m);
+      rigCap = {
+        shieldCapacityPercent: mods.shieldCapacityPercent || 0,
+        armorCapacityPercent: mods.armorCapacityPercent || 0,
+        structureCapacityPercent: mods.structureCapacityPercent || 0,
+      };
+    }
+    return maxHp(m.shipId, m.enhancementLevel, bonus, rigCap);
   }
   function upgradeCost(lv) {
     // lv = 当前等级，返回升到下一级的代价

@@ -23,7 +23,7 @@ const files = [
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
   "js/engine/booster.js", "js/engine/mastery.js", "js/engine/tech.js",
   "js/engine/production.js", "js/engine/faction.js", "js/engine/combat.js", "js/engine/logistics.js", "js/engine/sites.js", "js/narrative/events.js",
-  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/archaeology.js", "js/engine/repair.js",
+  "js/engine/settle.js", "js/engine/ship-enhancement.js", "js/engine/rig-resonance.js", "js/engine/archaeology.js", "js/engine/repair.js",
 ];
 const sandbox = { console, Date, Math, JSON, Object, Array, String, Number, isNaN, parseInt, parseFloat, setTimeout };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.module = undefined;

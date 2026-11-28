@@ -43,12 +43,25 @@
   function fittedBonuses(m, s) {
     const out = {};
     if (!m || !m.fitted) return out;
-    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
-      ? window.NSK.Core.EquipInstances : null;
-    for (const slot of ["high", "mid", "low", "rig"]) {
+    const NSK = (typeof window !== "undefined" && window.NSK) ? window.NSK : null;
+    const EI = NSK && NSK.Core ? NSK.Core.EquipInstances : null;
+    const RR = NSK && NSK.Engine ? NSK.Engine.RigResonance : null;
+    // high/mid/low 三槽：普通装备加成同键求和（实例解析）
+    for (const slot of ["high", "mid", "low"]) {
       const arr = m.fitted[slot] || [];
       for (const ref of arr) {
         // 实例层解析：真实存档 ref=uid → itemId；探针裸 id → 原样回退。
+        const b = EI ? EI.bonusesOf(s, ref) : _fallbackBonuses(ref);
+        for (const k in b) out[k] = (out[k] || 0) + b[k];
+      }
+    }
+    // rig 槽：走谐振聚合（基础值按 stackGroup 分组降序施惩罚 + 词条谐振外直加）
+    if (RR && RR.modifiersOf) {
+      const rigMods = RR.modifiersOf(s, m);
+      for (const k in rigMods) out[k] = (out[k] || 0) + rigMods[k];
+    } else {
+      // 谐振模块未加载时的兜底（探针旧加载列表）：rig 槽按普通求和
+      for (const ref of (m.fitted.rig || [])) {
         const b = EI ? EI.bonusesOf(s, ref) : _fallbackBonuses(ref);
         for (const k in b) out[k] = (out[k] || 0) + b[k];
       }
@@ -76,13 +89,19 @@
       }
     }
     const fit = preFit || fittedBonuses(m, s);
-    return score + shipScan * shipMul + (fit.archaeologyScan || 0);
+    // 1 代 archaeology.js:73-80：rig 的 archaeologyScanPercent 乘在扫描强度总量上（非绝对值加）
+    const base = score + shipScan * shipMul + (fit.archaeologyScan || 0);
+    return base * (1 + Math.max(0, fit.archaeologyScanPercent || 0));
   }
 
-  // 周期缩短（装配 analyzer 的 archaeologyCycleReduction，封顶 0.50）
+  // 周期缩短总减免（1 代 archaeology.js:110-134）：
+  //   分析仪装配键 archaeologyCycleReduction 封顶 0.50；rig 的 archaeologyCycleReductionPercent
+  //   无封顶（谐振已衰减），两者相加后总封顶 0.95 防周期 ≤0。
   function cycleReduction(m, s) {
     const fit = fittedBonuses(m, s);
-    return Math.min(0.50, fit.archaeologyCycleReduction || 0);
+    return Math.min(0.95,
+      Math.min(0.50, fit.archaeologyCycleReduction || 0) +
+      Math.max(0, fit.archaeologyCycleReductionPercent || 0));
   }
 
   // ★ S4 科技乘区访问器（全走 Tech.bonusSum 的「每级增量×等级」口径）
