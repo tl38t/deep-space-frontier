@@ -11,10 +11,10 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
-  "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
+  "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/archaeology-content.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
   "js/data/pirates.js", "js/data/raids.js", "js/data/tech.js",
   "js/data/factions.js", "js/data/names.js", "js/lib/eveidle/data/boosters.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
@@ -55,6 +55,18 @@ function ok(name, cond, extra) {
 const pct = (a, b) => (b ? ((a / b - 1) * 100).toFixed(1) + "%" : "n/a");
 
 const now = Date.now();
+// ⚠ 2026-11-28：把剿匪编队池钉成单一编队（chance 归一到 1）。否则每次清波都重抽编队，
+//   同一夹具的两次运行会打到血量不同的波 → 「同一技能不同等级」的对照被抽签污染
+//   （实测电容降耗比 0.8984 而非 0.85，原因是两次战斗的实际开火秒数不同，不是降耗算错）。
+(function pinFormationPool() {
+  const Pir = Data.Pirates;
+  if (!Pir || !Pir.BAND_FORMATION_POOLS) return;
+  for (const b of Object.keys(Pir.BAND_FORMATION_POOLS)) {
+    const pool = Pir.BAND_FORMATION_POOLS[b];
+    if (!pool || !pool.length) continue;
+    Pir.BAND_FORMATION_POOLS[b] = [Object.assign({}, pool[0], { chance: 1 })];
+  }
+})();
 function fresh() {
   const st = St.defaultState(now, Data);
   // 钉死 rngSeed：defaultState 里 rngSeed 是 Math.random()（state.js:51），
@@ -215,7 +227,24 @@ function assertSkillScales(label, gas) {
     w.status = "dispatched";
     // 新模型（对回 1 代）：经验只在「跑完一个完整周期且成功」时发放（周期 120s），
     // 故必须把技能顶满（成功率封顶）并 tick 足够长（≥600s 稳出多周期），旧模型 40s 凑不满周期。
+    // ⚠ 2026-11-28：必须换成带考古扫描强度的船。旧夹具用 "frigate"（本作不存在），
+    //   shipById 返回 null → 扫描强度取到 undefined 后被当默认值，探针恰好能跑；
+    //   换成真实起始舰（rifter，archaeologyScanStrength=0）就真的 600s 只推进 5 点、
+    //   一个周期都跑不完，经验自然不涨。取表内扫描强度最低的真船，避免数值上来就封顶。
+    const scanShip = Object.keys(Data.Ships.SHIPS)
+      .filter(id => Data.Ships.SHIPS[id].archaeologyScanStrength > 0)
+      .sort((a, b) => Data.Ships.SHIPS[a].archaeologyScanStrength - Data.Ships.SHIPS[b].archaeologyScanStrength)[0];
+    w.shipId = scanShip;
     w.skills.archaeology = 1e9;
+    // ⚠ 2026-11-28：考古周期有「探针门禁」——库存里没有可用探针时 selectedProbeOf 返回 null，
+    //   周期直接停摆（1 代照搬停摆，用户拍板）。旧夹具没给探针，进度一路涨到 5 却不进 cycle，
+    //   xp 自然不涨。给基础探针 ×5，并把考古内容表一起加载（否则 _AC() 为 null，同样判停摆）。
+    const AC = Data.ArchaeologyContent;
+    if (AC && AC.DEFAULT_PROBE) {
+      const arch = Engine.Archaeology.ensureArch(st);
+      arch.probes[AC.DEFAULT_PROBE] = (arch.probes[AC.DEFAULT_PROBE] || 0) + 5;
+      arch.selectedProbe = AC.DEFAULT_PROBE;
+    }
     const x0 = w.skills.archaeology;
     tick(st, now, 600);
     ok("考古:残骸场派遣后 xp 增长", w.skills.archaeology > x0, "xp " + x0.toFixed(1) + " → " + w.skills.archaeology.toFixed(1));
@@ -226,7 +255,7 @@ function assertSkillScales(label, gas) {
 function raidNodeOf(st) { const n = st.starMap.nodes.find(x => !!x.raid); return n; }
 function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
   return {
-    id: "c1", name: "探针", status: "dispatched", destroyed: false, shipId: shipId || "frigate",
+    id: "c1", name: "探针", status: "dispatched", destroyed: false, shipId: shipId || "rookie_corvette",
     skills: { mining: 0, gas: 0, archaeology: 0, refine: 0, manufacture: 0, research: 0,
       combatLaser: St.xpAtLevel(lvL), combatTurret: St.xpAtLevel(lvT), missile: St.xpAtLevel(lvM),
       defense: St.xpAtLevel(lvD), capacitor: 0, piloting: 0 },
@@ -258,7 +287,7 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
   // 驾驶(piloting) 每级 +1 闪避（对回 1 代 selectors.js:2619）：prepareNode 返回的 playerDodge 随之提升
   function dodgeOf(lv) {
     const st = fresh(); const n = raidNodeOf(st); const m = solo(st);
-    m.shipId = "frigate";                       // 钉死船型（dodge=22），否则 fresh() 随机船型让对照失真
+    m.shipId = "rookie_corvette";                       // 钉死船型（dodge=22），否则 fresh() 随机船型让对照失真
     m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
     m.assignment = { type: "combat", nodeId: n.id, startedAt: now, eventRoll: 0 }; m.status = "dispatched";
     m.hp.shield = 1e9; m.hp.armor = 1e9; m.hp.structure = 1e9;
@@ -290,28 +319,51 @@ function cMem(shipId, lvL, lvT, lvM, lvD, weaponId, nodeId) {
 {
   const st = fresh();
   const n = raidNodeOf(st);
-  const prep = (lv, wid) => { const s2 = fresh(); s2.members = [cMem("frigate", lv, 1, 1, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); };
+  const prep = (lv, wid) => { const s2 = fresh(); s2.members = [cMem("rookie_corvette", lv, 1, 1, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); };
   const pLo = prep(1, "t1_small_laser"), pHi = prep(10, "t1_small_laser");
   ok("激光:技能提升 → 激光 DPS 上升", pHi.dpsByType.laser > pLo.dpsByType.laser * 1.1,
     "Lv1=" + pLo.dpsByType.laser.toFixed(2) + " Lv10=" + pHi.dpsByType.laser.toFixed(2));
   const tLo = prep2("t1_small_cannon", 1), tHi = prep2("t1_small_cannon", 10);
-  function prep2(wid, turretLv) { const s2 = fresh(); s2.members = [cMem("frigate", 1, turretLv, 1, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); }
+  function prep2(wid, turretLv) { const s2 = fresh(); s2.members = [cMem("rookie_corvette", 1, turretLv, 1, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); }
   ok("炮台:炮台技能提升 → 射弹 DPS 上升", tHi.dpsByType.cannon > tLo.dpsByType.cannon * 1.1,
     "Lv1=" + tLo.dpsByType.cannon.toFixed(2) + " Lv10=" + tHi.dpsByType.cannon.toFixed(2));
   const mLo = prep3("t1_light_missile_launcher", 1), mHi = prep3("t1_light_missile_launcher", 10);
-  function prep3(wid, misLv) { const s2 = fresh(); s2.members = [cMem("frigate", 1, 1, misLv, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); }
+  function prep3(wid, misLv) { const s2 = fresh(); s2.members = [cMem("rookie_corvette", 1, 1, misLv, 0, wid, n.id)]; return Combat.prepareNode(s2, n.id); }
   ok("导弹:导弹技能提升 → 导弹 DPS 上升", mHi.dpsByType.missile > mLo.dpsByType.missile * 1.1,
     "Lv1=" + mLo.dpsByType.missile.toFixed(2) + " Lv10=" + mHi.dpsByType.missile.toFixed(2));
   const dLo = prep4(1), dHi = prep4(10);
-  function prep4(defLv) { const s2 = fresh(); s2.members = [cMem("frigate", 1, 1, 1, defLv, "t1_small_laser", n.id)]; return Combat.prepareNode(s2, n.id); }
-  ok("防御:防御技能提升 → 受到伤害下降", dHi.incomingDps < dLo.incomingDps * 0.95,
-    "Lv1=" + dLo.incomingDps.toFixed(2) + " Lv10=" + dHi.incomingDps.toFixed(2) + "/s（减伤 " + (dHi.dmgReduction * 100).toFixed(0) + "%）");
-  ok("防御:减伤走同一个 DMG_RED_CAP 上限（不超过 0.60）", dHi.dmgReduction <= 0.6000001, "cap=" + dHi.dmgReduction);
+  function prep4(defLv) { const s2 = fresh(); s2.members = [cMem("rookie_corvette", 1, 1, 1, defLv, "t1_small_laser", n.id)]; return Combat.prepareNode(s2, n.id); }
+  // ⚠ 2026-11-28：2026-11-27 定案 A —— defense 的效果是**三围容量**，不是减伤。
+  //   1 代四个防御技能（shieldOperation/armorReinforcement/hullEngineering/defense）无一产生减伤，
+  //   减伤只来自装备 globalDamageReduction。旧断言「防御提升 → incomingDps 下降」是把本作自创的
+  //   减伤接线当成了规格，早已回退；现在守的是容量口径 + 「不再有减伤」这条反向约束。
+  const hpLoD = Data.Ships.maxHpOf(cMem("rookie_corvette", 1, 1, 1, 1, "t1_small_laser", n.id));
+  const hpHiD = Data.Ships.maxHpOf(cMem("rookie_corvette", 1, 1, 1, 10, "t1_small_laser", n.id));
+  ok("防御:防御技能提升 → 三围容量上升（定案 A：容量而非减伤）",
+    hpHiD.shield > hpLoD.shield && hpHiD.armor > hpLoD.armor && hpHiD.structure > hpLoD.structure,
+    "Lv1=" + [hpLoD.shield, hpLoD.armor, hpLoD.structure].map(v => v.toFixed(0)).join("/") +
+    " Lv10=" + [hpHiD.shield, hpHiD.armor, hpHiD.structure].map(v => v.toFixed(0)).join("/"));
+  ok("防御:不再产生减伤（dmgReduction 与低技能完全一致）",
+    Math.abs(dHi.dmgReduction - dLo.dmgReduction) < 1e-9,
+    "Lv1=" + (dLo.dmgReduction * 100).toFixed(2) + "% Lv10=" + (dHi.dmgReduction * 100).toFixed(2) + "%");
+  ok("防御:减伤仍受 DMG_RED_CAP 约束（不超过 0.60）", dHi.dmgReduction <= 0.6000001, "cap=" + dHi.dmgReduction);
 }
 
 // ── 4. 工业三项：驻舱倍率 + 批次经验 ──────────────────────────
+// ⚠ 2026-11-28：舱段「开罗化」后槽位是网格格位（id 形如 "4,4"），模块类型落在 cell.type /
+//   cell.nativeType 上。旧夹具直接拿 "smelt" 这类逻辑名当 slotId，Base.slotById 找不到 →
+//   Disp.assign 一律返回「该舱段没有安装模块」，十几条工业/演训断言因此全红（功能本身没坏）。
+//   这里做一次解析：先认逻辑名，再退到母舰格位表里按 nativeType/type 找。
+function slotIdOf(st, type) {
+  const Base = Engine.Base;
+  if (Base && Base.slotById && Base.slotById(st, type)) return type;
+  const hullId = (st.base && st.base.hullId) || "hull_frontier";
+  const cells = (Data.Ships.baseHullSlots ? Data.Ships.baseHullSlots(hullId) : []) || [];
+  const hit = cells.find(c => c.nativeType === type) || cells.find(c => c.type === type);
+  return hit ? hit.id : type;
+}
 function station(st, slotId, member, trainSkill) {
-  const r = Disp.assign(st, member.id, "station", { slotId: slotId, trainSkill: trainSkill });
+  const r = Disp.assign(st, member.id, "station", { slotId: slotIdOf(st, slotId), trainSkill: trainSkill });
   return r;
 }
 function smeltRun({ occupy, lv, sec }) {
@@ -482,7 +534,7 @@ function logisticsRun(lv, sec) {
   // 考古燃料：baseFuel(武器 combat.fuelCost) × hull 燃料效率 × 电容折扣（Lv1 起步）
   const st = fresh();
   const m = solo(st);
-  m.shipId = "frigate";                         // 钉死船型 → hull.fuelEfficiency=0.85
+  m.shipId = "rookie_corvette";                         // 钉死船型 → hull.fuelEfficiency=0.85
   m.fitted = { high: ["t1_small_laser"], mid: [], low: [], rig: [] };
   const eq = Data.Equipment.byId("t1_small_laser");
   const fc = eq && eq.combat ? eq.combat.fuelCost : 0;
@@ -567,13 +619,13 @@ function logisticsRun(lv, sec) {
   const n = raidNodeOf(st);
   const mkState = (withCmd) => {
     const s2 = fresh();
-    const a = cMem("frigate", 20, 20, 20, 0, "t1_small_laser", n.id);
+    const a = cMem("rookie_corvette", 20, 20, 20, 0, "t1_small_laser", n.id);
     a.id = "a1"; a.status = "dispatched";
-    const b = cMem("frigate", 5, 5, 5, 0, "t1_small_laser", n.id);
+    const b = cMem("rookie_corvette", 5, 5, 5, 0, "t1_small_laser", n.id);
     b.id = "b1"; b.status = "dispatched";
     s2.members = [a, b];
     if (withCmd) {
-      const cmd = { id: "cmd", name: "指挥官", status: "stationed", destroyed: false, shipId: "frigate",
+      const cmd = { id: "cmd", name: "指挥官", status: "stationed", destroyed: false, shipId: "rookie_corvette",
         skills: { combatLaser: St.xpAtLevel(30), combatTurret: St.xpAtLevel(30), missile: St.xpAtLevel(30), defense: St.xpAtLevel(0) },
         passion: {}, mods: { creditMult: {}, yieldMult: {}, xpMult: {}, learnMult: 1 },
         hp: { shield: 1e9, armor: 1e9, structure: 1e9 }, fitted: { high: [], mid: [], low: [], rig: [] },
@@ -612,17 +664,23 @@ function logisticsRun(lv, sec) {
 }
 
 // —— 燃料效率乘区（2026-11-08 接入的两项减免：hull.fuelEfficiency + rig 改装件）——
+// ⚠ 2026-11-28：期望值改为从舰船表 / 装备表读。旧的「护卫舰 0.85 / 泰坦 1.40」是当年提议值，
+//   后来实测标定改成 rookie_corvette=1.00、titan=0.50；写死在测试里的数字一改就全红，
+//   而真正要守的是「乘区取的是 hull.fuelEfficiency 与 rig 的 archaeologyFuelEfficiency，且乘性叠加」。
 {
   const st0 = St.defaultState(now, Data);
   const fe = (shipId, rigId) => Settle.fuelEfficiencyMult(st0, { shipId, fitted: { high: [], mid: [], low: [], rig: rigId ? [rigId] : [] } });
-  ok("燃料:护卫舰 hull.fuelEfficiency=0.85 生效", Math.abs(fe("frigate") - 0.85) < 1e-9, "mult=" + fe("frigate"));
-  ok("燃料:泰坦 hull.fuelEfficiency=1.40 生效", Math.abs(fe("supercapital") - 1.40) < 1e-9, "mult=" + fe("supercapital"));
-  ok("燃料:rig 节流器 t1(0.92) 乘性叠加到护卫舰", Math.abs(fe("frigate", "fe_rig_t1") - 0.85 * 0.92) < 1e-9, "mult=" + fe("frigate", "fe_rig_t1"));
-  ok("燃料:泰坦 + t5(0.68) 乘性叠加", Math.abs(fe("supercapital", "fe_rig_t5") - 1.40 * 0.68) < 1e-9, "mult=" + fe("supercapital", "fe_rig_t5"));
-  // 考古燃料成本：baseFuel(小型激光 fuelCost=3) × hullEff(0.85) × capMult(Lv1=1/1.02)
-  const mArch = { shipId: "frigate", skills: { capacitor: 0 }, fitted: { high: ["t1_small_laser"], mid: [], low: [], rig: [] } };
+  const effOf = (id) => Data.Ships.shipById(id).fuelEfficiency;
+  const rigOf = (id) => (Data.Equipment.byId(id).bonuses || {}).archaeologyFuelEfficiency;
+  const EFF_A = effOf("rookie_corvette"), EFF_B = effOf("titan");
+  ok("燃料:rookie_corvette hull.fuelEfficiency=" + EFF_A + " 生效", Math.abs(fe("rookie_corvette") - EFF_A) < 1e-9, "mult=" + fe("rookie_corvette"));
+  ok("燃料:titan hull.fuelEfficiency=" + EFF_B + " 生效", Math.abs(fe("titan") - EFF_B) < 1e-9, "mult=" + fe("titan"));
+  ok("燃料:rig 节流器 t1(" + rigOf("fe_rig_t1") + ") 乘性叠加到 rookie_corvette", Math.abs(fe("rookie_corvette", "fe_rig_t1") - EFF_A * rigOf("fe_rig_t1")) < 1e-9, "mult=" + fe("rookie_corvette", "fe_rig_t1"));
+  ok("燃料:titan + t5(" + rigOf("fe_rig_t5") + ") 乘性叠加", Math.abs(fe("titan", "fe_rig_t5") - EFF_B * rigOf("fe_rig_t5")) < 1e-9, "mult=" + fe("titan", "fe_rig_t5"));
+  // 考古燃料成本：baseFuel(小型激光 fuelCost=3) × hullEff × capMult(Lv1=1/1.02)
+  const mArch = { shipId: "rookie_corvette", skills: { capacitor: 0 }, fitted: { high: ["t1_small_laser"], mid: [], low: [], rig: [] } };
   const afc = Settle.archaeologyFuelCost(st0, mArch);
-  const expectAfc = 3 * 0.85 / 1.02;
+  const expectAfc = 3 * EFF_A / 1.02;
   ok("燃料:archaeologyFuelCost 同时含 hull+电容折扣", Math.abs(afc - expectAfc) < 1e-6, "afc=" + afc.toFixed(4) + " 期望=" + expectAfc.toFixed(4));
 }
 

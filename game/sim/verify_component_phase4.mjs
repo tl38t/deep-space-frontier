@@ -11,7 +11,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -90,13 +90,21 @@ function findMineNode(st) {
 }
 
 // ④ 采矿 A/B：同节点同技能，miner_frigate vs rifter
+// ⚠ 必须从**同一份** base 状态深拷贝：defaultState 的星图是随机生成的，
+//   两次独立 defaultState 会落在不同丰富度的矿点上，比值被矿点差异污染
+//   （实测 ratio=1.087，而 miner_frigate.bonuses.miningLaserEfficiency=0.25 → 应 ≈1.25）。
+//   同时复用同一个成员原型，避免随机出身特质/爱好再次进入比值。
+const baseSt = St.defaultState(Date.now(), Data);
+baseSt.members.length = 0;
+const protoM = St.makeMember(Data, Math.random, baseSt.base.nodeId);
+protoM.skills = {};                            // 清零随机初始技能 → 双方同起点
+protoM.trait = null;                           // 出身特质会给采矿乘区，必须中性化
+protoM.passion = {};                          // 爱好倍率同理
+baseSt.members.push(protoM);
 function mineState(shipId) {
-  const st = St.defaultState(Date.now(), Data);
-  st.members.length = 0;                       // 清空默认成员，单变量
-  const m = St.makeMember(Data, Math.random, st.base.nodeId);
-  m.shipId = shipId;                            // 强制指定舰船（单变量）
-  m.skills = {};                                // 清零随机初始技能 → 双方同起点，比值只反映 shipEff
-  st.members.push(m);
+  const st = JSON.parse(JSON.stringify(baseSt));
+  const m = st.members[0];
+  m.shipId = shipId;                            // 唯一变量：舰船
   const mn = findMineNode(st);
   Disp.assign(st, m.id, "mine", { nodeId: mn.node.id, bodyId: mn.body.id, oreId: mn.ore });
   return { st, mn, ore: mn.ore };
@@ -125,7 +133,10 @@ function smeltState(shipId) {
   m.shipId = shipId;
   st.members.push(m);
   const hullSlots = Data.Ships.baseHullSlots(st.base.hullId) || [];
-  const smeltSlot = hullSlots.find(s => s.type === "smelt");
+  // ⚠ 2026-11-28 开罗化：格位是空容器（id="x,y"，type 恒为 null），舱段类型挂在模块实例上；
+  //   船体蓝图里「该类型默认格」记在 nativeType。旧写法只认 s.type 永远匹配不到，会崩。
+  const smeltSlot = hullSlots.find(s => s.type === "smelt")
+    || hullSlots.find(s => s.nativeType === "smelt");
   Disp.assign(st, m.id, "station", { slotId: smeltSlot.id });
   const r = Prod.enqueue(st, "smelt", "smelt_fe_alloy", false);
   return { st, enqOk: !!(r && r.ok !== false) };

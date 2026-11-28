@@ -55,6 +55,10 @@
       legion: { formed: false },   // ④ 泰坦子系统门禁：需成立军团（军团系统设置 formed=true）
       res: Data.Resources.startingResources(),
       equipment: {},            // 已制造的舰船装备库存：equipId -> 数量（§14 舰船装配，总装船坞制造）
+      // 装备实例层（2026-11-28）：成员 fitted 存实例 uid，实例本体在这里。
+      // 独立于 equipment 计数库存——后者被 UI Object.entries 遍历，塞实例键会产生幽灵条目。
+      equipInstances: {},       // uid(eq_<N>) -> { itemId, affixes:[] }
+      nextEquipUid: 1,          // 实例 uid 分配器（确定性递增）
       base: Object.assign(baseIdentity, {
         nodeId: map.startId,
         fuel: 100,
@@ -374,7 +378,7 @@
       status: "idle",                              // idle | dispatched | traveling | repairing
       shipId: shipId,                              // 绑定舰船（EVE-IDLE 解耦名）
       hp: { shield: hp.shield, armor: hp.armor, structure: hp.structure }, // 上限 = 舰船三防
-      fitted: { high: [], mid: [], low: [], rig: [] }, // 舰船装配（2026-10-31）：各槽存 equipment id
+      fitted: { high: [], mid: [], low: [], rig: [] }, // 舰船装配：各槽存实例 uid（eq_<N>），实例本体在 state.equipInstances
       enhancementLevel: 0,                         // 舰船强化等级（每 5 级一档加成）
       destroyed: false,
       wage: 0,                                     // 星币/周期（初值占位，平衡数值待定）

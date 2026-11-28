@@ -39,23 +39,32 @@
   }
 
   // 聚合成员装配的全部装备加成（按 bonus 键求和）。返回 { archaeologyScan, archaeologyStabilizer, ... }
-  function fittedBonuses(m) {
+  // s = state（2026-11-28 装备实例化：fitted 存实例 uid，须经实例层解析成 itemId）。
+  function fittedBonuses(m, s) {
     const out = {};
     if (!m || !m.fitted) return out;
-    const Eq = (typeof window !== "undefined" && window.NSK.Data) ? window.NSK.Data.Equipment : null;
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     for (const slot of ["high", "mid", "low", "rig"]) {
       const arr = m.fitted[slot] || [];
-      for (const id of arr) {
-        const eq = Eq ? Eq.byId(id) : null;
-        if (!eq || !eq.bonuses) continue;
-        for (const k in eq.bonuses) out[k] = (out[k] || 0) + eq.bonuses[k];
+      for (const ref of arr) {
+        // 实例层解析：真实存档 ref=uid → itemId；探针裸 id → 原样回退。
+        const b = EI ? EI.bonusesOf(s, ref) : _fallbackBonuses(ref);
+        for (const k in b) out[k] = (out[k] || 0) + b[k];
       }
     }
     return out;
   }
+  // 无实例模块时的兜底：直接按裸 id 查定义（与改造前等价）。
+  function _fallbackBonuses(id) {
+    const Eq = (typeof window !== "undefined" && window.NSK.Data) ? window.NSK.Data.Equipment : null;
+    const eq = Eq ? Eq.byId(id) : null;
+    return (eq && eq.bonuses) ? eq.bonuses : {};
+  }
 
   // 扫描强度（成功率分子）：技能 + 舰船扫描×强化倍率 + 装配扫描
-  function scanStrength(m, preFit) {
+  // s = state（装备实例化后 fitted 解析需要）；preFit 传入时跳过装配聚合。
+  function scanStrength(m, preFit, s) {
     const score = skillScore(m);
     let shipScan = 0, shipMul = 1;
     if (m && m.shipId) {
@@ -66,13 +75,13 @@
         shipMul = (enh && enh.archaeologyScanMultiplier) || 1;
       }
     }
-    const fit = preFit || fittedBonuses(m);
+    const fit = preFit || fittedBonuses(m, s);
     return score + shipScan * shipMul + (fit.archaeologyScan || 0);
   }
 
   // 周期缩短（装配 analyzer 的 archaeologyCycleReduction，封顶 0.50）
-  function cycleReduction(m) {
-    const fit = fittedBonuses(m);
+  function cycleReduction(m, s) {
+    const fit = fittedBonuses(m, s);
     return Math.min(0.50, fit.archaeologyCycleReduction || 0);
   }
 
@@ -92,7 +101,7 @@
     const profile = Data.Archaeology.profileById(focusId);
     const band = body.band || 1;
     const difficulty = Data.Archaeology.difficultyFor(band) + (profile.difficultyMod || 0);
-    const ss = scanStrength(m, preFit);
+    const ss = scanStrength(m, preFit, state);
     const pp = state ? successBonus(state) : 0;
     return Math.max(0.05, Math.min(0.95, 0.50 + (ss - difficulty) * 0.01 + pp));
   }
@@ -394,7 +403,7 @@
     const profile = Data.Archaeology.profileById(focusId);
     const band = body.band || 1;
     const AC = _AC();
-    const fit = preFit || fittedBonuses(m);
+    const fit = preFit || fittedBonuses(m, state);
     const drops = { credits: 0, bp: 0, rep: 0, artifacts: [], cargo: [], rare: null, calibration: null, probe: null };
 
     // ★ 探针门禁（1 代照搬「缺货停摆」）：先扣探针，扣不到就本周期不推进。
@@ -460,7 +469,7 @@
       }
     } else if (!m.destroyed) {
       // 反噬：先判非致命免伤，再判稳定器减免后的船体损伤
-      const fit = preFit || fittedBonuses(m);
+      const fit = preFit || fittedBonuses(m, state);
       const avoidChance = Math.min(0.90, fit.archaeologyNonFatalAvoid || 0);
       if (avoidChance > 0 && rng() < avoidChance) {
         hullDamage.avoided = true;

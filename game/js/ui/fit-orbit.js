@@ -149,13 +149,17 @@
     for (const type of SLOT_TYPES) {
       const cap = layout[type] || 0;
       const arr = (m.fitted && Array.isArray(m.fitted[type])) ? m.fitted[type] : [];
+      const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+        ? window.NSK.Core.EquipInstances : null;
       for (let si = 0; si < cap; si++) {
-        const eqId = arr[si] || null;
+        const ref = arr[si] || null;                       // 实例 uid（新）或裸 itemId（旧探针）
+        const eqId = (EI && ref) ? EI.itemIdOf(st, ref) : ref;
         const equipment = eqId ? Data.Equipment.byId(eqId) : null;
         orbitSlots.push({
           index: index, type: type, slotIndex: si, cap: cap,
           enabled: true,
-          equipmentId: equipment ? eqId : null,
+          ref: ref,                                        // 原始 fitted 值，卸下时用
+          equipmentId: equipment ? eqId : null,            // 解析后的 itemId，供候选卡比较
           equipment: equipment,
           name: equipment ? equipment.name : "",
         });
@@ -414,7 +418,13 @@
     }
     const res = P.fitEquipment(st, openMemberId, slot.type, itemId);
     if (!res.ok) {
-      if (replaced) P.fitEquipment(st, openMemberId, slot.type, replaced);   // 回滚
+      // 回滚：replaced 是 fitted 里的 uid，须还原成 itemId 才能重新 fitEquipment（后者按 itemId 查库存/建实例）
+      if (replaced) {
+        const EI0 = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+          ? window.NSK.Core.EquipInstances : null;
+        const backId = EI0 ? EI0.itemIdOf(st, replaced) : replaced;
+        if (backId) P.fitEquipment(st, openMemberId, slot.type, backId);
+      }
       toast(res.err);
       return;
     }
@@ -430,7 +440,7 @@
     const slot = d.orbitSlots.find(s => s.index === selectedIndex);
     if (!slot || !slot.equipmentId) { toast("该槽位没有装备"); return; }
     const P = ns().Engine && ns().Engine.Production;
-    const res = P.unfitEquipment(st, openMemberId, slot.type, slot.equipmentId);
+    const res = P.unfitEquipment(st, openMemberId, slot.type, slot.ref || slot.equipmentId);
     if (!res.ok) { toast(res.err); return; }
     toast("已卸下 " + (res.equip ? res.equip.name : "") + "，退回仓库");
     refresh();
@@ -445,7 +455,7 @@
     let n = 0;
     for (const slot of d.orbitSlots) {
       if (!slot.equipmentId) continue;
-      const res = P.unfitEquipment(st, openMemberId, slot.type, slot.equipmentId);
+      const res = P.unfitEquipment(st, openMemberId, slot.type, slot.ref || slot.equipmentId);
       if (res.ok) n++;
     }
     toast(n ? ("已卸下全部 " + n + " 件装备，退回仓库") : "没有已装装备");

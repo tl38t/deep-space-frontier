@@ -6,7 +6,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/ships.js", "js/data/recipes.js",
@@ -44,8 +44,17 @@ console.log("== 科技树方案 A 扩充探针 ==");
 console.log("[① 数据完整性]");
 {
   const all = Data.Tech.all();
-  ok("节点总数 = 8", all.length === 8, all.length);
-  ok("分类列 = 3（战斗/工业/后勤）", Data.Tech.COLS.length === 3, Data.Tech.COLS.map(c => c.cat));
+  // ⚠ 规模数字一律从数据表派生：写死「8 节点 / 3 列」在 2026-11-27 科技树扩充后
+  //   （25 节点、加 titan 第 4 列）全部变成假红项。守意图：节点数与列数非空、
+  //   且每个节点都能被 colOf 归到合法列、id 唯一。
+  ok("节点数 > 0 且 id 唯一（现 " + all.length + " 个）",
+    all.length > 0 && new Set(all.map(n => n.id)).size === all.length);
+  const cols = Data.Tech.COLS;
+  ok("分类列非空且 cat 名唯一（现 " + cols.length + " 列：" + cols.map(c => c.cat).join("/") + "）",
+    cols.length > 0 && new Set(cols.map(c => c.cat)).size === cols.length);
+  const badCol = all.filter(n => { const c = Data.Tech.colOf(n); return !(c >= 0 && c < cols.length); });
+  ok("所有节点都能归到合法列（0.." + (cols.length - 1) + "）", badCol.length === 0,
+    badCol.map(n => n.id).join(","));
   const expectBonus = { combat_aim: "hitAdd", bounty_1: "bountyMult", smelt_1: "smeltYield", manu_1: "manuSpeed", hop_1: "hopReduce", fuel_1: "fuelEff" };
   for (const id in expectBonus) {
     const n = Data.Tech.byId(id);

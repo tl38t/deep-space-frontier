@@ -17,10 +17,12 @@ for (const n of map.nodes) {
 }
 console.log("每个节点 abundance 含全部 7 矿 + belt 含全矿:", allOreOk);
 
-// 丰寡：高安(富裕度1) 节点的 px(越级) 应显著低于 fe(同级)；0.0(富裕度4) 反过来
+// 丰寡：高安(富裕度1) 节点的 px(越级) 应显著低于 fe(同级)；最深安等(富裕度4) 反过来
+// ⚠ 2026-11-28：本作安等分档只有 1.0-0.8 / 0.7-0.5 / 0.4-0.3 / 0.2-0.1 四档，
+//   旧写法找 secLevel==="0.0" 永远找不到 → secLo 为 null 直接 TypeError。
 const secOf = id => (map.regions.find(r => r.id === id) || {}).secLevel;
 const secHi = map.nodes.find(n => secOf(n.region) === "1.0-0.8");
-const secLo = map.nodes.find(n => secOf(n.region) === "0.0");
+const secLo = map.nodes.find(n => secOf(n.region) === "0.2-0.1");
 console.log("高安(富1) fe/px:", secHi.abundance.fe_ore.toFixed(2), secHi.abundance.px_ore.toFixed(2));
 console.log("0.0(富4) px/fe:", secLo.abundance.px_ore.toFixed(2), secLo.abundance.fe_ore.toFixed(2));
 

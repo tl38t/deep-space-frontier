@@ -5,7 +5,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -76,6 +76,13 @@ ok("⑥ rifter 扫描=0（战斗舰忠实无扫描）", Data.Ships.shipById("rif
 // ⑦ buildShip 消耗正确（rifter cost = integrated_hull/power_core/functional_system 各2）
 const st = St.defaultState(Date.now(), Data);
 for (const k of compIds) st.res[k] = Math.max(st.res[k] || 0, 20);
+// 2026-11-28 势力商店上线后 BP_GRANT_ALL 关闭：rifter 需先在商店买断蓝图，
+// 否则 buildShip 会先被蓝图门禁拦下（本探针只验「组件扣料 + 入队」，需绕过它）。
+{
+  // 舰船蓝图的键是**裸 shipId**（production.js:379 直接 indexOf(shipId)），
+  // 不是 equipment: 前缀那套（那是装备/改装件的键空间）。
+  if (st.ownedBlueprints.indexOf("rifter") < 0) st.ownedBlueprints.push("rifter");
+}
 const b0 = { i: st.res.integrated_hull, p: st.res.power_core, f: st.res.functional_system };
 const bRes = Prod.buildShip(st, "rifter", 1);
 ok("⑦a buildShip(rifter) ok", bRes && bRes.ok, JSON.stringify(bRes));

@@ -41,29 +41,43 @@ const Events = window.NSK.Narrative;
 let pass = 0, fail = 0;
 const ok = (c, m, d) => { if (c) { pass++; } else { fail++; console.log("  FAIL: " + m + (d ? "  [" + d + "]" : "") + ""); } };
 
-// 1) secLevel 分档：9 区 band 正确，无旧 sec 浮点
+// 1) secLevel 分档：band 分布正确，无旧 sec 浮点
+// ⚠ 期望值一律由 REGION_DEFS（星图规模的唯一权威）派生，不写死数字。
+//   2026-11-28 布局改版把星域从 9 域改成 12 域（4 安等 × 3 势力），旧断言写死
+//   「9 星域 / 高安 4 / 边境 1 / 低安 2 / 深空+0.0 各 1」→ 改版后 6 条全变假红项。
+//   守意图：域数 = REGION_DEFS 条数、每档实际数 = REGION_DEFS 里该档条数、且不出现表外档位。
 const map = Data.StarMap.generateStarMap(window.NSK.Core.makeRng(2071900));
 Raids.attach(map);
-ok(map.regions.length === 9, "9 星域");
+const REGION_DEFS = Data.StarMap.REGION_DEFS;
+const expBands = {};
+for (const rd of REGION_DEFS) expBands[rd.secLevel] = (expBands[rd.secLevel] || 0) + 1;
+ok(map.regions.length === REGION_DEFS.length,
+  "星域数 = REGION_DEFS 条数 " + REGION_DEFS.length + "（得 " + map.regions.length + "）");
 const bands = {};
 for (const r of map.regions) {
   ok(r.secLevel != null && !("sec" in r), "region " + r.name + " 用 secLevel 无旧 sec");
   bands[r.secLevel] = (bands[r.secLevel] || 0) + 1;
 }
-ok(bands["1.0-0.8"] === 4, "高安 4 区 (得 " + (bands["1.0-0.8"] || 0) + ")");
-ok(bands["0.7-0.5"] === 1, "边境 1 区");
-ok(bands["0.4-0.3"] === 2, "低安 2 区");
-ok(bands["0.2-0.1"] === 1 && bands["0.0"] === 1, "深空/0.0 各 1 区");
+for (const k of Object.keys(expBands)) {
+  ok(bands[k] === expBands[k], "安等 " + k + " 应为 " + expBands[k] + " 区（得 " + (bands[k] || 0) + "）");
+}
+ok(Object.keys(bands).every(k => expBands[k] != null),
+  "不出现 REGION_DEFS 表外的安等档", JSON.stringify(bands));
+// 每个安等档都必须真有域被生成出来（防 REGION_DEFS 加了域但生成器漏掉）
+ok(Object.keys(expBands).every(k => (bands[k] || 0) > 0), "每个安等档都有域");
 const slp = Data.StarMap.SECLEVEL_TABLE["0.0"];
 ok(slp && slp.iskMult === 3.5 && slp.repMult === 2.5 && slp.band === 5, "0.0 档 iskMult3.5/repMult2.5/band5");
 
 // 2) 具名据点：自 2026-11-01 起**每个星系都有**（与采矿/采气/考古并列的四类作业点）
+//   节点总数同样由 REGION_DEFS 的 size 求和派生（当前 17×9 + 18×3 = 207），不写死。
+const EXP_NODES = REGION_DEFS.reduce((s, rd) => s + rd.size, 0);
 const all = Raids.allRaids(map);
-ok(all.length === map.nodes.length && map.nodes.length === 207,
-  "据点总数 = 节点总数 207（得 " + all.length + "）");
+ok(all.length === map.nodes.length && map.nodes.length === EXP_NODES,
+  "据点总数 = 节点总数 " + EXP_NODES + "（得 " + all.length + "）");
 const perRegion = {};
 for (const r of all) perRegion[r.region] = (perRegion[r.region] || 0) + 1;
-ok(Object.keys(perRegion).length === 9, "9 个星域都有据点", JSON.stringify(perRegion));
+ok(Object.keys(perRegion).length === map.regions.length,
+  map.regions.length + " 个星域都有据点", JSON.stringify(perRegion));
 // 每域据点密度必须等于该域星系数
 const nodesPerRegion = {};
 for (const n of map.nodes) nodesPerRegion[n.region] = (nodesPerRegion[n.region] || 0) + 1;

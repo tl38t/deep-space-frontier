@@ -14,7 +14,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -160,20 +160,35 @@ while (changed && guard++ < 50) {
 }
 
 // 汇总所有被用作「输入」的键
+// ── 两类键必须排除在「资源注册 / 可获取」之外，否则本审计永远红灯、真回归反而被淹没 ──
+// ① `art:` 前缀 = 考古文物（遗物/校准基体）。它不是 res 里的资源，而是 state.archaeology.artifacts，
+//    production.js:68 artKeyOf() 在扣料时显式桥接两套存储 → 既不进 Resources.ALL，也不走资源闭包。
+// ② `tactic:*` 与泰坦链原矿（星骸钛 / 相位铱核）属**未实装前瞻**：
+//    战斗掉落 tactic 尚未实现；泰坦材料的第一道原料（拆解/先驱遗迹）也还没接。
+//    单列 WARN 跟踪，不计入验收失败。
+const isArtifactKey = k => k.indexOf("art:") === 0;
+const FORESEE = new Set(["tactic:t1", "tactic:t2", "tactic:t3", "tactic:t4", "tactic:t5",
+  "star_corpse_titanium", "phase_iridium_core"]);
+const isForeseeKey = k => FORESEE.has(k) || k.indexOf("titan_") === 0;
+
 const allInKeys = Object.keys(usedIn).sort();
-const missingALL = [];
-const noSource = [];
+const missingALL = [], noSource = [], foreseeNoSource = [];
 for (const k of allInKeys) {
-  if (!ALL.has(k)) missingALL.push(k);
   const reachable = rawReachable.has(k) || craftable.has(k);
-  if (!reachable) noSource.push(k);
+  if (isArtifactKey(k)) continue;                       // 见上 ①
+  if (!ALL.has(k)) missingALL.push(k);
+  if (!reachable) { if (isForeseeKey(k)) foreseeNoSource.push(k); else noSource.push(k); }
 }
 
 console.log("\n========== 审计结果 ==========");
 ok("① 所有配方原料键均注册进 Resources.ALL（否则读档被删）", missingALL.length === 0,
    missingALL.length ? ("缺失: "+missingALL.join(",")) : ("共 "+allInKeys.length+" 个输入键全在 ALL 内"));
-ok("② 所有配方原料键均可获取（开采/掉落/行星/可由配方产出）", noSource.length === 0,
+ok("② 已实装链路的配方原料键均可获取（开采/掉落/行星/可由配方产出）", noSource.length === 0,
    noSource.length ? ("无源: "+noSource.join(",")) : "全部可获取");
+if (foreseeNoSource.length) {
+  note("③ 前瞻内容原料暂无来源（未实装，不计失败）: " + foreseeNoSource.join(","),
+    "（泰坦链需拆解/先驱遗迹；tactic 需战斗掉落；共 " + foreseeNoSource.length + " 键）");
+}
 
 // 分类明细
 const byCat = {};
@@ -192,7 +207,7 @@ console.log("[重点] TACTIC 类输入键:", tacticIn.join(",") || "（无）", 
 // 各系统各自缺哪
 console.log("\n[分系统] 不可获取原料：");
 for (const sys of ["SMELT","COMPONENT","INVENT","BOOSTER","EQUIPMENT"]) {
-  const bad = [...new Set([...Object.keys(usedIn)].filter(k => usedIn[k].has(sys) && !(rawReachable.has(k)||craftable.has(k))))];
+  const bad = [...new Set([...Object.keys(usedIn)].filter(k => !isArtifactKey(k) && usedIn[k].has(sys) && !(rawReachable.has(k)||craftable.has(k))))];
   console.log("  " + sys + ": " + (bad.length ? bad.join(", ") : "全部可获取"));
 }
 

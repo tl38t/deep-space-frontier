@@ -15,7 +15,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -112,7 +112,16 @@ console.log("[debug] assign:", JSON.stringify([r1.ok, r2.ok, r3.ok, r4.ok, r5.ok
 // 直接 station 一个成员到 smelt 槽 → 验证精炼队列推进 + refine 技能经验（12 技能之一）。
 let stationOk = false, stationSlot = null;
 const hullSlots = Data.Ships.baseHullSlots(st.base.hullId) || [];
-const smeltSlot = hullSlots.find(s => s.type === "smelt");
+// ⚠ 2026-11-28：开罗化后槽位是「网格格位」，type 指模块类型（未安装时 = null），
+//   船体预设类型落在 nativeType 上（hull.layout.smelt = [4,4] → cell(4,4).nativeType="smelt"）。
+//   旧断言只认 s.type==="smelt" 永远匹配不到 → 探针静默跳过驻舱，却仍要求 refine 经验上涨。
+const smeltSlot = hullSlots.find(s => s.type === "smelt")
+  || hullSlots.find(s => s.nativeType === "smelt")
+  || (function () {
+    const p = (Data.Ships.baseHullById(st.base.hullId) || {}).layout;
+    const xy = p && p.smelt;
+    return xy ? hullSlots.find(s => s.x === xy[0] && s.y === xy[1]) : null;
+  })();
 if (smeltSlot) {
   const rs = Disp.assign(st, st.members[6].id, "station", { slotId: smeltSlot.id });
   stationOk = rs.ok;

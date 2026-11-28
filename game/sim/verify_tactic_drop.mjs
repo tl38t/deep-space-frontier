@@ -9,7 +9,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -45,6 +45,11 @@ function ok(name, cond, extra) {
 
 // ---- 构造：一支能清波的战斗小队（单舰打不赢 band-1，战斗本就是小队玩法）----
 const st = St.defaultState(Date.now(), Data);
+// ⚠ 2026-11-28 夹具：燃料必须给足。战斗燃料是 2026-11-08 独立的「烧光即停火」门禁
+//   （Combat.advance 按 Σ装备 combat.fuelCost × 电容折扣 / ROUND_SEC 扣 base.fuel），
+//   defaultState 的初始 100 燃料在成队 18 门炮下约 33 秒烧空 → 战斗直接停，测不到掉落。
+//   本探针测的是「击杀 → tactic 掉落」链路，不是燃料预算，故把燃料设为实际无限。
+st.base.fuel = 1e9; st.base.fuelMax = 1e9;
 while (st.members.length < 3) st.members.push(St.makeMember(Data, Math.random, st.base.nodeId));
 const combatNode = st.starMap.nodes.find(n => Data.Raids.raidAt(st.starMap, n.id));
 const band = combatNode ? (Data.Raids.raidAt(st.starMap, combatNode.id).band) : null;

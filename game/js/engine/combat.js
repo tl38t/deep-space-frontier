@@ -69,8 +69,13 @@
   // ★ 2026-11-27 P0 波次系统：一轮波数（1 代 maxWave=20，全据点统一；19 普通 + 第 20 波 boss）。
   //   打穿第 20 波 ≠ 结束：发肃清功勋、combatClears++、wave 回 1，然后立刻继续（1 代 combat.js:1395-1407）。
   const MAX_WAVE = 20;
-  // 单次 advance 的波循环上限：余数 ≤20 波 + 折叠前的当前波，留余量。
-  // 这是「成本与 dt 无关」的硬保证，不要按 dt 调大。
+  // 单次 advance 的波循环下限（真正的上限见 advance 内的 waveCap）。
+  // ⚠️ 2026-11-28 修正：旧注释假设「余数 ≤20 波」是错的 —— 一波可以远短于一整轮
+  //   （实测三弹混装 3159 波/时 ≈ 1.14s/波），于是一个 60s 的 tick 需要 52 波、
+  //   300s 要 54 波，都会撞到固定的 48 上限并**静默丢弃剩余时间**：
+  //   · offline_consistency 三弹混装 dt=60  → 波数少 5.98%（fire 不变但波没了）
+  //   · 单武器 dt=300 → fireSec 3401.5/3600，整整丢了 198.5s 战斗时间
+  //   守卫只应防死循环，不该截断时间，故改为按剩余时间推导的 waveCap（见 advance 内）。
   const WAVE_GUARD = 48;
   // 燃料唯一写入口（2026-11-26）：与 settle / 剧情 / 燃料制造共用 Base.setFuel，保证 res.fuel 镜像同步。
   function setCombatFuel(state, v) {
@@ -214,10 +219,13 @@
     const SE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null;
     const enhDmg = (SE && m && m.enhancementLevel) ? SE.getBonuses(m.shipId, m.enhancementLevel).damageMultiplier : 1;
     const slots = ["high", "mid", "low", "rig"];
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     for (const slot of slots) {
       const arr = fit[slot] || [];
-      for (const id of arr) {
-        const eq = Eq ? Eq.byId(id) : null;
+      for (const ref of arr) {
+        const itemId = EI ? EI.itemIdOf(state, ref) : ref;
+        const eq = (Eq && itemId) ? Eq.byId(itemId) : null;
         if (!eq || !eq.combat) continue;
         const c = eq.combat;
         out.fuelPerVolley += (c.fuelCost || 0);   // 1 代每齐射燃料 = Σ参战装备 combat.fuelCost（武器+维修+损伤控制）
@@ -245,7 +253,7 @@
     out.repair *= (1 + (shipB.structureRepair || 0) + (shipB.armorRepair || 0));
     out.emergencyRepair = out.repair > 0 ? (shipB.structureEmergencyRepair || 0) : 0;
     if (Arch && Arch.fittedBonuses) {
-      const b = Arch.fittedBonuses(m);
+      const b = Arch.fittedBonuses(m, state);
       out.dmgRed = b.globalDamageReduction || 0;
     }
     return out;
@@ -253,12 +261,16 @@
 
   // UI 用：成员装配的「主武器技能」（1 代玩家看的就是「我 laserOps 多少级」）。
   // 按 high → mid → low → rig 找第一门武器，返回 { key, weaponType, level }；没武器返回 null。
-  function weaponSkillOf(m) {
+  // s = state（装备实例化后 fitted 存 uid，需实例层解析）。
+  function weaponSkillOf(m, s) {
     const Eq = _Eq(), Settle = _Settle();
     if (!m || !m.fitted) return null;
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     for (const slot of ["high", "mid", "low", "rig"]) {
-      for (const id of (m.fitted[slot] || [])) {
-        const eq = Eq ? Eq.byId(id) : null;
+      for (const ref of (m.fitted[slot] || [])) {
+        const itemId = EI ? EI.itemIdOf(s, ref) : ref;
+        const eq = (Eq && itemId) ? Eq.byId(itemId) : null;
         const c = eq && eq.combat;
         if (!c || c.kind !== "weapon") continue;
         const key = SKILL_OF_WEAPON[c.weaponType];
@@ -272,13 +284,16 @@
 
   // 成员战斗装配的「每齐射燃料」（对回 1 代 getVolleyFuelCostState / 考古 getArchaeologyFuelCostState 的 baseFuel）。
   // 船绑定成员：m.fitted 即该成员舰的装配，与 1 代「考古舰装载装备」完全等价，无需区分舰/成员。
-  function fittedFuelCost(m) {
+  function fittedFuelCost(m, s) {
     const Eq = _Eq();
     let sum = 0;
     if (!m || !m.fitted || !Eq) return sum;
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     for (const slot of ["high", "mid", "low", "rig"]) {
-      for (const id of (m.fitted[slot] || [])) {
-        const eq = Eq.byId(id);
+      for (const ref of (m.fitted[slot] || [])) {
+        const itemId = EI ? EI.itemIdOf(s, ref) : ref;
+        const eq = itemId ? Eq.byId(itemId) : null;
         const c = eq && eq.combat;
         if (!c) continue;
         sum += (c.fuelCost || 0);
@@ -1858,7 +1873,10 @@
 
       let guard = 0;
       let dryMask = null;   // 逐段由 fireSegments 自行处理；折叠时按全弹种有弹算
-      while (remaining > 1e-9 && guard++ < WAVE_GUARD) {
+      // 守卫上限按剩余时间推导：一次迭代最少推进「半轮」（ROUND_SEC/SIM_MAX_ROUNDS = 1.5s）
+      // 的真实战斗，故 remaining/1.5 + 余量足以覆盖任何波速；只有真·死循环才会撞到。
+      const waveCap = Math.max(WAVE_GUARD, Math.ceil(remaining / (ROUND_SEC / SIM_MAX_ROUNDS)) + 16);
+      while (remaining > 1e-9 && guard++ < waveCap) {
         const curComp = state.combatWavePlan[nodeId] ? state.combatWavePlan[nodeId].compId : compId;
         const P = prepareNode(state, nodeId, curComp);
         if (!P) break;
@@ -1964,7 +1982,13 @@
           }
           continue;                                       // 继续下一波
         }
-        break;                                            // 没打穿：时间用完了
+        // ★ 2026-11-28 修「在线弹药少扣 28.7%」：焦点路径（focus=true）是**随机**逐轮仿真，
+        //   enemiesRemainSec 给的是解析预测，实打 segSec 秒后未必真打穿。旧代码在这里无条件
+        //   break，把本 tick 的剩余时间整段丢掉 —— 实测 1s tick 只记 0.54~0.96s 开火，
+        //   弹药随之少扣（600s：855.7 发 vs 应扣 1200 发）。离线闭式是确定性算术，
+        //   segSec 到点必打穿，所以只有在线会漏。
+        if (!(r.fightSec > 1e-9)) break;                  // 真打不动（本段零产出）→ 停，避免空转
+        continue;                                         // 时间还没用完：按新余量重算本波
       }
 
       if (fuelStarvedAhead && remaining <= 1e-9) acc.fuelStarved = true;

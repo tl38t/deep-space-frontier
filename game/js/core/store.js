@@ -25,7 +25,10 @@
   //     4×3 等距阵列作废：12 域坐标、域归属、区域间星门、每跳燃料全部重排，
   //     节点 id 与名字的对应关系也变（node_0 起仍按 高安→边境→低安→00 顺序分配），
   //     ⇒ 旧档作废重开（用户当次授权）。
-  const STATE_VERSION = 10;
+  // v10（2026-11-28，STATE_VERSION 11）：装备实例化。成员 fitted 从裸 itemId 字符串
+  //     升级为实例 uid（eq_<N>），实例本体存独立顶层字段 state.equipInstances。
+  //     旧档 fitted 逐件幂等迁移（affixes 空）， wardrobe 计数库存不变 ⇒ 可平移，不重开。
+  const STATE_VERSION = 11;
 
   // 本地存档 NSK2：轻量混淆 + 完整性摘要。仅用于阻止误改/随手改，不等同于服务端防作弊签名。
   // 与 EVE 的 DSI2 同算法，前缀 / 掩码解耦为本作字面。无 NSK2 前缀的旧明文档走 JSON.parse 兼容。
@@ -230,6 +233,18 @@
     }
     // 舰船装备库存（2026-10-31 总装船坞制造）：旧档补 equipment
     if (!s.equipment || typeof s.equipment !== "object") s.equipment = {};
+    // 装备实例层（2026-11-28，STATE_VERSION 11）：ensure 实例表须在成员循环之前，
+    // 因为下方 fitted 迁移会分配 uid。store 层先于 engine 层加载，惰性取 Core.EquipInstances。
+    let _EI = null;
+    try {
+      _EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+        ? window.NSK.Core.EquipInstances : null;
+      if (_EI && _EI.ensure) _EI.ensure(s);
+      else {
+        if (!s.equipInstances || typeof s.equipInstances !== "object" || Array.isArray(s.equipInstances)) s.equipInstances = {};
+        if (typeof s.nextEquipUid !== "number" || !isFinite(s.nextEquipUid) || s.nextEquipUid < 1) s.nextEquipUid = 1;
+      }
+    } catch (e) { /* 实例表迁移失败不阻断读档 */ }
     const Ships = (typeof window !== "undefined" && window.NSK && window.NSK.Data) ? window.NSK.Data.Ships : null;
     for (const m of s.members) {
       // develop 岗已退役（行星产出走 Engine.Sites 设施）：旧档驻留行星的成员召回待命
@@ -263,7 +278,13 @@
           const cap = layout[slot] || 0;
           if (m.fitted[slot].length > cap) {
             const overflow = m.fitted[slot].splice(cap);
-            for (const id of overflow) s.equipment[id] = (s.equipment[id] || 0) + 1;
+            for (const ref of overflow) {
+              // 新档 uid → 取 itemId 退回 + 销毁实例；旧档裸 id → 原样退回。
+              const itemId = (_EI && _EI.itemIdOf) ? _EI.itemIdOf(s, ref) : ref;
+              const key = itemId || ref;
+              s.equipment[key] = (s.equipment[key] || 0) + 1;
+              if (_EI && _EI.looksLikeUid && _EI.looksLikeUid(ref)) _EI.remove(s, ref);
+            }
           }
         }
       }
@@ -289,6 +310,12 @@
         if (m.mods) Npc.recomputeGoalXp(m);
       }
     }
+    // 装备实例迁移（2026-11-28，STATE_VERSION 11）：成员 fitted 裸 itemId → 实例 uid。
+    // 必须在上面的「越界回收」之后——回收退回库存的是 itemId 字符串，若先转 uid 会退错键。
+    // migrateFitted 幂等：已是合法 uid 跳过；重复 normalize 不重复建实例。
+    try {
+      if (_EI && _EI.migrateFitted) _EI.migrateFitted(s);
+    } catch (e) { /* fitted 迁移失败不阻断读档（下一轮重试） */ }
     // 星系内部天体回填（旧档 node 可能无 bodies；ensureBodies 幂等，按 node.id 确定性生成）
     if (s.starMap && s.starMap.nodes && window.NSK.Data && window.NSK.Data.StarMap && window.NSK.Data.StarMap.ensureBodies) {
       window.NSK.Data.StarMap.ensureBodies(s.starMap);

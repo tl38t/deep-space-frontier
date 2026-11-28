@@ -9,7 +9,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
@@ -47,6 +47,9 @@ function ok(name, cond, extra) {
 const now = Date.now();
 function fresh() {
   const st = St.defaultState(now, Data);
+  // ⚠ 2026-11-28 夹具：燃料给足（战斗燃料烧光即停火，初始 100 约 33 秒见底）。
+  //   本探针测制造/精炼经验，战斗只是其中一路，不能让它被燃料门禁提前掐断。
+  st.base.fuel = 1e9; st.base.fuelMax = 1e9;
   st.rngSeed = 0x5EED1234;
   for (const k in st.res) st.res[k] = 999999;
   st.res.credits = 9999999;
@@ -77,15 +80,23 @@ function advance(st, sec) {
 // ---------- A. recipeBatchXp 解析器（单元） ----------
 console.log("== A. recipeBatchXp 解析 ==");
 const A = fresh();
-ok("manufacture 取 mk_struct.xp=39", Settle.recipeBatchXp(A, "manufacture", { recipeId: "mk_struct" }) === 39,
-   "got=" + Settle.recipeBatchXp(A, "manufacture", { recipeId: "mk_struct" }));
-ok("manufacture mk_prop.xp=24", Settle.recipeBatchXp(A, "manufacture", { recipeId: "mk_prop" }) === 24);
-ok("manufacture mk_weapon.xp=9", Settle.recipeBatchXp(A, "manufacture", { recipeId: "mk_weapon" }) === 9);
+// ⚠ 2026-11-28：制造配方已改版（旧的 mk_struct / mk_prop / mk_weapon 三件套 → 集成船体/动力核心/
+  //   功能系统三档），旧断言把「39 / 24 / 9」写死在测试里，配方表一改就全红，而实际行为没坏。
+  //   ⇒ 期望值一律从配方表读（断言的是「recipeBatchXp 返回配方自带 xp」，不是某个具体数字）。
+const COMP_XP = (id) => (Data.Recipes.COMPONENT.find(r => r.id === id) || {}).xp;
+const SHIP_XP = (id) => (Data.Ships.shipById(id) || {}).xp;
+for (const id of ["mk_integrated_hull", "mk_power_core", "mk_functional_system"]) {
+  ok("manufacture 取 " + id + ".xp=" + COMP_XP(id),
+     Settle.recipeBatchXp(A, "manufacture", { recipeId: id }) === COMP_XP(id),
+     "got=" + Settle.recipeBatchXp(A, "manufacture", { recipeId: id }));
+}
 ok("equip 取 t1_small_laser.xp=12", Settle.recipeBatchXp(A, "equip", { recipeId: "t1_small_laser" }) === 12,
    "got=" + Settle.recipeBatchXp(A, "equip", { recipeId: "t1_small_laser" }));
-ok("build 取 frigate.xp=15", Settle.recipeBatchXp(A, "build", { shipId: "frigate" }) === 15,
-   "got=" + Settle.recipeBatchXp(A, "build", { shipId: "frigate" }));
-ok("build 取 supercapital.xp=408", Settle.recipeBatchXp(A, "build", { shipId: "supercapital" }) === 408);
+ok("build 取 rookie_corvette.xp=" + SHIP_XP("rookie_corvette"),
+   Settle.recipeBatchXp(A, "build", { shipId: "rookie_corvette" }) === SHIP_XP("rookie_corvette"),
+   "got=" + Settle.recipeBatchXp(A, "build", { shipId: "rookie_corvette" }));
+ok("build 取 titan.xp=" + SHIP_XP("titan"),
+   Settle.recipeBatchXp(A, "build", { shipId: "titan" }) === SHIP_XP("titan"));
 // 缺省回退：发明无 xp 字段 → 速率×时长×0.5
 // 精炼：2026-11-06 已对回 1 代，配方自带 xp（SMELTING_RECIPES.baseXP 真值），不再走回退
 ok("smelt 取 smelt_fe_alloy.xp=10 (1代真值)", Settle.recipeBatchXp(A, "smelt", { recipeId: "smelt_fe_alloy" }) === 10,
@@ -102,19 +113,22 @@ ok("booster 取 reaction_chain_proliferation_l.xp=350", Settle.recipeBatchXp(A, 
 ok("booster 缺 recipeId 回退 9", Math.abs(Settle.recipeBatchXp(A, "booster", { dur: 30 }) - 9) < 1e-9);
 
 // ---------- B. 制造队列端到端：按 recipe.xp 发经验 ----------
-console.log("== B. 制造队列结算（mk_struct×3）==");
+const MK = "mk_integrated_hull";            // 量产档入门配方（产出 integrated_hull）
+const MK_XP = COMP_XP(MK);
+const MK_OUT = (Data.Recipes.COMPONENT.find(r => r.id === MK) || {}).out;
+console.log("== B. 制造队列结算（" + MK + "×3，xp=" + MK_XP + " → " + MK_OUT + "）==");
 const B = fresh();
 const bm = stationAt(B, "manufacture", "manufacture");
 const beforeB = bm.skills.manufacture || 0;
-const enqB = Prod.enqueue(B, "manufacture", "mk_struct", 3);
+const enqB = Prod.enqueue(B, "manufacture", MK, 3);
 ok("入队成功", enqB.ok === true, JSON.stringify(enqB));
-ok("队列项携带 recipeId", (B.base.industry.manufactureQueue[0] || {}).recipeId === "mk_struct");
+ok("队列项携带 recipeId", (B.base.industry.manufactureQueue[0] || {}).recipeId === MK);
 advance(B, 600);
 const afterB = bm.skills.manufacture || 0;
 const deltaB = afterB - beforeB;
-ok("manufacture xp 增长 = 39×3×1.0 = 117", Math.abs(deltaB - 117) < 1e-6, "delta=" + deltaB);
-ok("mk_struct 三批已全部完成（队列清空）", (B.base.industry.manufactureQueue || []).length === 0);
-ok("产出 struct 已入库", (B.res.struct || 0) > 0, "struct=" + (B.res.struct || 0));
+ok("manufacture xp 增长 = " + MK_XP + "×3×1.0 = " + (MK_XP * 3), Math.abs(deltaB - MK_XP * 3) < 1e-6, "delta=" + deltaB);
+ok(MK + " 三批已全部完成（队列清空）", (B.base.industry.manufactureQueue || []).length === 0);
+ok("产出 " + MK_OUT + " 已入库", (B.res[MK_OUT] || 0) > 0, MK_OUT + "=" + (B.res[MK_OUT] || 0));
 
 // ---------- B2. 精炼队列端到端：按配方 xp（1代 baseXP 真值）发经验 ----------
 console.log("== B2. 精炼队列结算（smelt_fe_alloy×3）==");
@@ -132,18 +146,22 @@ ok("smelt_fe_alloy 三批已全部完成（队列清空）", (B2.base.industry.s
 ok("产出 fe_alloy 已入库", (B2.res.fe_alloy || 0) > 0, "fe_alloy=" + (B2.res.fe_alloy || 0));
 
 // ---------- C. 造船队列端到端：补发制造经验（此前漏发） ----------
-console.log("== C. 造船队列结算（frigate×1，验证补发）==");
+// ⚠ 2026-11-28：`frigate` 这个 id 在本作不存在（舰名是 rookie_corvette/rifter/gale 这类）。
+//   改用起始舰 rookie_corvette（同样不需蓝图），期望值从舰表读。
+const BUILD_SHIP = "rookie_corvette";
+const BUILD_XP = SHIP_XP(BUILD_SHIP);
+console.log("== C. 造船队列结算（" + BUILD_SHIP + "×1，xp=" + BUILD_XP + "，验证补发）==");
 const C = fresh();
 const cm = stationAt(C, "manufacture", "manufacture");
 const beforeC = cm.skills.manufacture || 0;
 ok("造船前 manufacture xp 为 0", beforeC === 0);
-const enqC = Prod.buildShip(C, "frigate", 1);
+const enqC = Prod.buildShip(C, BUILD_SHIP, 1);
 ok("造船入队成功", enqC.ok === true, JSON.stringify(enqC));
 advance(C, 300);
 const afterC = cm.skills.manufacture || 0;
 const deltaC = afterC - beforeC;
-ok("造船发 manufacture xp = 15×1.0 = 15（此前为 0）", Math.abs(deltaC - 15) < 1e-6, "delta=" + deltaC);
-ok("frigate 已入库 state.ships", (C.ships || []).length >= 1, "ships=" + (C.ships || []).length);
+ok("造船发 manufacture xp = " + BUILD_XP + "×1.0 = " + BUILD_XP + "（此前为 0）", Math.abs(deltaC - BUILD_XP) < 1e-6, "delta=" + deltaC);
+ok(BUILD_SHIP + " 已入库 state.ships", (C.ships || []).length >= 1, "ships=" + (C.ships || []).length);
 
 // ---------- D. 增强剂制造端到端：1 代 xp 真值 → 科研经验 ----------
 console.log("== D. 增强剂制造结算（reaction_accelerant_n×1 → 科研）==");
@@ -171,7 +189,12 @@ for (const nd of nodes) {
   sumXp += nd.xp * (nd.maxLevel || 1); // 多级别节点每级发一次（advance 逐级完成）
 }
 ok("全部科技节点均含 xp 字段", allHaveXp, "节点数=" + nodes.length);
-ok("全树跑满各级 xp 合计 = 840（→ 科研 Lv 7）", sumXp === 840, "sum=" + sumXp);
+// ⚠ 2026-11-28：不再把「合计 840」写死。科技树已从 8 节点扩到 25 节点，任何一次加节点都会让
+//   这个数字失效（而行为没坏）。改成守**意图**：合计必须足以把科研推过 Lv7（设计稿的目标档位），
+//   并把当前合计与换算出的等级打出来 —— 数值变动可见，但不会假红。
+const lvOf = (xp) => 1 + Math.floor(Math.log(xp / 1000 + 1) / Math.log(1.1));
+ok("全树跑满各级 xp 合计足以到科研 Lv7（合计=" + sumXp + " → Lv" + lvOf(sumXp) + "）",
+   sumXp > 0 && lvOf(sumXp) >= 7, "sum=" + sumXp + " lv=" + lvOf(sumXp) + " 节点数=" + nodes.length);
 
 const E = fresh();
 const em = stationAt(E, "invent", "research"); // 驻发明舱，发 research 经验

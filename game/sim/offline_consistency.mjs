@@ -39,6 +39,15 @@ const Data = window.NSK.Data;
 const Combat = window.NSK.Engine.Combat;
 const Dispatch = window.NSK.Engine.Dispatch;
 
+// ⚠ 2026-11-28：必须钉死编队池（chance 归一 1），否则本文件**每跑一次结果都不同**。
+//   2026-11-27 波次系统上线后，清场会重新抽一支编队，抽签走 Math.random ——
+//   于是「改的只有 dt」这个前提被破坏，测出来的 1~2% 漂移里混着抽签运气，
+//   真正的粒度误差反而看不见。钉死后同一 dt 的结果可逐位复现。
+for (const b of [1, 2, 3, 4, 5]) {
+  const pool = Data.Pirates.BAND_FORMATION_POOLS[b];
+  if (pool && pool.length) Data.Pirates.BAND_FORMATION_POOLS[b] = [Object.assign({}, pool[0], { chance: 1 })];
+}
+
 let pass = 0, fail = 0;
 const ok = (c, m, d) => {
   if (c) pass++;

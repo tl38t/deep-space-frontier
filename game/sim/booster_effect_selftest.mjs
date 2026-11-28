@@ -11,7 +11,7 @@ import path from "path";
 
 const ROOT = "D:/深空星疆：商业与战争/game";
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/data/resources.js", "js/data/equipment.js", "js/data/starmap.js", "js/data/ships.js",
   "js/data/recipes.js", "js/data/factions.js", "js/data/names.js",
   "js/data/pirates.js", "js/data/raids.js", "js/data/tech.js",

@@ -10,10 +10,14 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/core/save-envelope.js", "js/core/cloud-save-contract.js",
   "js/core/cloud-providers.js", "js/core/cloud-save-service.js", "js/core/persistence.js",
-  "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js", "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
+  "js/data/resources.js", "js/data/starmap.js", "js/data/archaeology.js",
+  // ⚠ 考古内容表必须加载：engine/archaeology.js 通过 Data.ArchaeologyContent 取 DEFAULT_PROBE，
+  //   缺了 selectedProbeOf 恒 null → cycle 直接 probeBlocked，hullDamage.frac 恒为 0。
+  "js/data/archaeology-content.js",
+  "js/data/ships.js", "js/data/recipes.js", "js/data/equipment.js",
   "js/data/pirates.js", "js/data/raids.js", "js/data/tech.js",
   "js/data/factions.js", "js/data/names.js", "js/lib/eveidle/data/boosters.js",
   "js/engine/state.js", "js/engine/recruit.js", "js/engine/dispatch.js", "js/engine/base.js", "js/engine/npc.js",
@@ -70,7 +74,16 @@ function mkMem(shipId) {
 }
 // 强制取一次失败（!success 且 !avoided）的 hullDamage.frac
 function captureFailFrac(shipId) {
-  const state = { rngSeed: 0x51A1, archCounter: 0 };
+  // res 必须有：稀有池会往 state.res 里写 cargo_S/M/L（archaeology.js resolveRegularYield），
+  // 缺了会 TypeError。本探针只关心失败伤害，故给个空账本即可。
+  const state = { rngSeed: 0x51A1, archCounter: 0, res: {} };
+  // 探针门禁：库存无探针 → 周期不推进，返回的 hullDamage.frac 恒 0（两条断言都会假绿/假红）。
+  {
+    const AC = Data.ArchaeologyContent;
+    const ar = Arch.ensureArch(state);
+    ar.probes[AC.DEFAULT_PROBE] = 1e7;
+    ar.selectedProbe = AC.DEFAULT_PROBE;
+  }
   const body = { band: 1, name: "测试遗址" };
   for (let i = 0; i < 3000; i++) {
     const m = mkMem(shipId);

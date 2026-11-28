@@ -83,7 +83,7 @@
   // 乘区顺序与 1 代一致：基础 120s × 装配缩短 × 科技 ÷ 增强剂 × 异地物流衰减。
   function archaeologyPeriod(state, m, nodeId) {
     const Arch = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
-    const cycRed = Arch ? Arch.cycleReduction(m) : 0;
+    const cycRed = Arch ? Arch.cycleReduction(m, state) : 0;
     let period = 120 * (1 - Math.min(0.50, cycRed));
     if (Arch && Arch.archResearchMult) period /= Arch.archResearchMult(state);
     const Booster = (typeof window !== "undefined" && window.NSK && window.NSK.Engine && window.NSK.Engine.Booster) || null;
@@ -349,10 +349,13 @@
       if (ship && typeof ship.fuelEfficiency === "number") mult *= ship.fuelEfficiency;
     }
     // 装配的考古燃料效率改装件（遍历 high/mid/low/rig 四槽，多件乘性叠加）
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     if (Data && Data.Equipment && Data.Equipment.byId && m && m.fitted) {
       for (const slot of ["high", "mid", "low", "rig"]) {
-        for (const id of (m.fitted[slot] || [])) {
-          const eq = Data.Equipment.byId(id);
+        for (const ref of (m.fitted[slot] || [])) {
+          const itemId = EI ? EI.itemIdOf(state, ref) : ref;
+          const eq = itemId ? Data.Equipment.byId(itemId) : null;
           const v = eq && eq.bonuses && eq.bonuses.archaeologyFuelEfficiency;
           if (typeof v === "number") mult *= v;
         }
@@ -365,7 +368,7 @@
   //   × 船体燃料效率 × 考古燃料效率改装件 × 电容折扣）。后两项效率暂无字段 → 1.0 占位，留接口。
   function archaeologyFuelCost(state, m) {
     const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
-    const baseFuel = Combat && Combat.fittedFuelCost ? Combat.fittedFuelCost(m) : 0;
+    const baseFuel = Combat && Combat.fittedFuelCost ? Combat.fittedFuelCost(m, state) : 0;
     const eff = fuelEfficiencyMult(state, m);
     const capXp = (m && m.skills && typeof m.skills.capacitor === "number") ? m.skills.capacitor : 0;
     const capLv = levelOf(capXp);   // xp=0 → levelOf=1（Lv1 电容即有 2% 折扣，对回 1 代）
@@ -604,7 +607,7 @@
         //   矿石 → miningEfficiency + miningLaserEfficiency
         // 每成员每 tick 聚合一次（O(成员×槽位)，与离线时长无关，红线不破）。
         const ArchM = (window.NSK && window.NSK.Engine && window.NSK.Engine.Archaeology) || null;
-        const fitB = (ArchM && ArchM.fittedBonuses) ? ArchM.fittedBonuses(m) : null;
+        const fitB = (ArchM && ArchM.fittedBonuses) ? ArchM.fittedBonuses(m, state) : null;
         // 采气 / 采矿分流（2026-11-01 技能体系）：同一采矿派遣按目标矿种自动分派技能。
         // 判定用现成的 Data.Resources.GAS —— 与装配乘区用的是同一个标记，不另起一套判据。
         const isGas = !!(Data.Resources && Data.Resources.GAS && Data.Resources.GAS[ore]);
@@ -652,7 +655,7 @@
             const focus = a.focus || "salvage";
             // 成员装配在一次结算内不变：fittedBonuses 提到循环外算一次，循环内复用（离线大批量结算性能）。
             // 成功率仍每周期按当前技能重算（cycle 内 successChance 读 m.skills.archaeology），保 1 代保真。
-            const fit = Arch ? Arch.fittedBonuses(m) : null;
+            const fit = Arch ? Arch.fittedBonuses(m, state) : null;
             let guard = 0;
             while (a.exploreProgress >= 1 && guard < 2000) {
               guard++;

@@ -914,7 +914,7 @@
     html += '<div class="squad-roster">';
     if (fighting.length) {
       for (const m of fighting) {
-        const ws = Engine.Combat.weaponSkillOf(m);
+        const ws = Engine.Combat.weaponSkillOf(m, state);
         const cl = ws ? (SKILL_CN[ws.key] || ws.key) + " L" + ws.level : "无武器";
         html += '<div class="row"><span>' + esc(m.name) + ' <span class="dim">' + cl + "</span></span>" +
           '<button class="sm ghost" data-act="raidOut:' + m.id + '">召回</button></div>';
@@ -1126,7 +1126,7 @@
     if (!m) m = (state.members || []).find(x => x.assignment && x.assignment.type === "explore"
       && x.assignment.nodeId === nodeId && x.assignment.bodyId === bodyId);
     if (!m) return;
-    const fit = Arch.fittedBonuses(m);
+    const fit = Arch.fittedBonuses(m, state);
     for (const btn of $pop.querySelectorAll(".focus-btn")) {
       const pid = btn.getAttribute("data-focus");
       const rateEl = btn.querySelector(".focus-rate");
@@ -1145,7 +1145,7 @@
       const probeTxt = pc.charged >= 0.5
         ? (probe ? esc(probe.name) + " ×1" : '<span class="bad">缺货停摆</span>')
         : "本周期免扣";
-      info.innerHTML = "扫描强度 <b>" + (Math.round(Arch.scanStrength(m, fit) * 10) / 10) + "</b>"
+      info.innerHTML = "扫描强度 <b>" + (Math.round(Arch.scanStrength(m, fit, state) * 10) / 10) + "</b>"
         + " · 周期 <b>" + (Math.round(period * 10) / 10) + "s</b>"
         + " · 探针 <b>" + probeTxt + "</b>"
         + " · 节省 <b>" + Math.round(pc.reduction * 100) + "%（累计 " + Math.round(pc.remainder * 100) + "%）</b>"
@@ -2138,7 +2138,7 @@
     html += '<div class="squad-roster">';
     for (const m of state.members) {
       if (m.destroyed) continue;
-      const ws = Engine.Combat.weaponSkillOf(m);
+      const ws = Engine.Combat.weaponSkillOf(m, state);
       // 没装武器时不要重复说两遍「无武器」：技能位留空，只留一个红色警示标签
       const cl = ws ? (SKILL_CN[ws.key] || ws.key) + " L" + ws.level : "";
       const picked = sel.indexOf(m.id) >= 0;

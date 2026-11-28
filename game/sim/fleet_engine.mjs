@@ -45,7 +45,7 @@ function mkState(members) {
 
 /* ── 1. 旧档迁移：成员无船 → ensure 补一艘，舰种与 m.shipId 一致 ── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "destroyer")]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "destroyer")]);
   ok("迁移前 ships 为空", st.ships.length === 0);
   Fleet.ensure(st);
   ok("ensure 为每个成员补一艘船", st.ships.length === 2, st.ships.length + " 艘");
@@ -62,14 +62,14 @@ function mkState(members) {
 
 /* ── 2. 孤儿船回收 + 阵亡标记 ── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "frigate")]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "rookie_corvette")]);
   Fleet.ensure(st);
   st.members.splice(0, 1);              // a 被解雇
   Fleet.ensure(st);
   const orphans = st.ships.filter(s => !s.memberId);
   ok("解雇成员的船回收为库存", orphans.length === 1, orphans.length + " 艘库存");
 
-  const st2 = mkState([mkMember("c", "frigate")]);
+  const st2 = mkState([mkMember("c", "rookie_corvette")]);
   Fleet.ensure(st2);
   st2.members[0].destroyed = true;
   Fleet.ensure(st2);
@@ -78,7 +78,7 @@ function mkState(members) {
 
 /* ── 3. 库存船配属给成员：旧船回库存 ── */
 {
-  const st = mkState([mkMember("a", "frigate")]);
+  const st = mkState([mkMember("a", "rookie_corvette")]);
   Fleet.ensure(st);
   const oldShip = st.ships[0];
   const newShip = Fleet.newShip(st, "cruiser", null);
@@ -94,59 +94,73 @@ function mkState(members) {
 
 /* ── 4. 两人换乘（对调）── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "destroyer")]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "destroyer")]);
   Fleet.ensure(st);
   const shipA = st.ships.find(s => s.memberId === "a");
   const shipB = st.ships.find(s => s.memberId === "b");
   const r = Fleet.assign(st, shipB.id, "a");
   ok("换乘（抢别人的船）成功", r.ok && r.swapped, r.err || "swapped=" + r.swapped);
   ok("a 现在开 b 的旧船", st.members[0].shipUid === shipB.id && st.members[0].shipId === "destroyer");
-  ok("b 接过 a 的旧船", st.members[1].shipUid === shipA.id && st.members[1].shipId === "frigate",
+  ok("b 接过 a 的旧船", st.members[1].shipUid === shipA.id && st.members[1].shipId === "rookie_corvette",
     st.members[1].shipId);
   ok("两艘船没有被重复配属", new Set(st.ships.map(s => s.memberId)).size === st.ships.length);
 }
 
 /* ── 5. 三防按损伤比例迁移（换船 ≠ 免费修满）── */
+// ⚠ 2026-11-28：旧夹具用的 "battleship" / "frigate" / "cruiser" 在本作舰表里都不存在
+//   （真实 id 是 rookie_corvette / raylight / dawnlight 这类），maxHp 会落到 100 的兜底值，
+//   于是「换大船后血量绝对值放大」这条断言永远不可能成立。改用真实的两条船。
+const SHIP_SMALL = "rookie_corvette";   // 盾 240（×1.05 容量加成 = 252）
+const SHIP_BIG = "raylight";            // 盾 600（同级但槽位/血池更大）
 {
-  const st = mkState([mkMember("a", "frigate", 0.5)]);
+  const st = mkState([mkMember("a", SHIP_SMALL, 0.5)]);
   Fleet.ensure(st);
-  const big = Fleet.newShip(st, "battleship", null);
+  const big = Fleet.newShip(st, SHIP_BIG, null);
   st.ships.push(big);
-  const before = { shield: st.members[0].hp.shield / HP("frigate").shield };
+  const before = { shield: st.members[0].hp.shield / HP(SHIP_SMALL).shield };
   Fleet.assign(st, big.id, "a");
-  const mx = HP("battleship");
+  const mx = HP(SHIP_BIG);
   const after = st.members[0].hp.shield / mx.shield;
   ok("损伤比例保留（50% → 50%）", Math.abs(after - 0.5) < 0.01,
     "before=" + before.shield.toFixed(3) + " after=" + after.toFixed(3));
-  ok("换船后血量绝对值按新上限放大", st.members[0].hp.shield > HP("frigate").shield,
-    st.members[0].hp.shield + " vs 旧上限 " + HP("frigate").shield);
+  ok("换船后血量绝对值按新上限放大", st.members[0].hp.shield > HP(SHIP_SMALL).shield,
+    st.members[0].hp.shield + " vs 旧上限 " + HP(SHIP_SMALL).shield);
   ok("换船后 hp 不超过新上限", st.members[0].hp.shield <= mx.shield && st.members[0].hp.armor <= mx.armor);
 }
 
 /* ── 6. 槽位缩水：溢出装备退回仓库 ── */
 {
-  const st = mkState([mkMember("a", "battleship")]);
+  const st = mkState([mkMember("a", SHIP_BIG)]);
   Fleet.ensure(st);
-  const la = Ships.slotLayout("battleship");   // high2 mid2 low1 rig1
-  st.members[0].fitted = { high: ["eq_h1", "eq_h2"], mid: ["eq_m1"], low: ["eq_l1"], rig: ["eq_r1"] };
-  const small = Fleet.newShip(st, "frigate", null);
+  const lb = Ships.slotLayout(SHIP_BIG);       // 大船布局（high3 mid3 low1 rig1）
+  const lf = Ships.slotLayout(SHIP_SMALL);     // 小船布局（high2 mid1 low1 rig0）
+  // 按大船满槽装配，再换小船 → 超出的那部分必须退回仓库
+  const fill = (n, pre) => Array.from({ length: n }, (_, i) => pre + (i + 1));
+  st.members[0].fitted = {
+    high: fill(lb.high, "eq_h"), mid: fill(lb.mid, "eq_m"),
+    low: fill(lb.low, "eq_l"), rig: fill(lb.rig, "eq_r"),
+  };
+  const small = Fleet.newShip(st, SHIP_SMALL, null);
   st.ships.push(small);
   Fleet.assign(st, small.id, "a");
-  const lf = Ships.slotLayout("frigate");      // high1 mid1 low0 rig0
-  ok("high 槽位裁到旗舰布局", st.members[0].fitted.high.length === lf.high,
+  ok("high 槽位裁到小船布局", st.members[0].fitted.high.length === lf.high,
     st.members[0].fitted.high.length + " / " + lf.high);
-  ok("low 槽位裁到 0", st.members[0].fitted.low.length === 0);
-  ok("rig 槽位裁到 0", st.members[0].fitted.rig.length === 0);
+  ok("mid 槽位裁到小船布局", st.members[0].fitted.mid.length === lf.mid,
+    st.members[0].fitted.mid.length + " / " + lf.mid);
+  ok("low 槽位裁到小船布局", st.members[0].fitted.low.length === lf.low,
+    st.members[0].fitted.low.length + " / " + lf.low);
+  ok("rig 槽位裁到小船布局", st.members[0].fitted.rig.length === lf.rig,
+    st.members[0].fitted.rig.length + " / " + lf.rig);
+  const overflow = (lb.high - lf.high) + (lb.mid - lf.mid) + (lb.low - lf.low) + (lb.rig - lf.rig);
   const returned = Object.values(st.equipment).reduce((a, b) => a + b, 0);
-  ok("溢出装备全部退回仓库（3 件：high×1 low×1 rig×1）",
-    returned === 3 && st.equipment.eq_h2 === 1 && st.equipment.eq_l1 === 1 && st.equipment.eq_r1 === 1,
-    JSON.stringify(st.equipment));
+  ok("溢出装备全部退回仓库（" + overflow + " 件）", returned === overflow,
+    "退回 " + returned + " / 期望 " + overflow + " " + JSON.stringify(st.equipment));
   ok("装在槽内的装备没被误退", st.members[0].fitted.high[0] === "eq_h1");
 }
 
 /* ── 7. 拒绝条件 ── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "frigate")]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "rookie_corvette")]);
   Fleet.ensure(st);
   const stock = Fleet.newShip(st, "cruiser", null);
   st.ships.push(stock);
@@ -160,7 +174,7 @@ function mkState(members) {
   ok("阵亡成员拒绝配属", !Fleet.assign(st, stock.id, "a").ok, Fleet.assign(st, stock.id, "a").err);
   st.members[0].destroyed = false;
 
-  const lost = Fleet.newShip(st, "frigate", null);
+  const lost = Fleet.newShip(st, "rookie_corvette", null);
   lost.status = "lost";
   st.ships.push(lost);
   ok("已损失舰船拒绝配属", !Fleet.assign(st, lost.id, "a").ok, Fleet.assign(st, lost.id, "a").err);
@@ -174,11 +188,11 @@ function mkState(members) {
 
 /* ── 8. summary 计数 + rows 排序 ── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "destroyer", 0.4)]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "destroyer", 0.4)]);
   Fleet.ensure(st);
   st.ships.push(Fleet.newShip(st, "cruiser", null));
   st.ships.push(Fleet.newShip(st, "battleship", null));
-  const dead = Fleet.newShip(st, "frigate", null); dead.status = "lost";
+  const dead = Fleet.newShip(st, "rookie_corvette", null); dead.status = "lost";
   st.ships.push(dead);
 
   const s = Fleet.summary(st);
@@ -211,7 +225,7 @@ function mkState(members) {
 
 /* ── 9. 一致性：ships 与 members 不会互相矛盾 ── */
 {
-  const st = mkState([mkMember("a", "frigate"), mkMember("b", "frigate"), mkMember("c", "frigate")]);
+  const st = mkState([mkMember("a", "rookie_corvette"), mkMember("b", "rookie_corvette"), mkMember("c", "rookie_corvette")]);
   Fleet.ensure(st);
   const ids = ["cruiser", "battleship", "destroyer"];
   for (const id of ids) st.ships.push(Fleet.newShip(st, id, null));

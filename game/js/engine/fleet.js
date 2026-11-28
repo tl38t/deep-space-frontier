@@ -131,9 +131,15 @@
       const arr = Array.isArray(m.fitted[slot]) ? m.fitted[slot] : [];
       if (arr.length > cap) {
         const over = arr.splice(cap);
-        for (const id of over) {
-          state.equipment = state.equipment || {};
-          state.equipment[id] = (state.equipment[id] || 0) + 1;
+        const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+          ? window.NSK.Core.EquipInstances : null;
+        state.equipment = state.equipment || {};
+        for (const ref of over) {
+          // 实例 uid → 取回 itemId 再退库存，并销毁实例；裸 id → 原样退回。
+          const itemId = EI ? EI.itemIdOf(state, ref) : ref;
+          const key = itemId || ref;
+          state.equipment[key] = (state.equipment[key] || 0) + 1;
+          if (EI && EI.looksLikeUid(ref)) EI.remove(state, ref);
         }
       }
       m.fitted[slot] = arr;

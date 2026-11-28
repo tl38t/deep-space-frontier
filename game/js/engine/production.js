@@ -269,7 +269,7 @@
         for (const mbr of (state.members || [])) {
           // 装备精炼泵提速：仅统计已装配成员（与既有规则一致）。
           if (mbr.fitted && ArchP.fittedBonuses) {
-            smeltFit += ArchP.fittedBonuses(mbr).smeltingSpeed || 0;
+            smeltFit += ArchP.fittedBonuses(mbr, state).smeltingSpeed || 0;
           }
           // 舰船工业加成（专项①+②-min）：成员舰船 smeltingSpeed 与装备平行叠加（同池封顶 50%）。
           // 基于成员所分配舰船生效，与是否装配无关；工业舰（驮星/云津/山海级等）驻留阵营即计入，普通舰无 bonuses → 退化为 0。
@@ -742,9 +742,14 @@
   }
 
   // ---- 舰船装配（成员四槽；复用 1 代 fitted 数组模型）----
-  // 装配：从 state.equipment 库存取一件装备，装入成员 m.fitted[slot]；卸下反向退回库存。
+  // 装配：从 state.equipment 库存取一件装备，建实例后装入成员 m.fitted[slot]（存 uid）；
+  // 卸下：解析 uid 取回 itemId 退回计数库存，并销毁实例（词条若有则随实例消失——本阶段 affixes 恒空）。
   const FIT_SLOTS = ["high", "mid", "low", "rig"];
   const SLOT_CN = { high: "高槽", mid: "中槽", low: "低槽", rig: "改装件" };
+  function _EI() {
+    return (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
+  }
   function fitEquipment(state, memberId, slot, equipId) {
     if (FIT_SLOTS.indexOf(slot) < 0) return { ok: false, err: "槽位类型非法" };
     const Eq = (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null;
@@ -759,20 +764,36 @@
     if (cur.length >= cap) return { ok: false, err: "该槽位已满（" + cap + "）" };
     if ((state.equipment[equipId] || 0) <= 0) return { ok: false, err: "库存不足" };
     state.equipment[equipId] -= 1;
-    m.fitted[slot] = cur.concat(equipId);
-    return { ok: true, equip: Eq };
+    const EI = _EI();
+    const uid = EI ? EI.create(state, equipId, []) : equipId;  // 无实例模块时回退裸 id（防御）
+    m.fitted[slot] = cur.concat(uid);
+    return { ok: true, equip: Eq, uid: uid };
   }
-  function unfitEquipment(state, memberId, slot, equipId) {
+  function unfitEquipment(state, memberId, slot, ref) {
     if (FIT_SLOTS.indexOf(slot) < 0) return { ok: false, err: "槽位类型非法" };
     const m = (state.members || []).find(x => x.id === memberId);
     if (!m) return { ok: false, err: "成员不存在" };
     const arr = (m.fitted && m.fitted[slot]) || [];
-    const idx = arr.indexOf(equipId);
+    // 兼容两种入参：实例 uid（新 UI 传 fitted 里的值）或裸 itemId（旧探针/旧调用）。
+    const EI = _EI();
+    let idx = (EI && EI.looksLikeUid(ref)) ? -1 : arr.indexOf(ref);
+    if (idx < 0 && EI && EI.looksLikeUid(ref)) idx = arr.indexOf(ref);
+    if (idx < 0) {
+      // ref 是裸 itemId 但 fitted 存 uid：按 itemId 反查第一个匹配实例
+      if (EI) {
+        for (let i = 0; i < arr.length; i++) {
+          if (EI.itemIdOf(state, arr[i]) === ref) { idx = i; break; }
+        }
+      }
+    }
     if (idx < 0) return { ok: false, err: "该槽未装配此装备" };
+    const stored = arr[idx];
+    const itemId = EI ? EI.itemIdOf(state, stored) : stored;
     arr.splice(idx, 1);
     m.fitted[slot] = arr;
-    state.equipment[equipId] = (state.equipment[equipId] || 0) + 1;
-    return { ok: true, equip: (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(equipId) : null };
+    state.equipment[itemId] = (state.equipment[itemId] || 0) + 1;
+    if (EI && EI.looksLikeUid(stored)) EI.remove(state, stored);
+    return { ok: true, equip: (Data.Equipment && Data.Equipment.byId) ? Data.Equipment.byId(itemId) : null };
   }
 
   function buildStatus(state, now) {

@@ -240,11 +240,18 @@
       && Math.abs(other.x - slot.x) + Math.abs(other.y - slot.y) === 1);
   }
 
+  // ⚠️ 核心格的 id 是 "3,3"（见 Ships.hullCells 的 push(3,3,true)），**不是**字符串 "core"。
+  //   旧代码拿 "core" 字面量比对永远匹配不到 → 模块能被拖进核心格 / 与核心格互换
+  //   （2026-11-28 探针捉到：moveModule(2,3 → 3,3) 返回 ok）。统一走格位对象的 core 标志。
+  function isCoreCell(state, cellId) {
+    const c = slotById(state, cellId);
+    return !!(c && c.core);
+  }
   // 自由摆放：把某格上的模块实例移动到目标空格。核心不可动、目标须是可用空格。
   // 若目标已占用则返回失败（不做交换，UI 端应先拆再装；开罗式摆放以空格为主）。
   function moveModule(state, fromCell, toCell) {
     if (!fromCell || !toCell || fromCell === toCell) return { ok: false, err: "格位相同" };
-    if (fromCell === "core" || toCell === "core") return { ok: false, err: "唯一核心不可移动" };
+    if (isCoreCell(state, fromCell) || isCoreCell(state, toCell)) return { ok: false, err: "唯一核心不可移动" };
     const slots = stateSlots(state);
     if (!slots.some(s => s.id === fromCell) || !slots.some(s => s.id === toCell)) return { ok: false, err: "格位不可用" };
     const inst = state.base.modules.installed.find(e => e.slotId === fromCell);
@@ -257,7 +264,7 @@
   // 若目标为空则等价于移动。保留此函数让旧 UI 代码/探针不直接报错。
   function swapSlots(state, idA, idB) {
     if (!idA || !idB || idA === idB) return { ok: false, err: "格位相同" };
-    if (idA === "core" || idB === "core") return { ok: false, err: "唯一核心不可移动" };
+    if (isCoreCell(state, idA) || isCoreCell(state, idB)) return { ok: false, err: "唯一核心不可移动" };
     const slots = stateSlots(state);
     if (!slots.some(s => s.id === idA) || !slots.some(s => s.id === idB)) return { ok: false, err: "格位不可用" };
     const a = state.base.modules.installed.find(e => e.slotId === idA);

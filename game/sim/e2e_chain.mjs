@@ -6,7 +6,7 @@ import path from "path";
 
 const ROOT = path.resolve("D:/深空星疆：商业与战争/game");
 const files = [
-  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/store.js",
+  "js/core/rng.js", "js/core/codec.js", "js/core/storage.js", "js/core/equip-instances.js", "js/core/store.js",
   "js/data/resources.js", "js/data/starmap.js", "js/data/ships.js", "js/data/recipes.js",
   "js/data/raids.js", "js/data/tech.js",
   "js/data/factions.js", "js/data/names.js",
@@ -41,22 +41,29 @@ const feAlloyAfter = s.res.fe_alloy || 0;
 ok("①熔炼产出矿材(fe_alloy)", feAlloyAfter > feAlloyBefore, "fe_alloy " + feAlloyBefore + " -> " + feAlloyAfter);
 
 // ---- 第2环：制造部件 矿材 → 部件 ----
-const structBefore = s.res.struct || 0;
-const e2 = Engine.Production.enqueue(s, "manufacture", "mk_struct", 5);
+// ⚠ 2026-11-28：制造配方已改版。旧 mk_struct → struct / mk_prop → prop / mk_weapon → weapon
+//   三件套，现在是「集成船体 / 动力核心 / 功能系统」三档（mk_integrated_hull/power_core/functional_system）。
+//   本环只验「矿材 → 部件」这一跳，取入门档集成船体。
+const PART_RECIPE = "mk_integrated_hull";
+const PART_OUT = (Data.Recipes.COMPONENT.find(r => r.id === PART_RECIPE) || {}).out;
+const structBefore = s.res[PART_OUT] || 0;
+const e2 = Engine.Production.enqueue(s, "manufacture", PART_RECIPE, 5);
 ok("②制造部件入队", e2.ok, JSON.stringify(e2));
 Engine.Settle.settle(s, now + 600 * 1000); // 再推进 500s（5批×63s×1.4无人驻舱≈441s 完成，清空总装槽位）
-const structAfter = s.res.struct || 0;
-ok("②制造产出部件(struct)", structAfter > structBefore, "struct " + structBefore + " -> " + structAfter);
+const structAfter = s.res[PART_OUT] || 0;
+ok("②制造产出部件(" + PART_OUT + ")", structAfter > structBefore, PART_OUT + " " + structBefore + " -> " + structAfter);
 
 // ---- 第3环：组装舰船 部件+矿材 → 整船 ----
 const shipBefore = s.ships.length;
-// 确保材料够 frigate cost: { struct:2, prop:2, weapon:2 }（1 代部件配比，已去掉合金主料）
-s.res.struct = (s.res.struct || 0) + 100;
-s.res.prop = (s.res.prop || 0) + 100;
-s.res.weapon = (s.res.weapon || 0) + 100;
-const e3 = Engine.Production.buildShip(s, "frigate");
+// ⚠ 2026-11-28：`frigate` 这个 id 在本作不存在；改用起始舰 rookie_corvette。
+//   它的造价是 integrated_hull/power_core/functional_system 各 1，下面按当前舰表补齐材料，
+//   不再写死旧配比（struct/prop/weapon）。
+const BUILD_SHIP = "rookie_corvette";
+const shipCost = (Data.Ships.shipById(BUILD_SHIP) || {}).cost || {};
+for (const k in shipCost) s.res[k] = (s.res[k] || 0) + Math.max(100, shipCost[k] * 10);
+const e3 = Engine.Production.buildShip(s, BUILD_SHIP);
 ok("③组装舰船入队", e3.ok, JSON.stringify(e3));
-Engine.Settle.settle(s, now + 660 * 1000); // 再推进 60s（frigate 30s×1.4无人驻舱≈42s 完成）
+Engine.Settle.settle(s, now + 660 * 1000); // 再推进 60s（30s×1.4无人驻舱≈42s 完成）
 const shipAfter = s.ships.length;
 ok("③组装产出整船(state.ships)", shipAfter > shipBefore, "ships " + shipBefore + " -> " + shipAfter + (s.ships.length ? " [" + s.ships[s.ships.length-1].name + "]" : ""));
 

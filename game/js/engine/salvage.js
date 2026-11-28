@@ -89,6 +89,8 @@
     if (!state || !Array.isArray(state.members)) return 0;
     const Eq = _Eq();
     if (!Eq || !Eq.byId) return 0;
+    const EI = (typeof window !== "undefined" && window.NSK && window.NSK.Core)
+      ? window.NSK.Core.EquipInstances : null;
     let total = 0;
     for (const m of state.members) {
       if (!m || m.destroyed) continue;
@@ -96,8 +98,9 @@
       if (nodeId && m.assignment.nodeId !== nodeId) continue;
       if (!m.fitted) continue;
       for (const slot in m.fitted) {
-        for (const id of (m.fitted[slot] || [])) {
-          const it = Eq.byId(id);
+        for (const ref of (m.fitted[slot] || [])) {
+          const itemId = EI ? EI.itemIdOf(state, ref) : ref;
+          const it = itemId ? Eq.byId(itemId) : null;
           if (it && it.bonuses && it.bonuses.salvageEfficiency) total += Number(it.bonuses.salvageEfficiency) || 0;
         }
       }
