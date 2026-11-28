@@ -349,6 +349,40 @@
     { lv: 4, name: "深空要塞", smelt: 3, manufacture: 3, invent: 3, booster: 3, equip: 3, energy: 520 },
   ];
 
+  // ============================================================
+  // 舰船制造蓝图（2026-11-28 势力商店）：照 1 代 js/data/ships.js:67-87 SHIP_BLUEPRINTS 十八艘，
+  //   扣掉 sansha 4 艘（暗影/幽冥/幽构/裁决 —— 用户 11-25 定「挂起，未来走战斗掉落」）= 14 艘。
+  //   键格式：写**裸 shipId**（1 代 actions.js:196 同款），与 equipment:/booster: 前缀互不冲突。
+  //   currency：阵营 8 艘付 rep（照 1 代 LP 原值 60/100/150/1000）；
+  //             中立 6 艘付 credits（照 1 代 ISK 原值 50,000，1 代这批本就无势力归属）。
+  //   bodyLevelReq 语义 = 1 代 level 20/40/60/90 映射到本作 0/1/2/3（与 SHIPS.bodyLevelReq 同一字段）。
+  //   ⚠️ rookie_corvette / raylight / spearfalcon / swiftblade / dawnlight / warfalcon / stormblade /
+  //      sunlance / fortfalcon / thunderblade / firmament / heavy_bastion / riftbreaker / 工业舰 / 考古舰
+  //      **不在**本表 = 无蓝图门禁（1 代 SHIP_ASSEMBLY_RECIPES 里 requiresBlueprint:false 的同批）。
+  // ============================================================
+  const SHIP_BLUEPRINT_DEFS = {
+    // —— 苍穹劫团（angel）——
+    gale:          { shipId: "gale",          factionId: "angel",  price: 60,   currency: "rep",     bodyLevelReq: 0 },
+    thunder:       { shipId: "thunder",       factionId: "angel",  price: 100,  currency: "rep",     bodyLevelReq: 1 },
+    dawnbreaker:   { shipId: "dawnbreaker",   factionId: "angel",  price: 150,  currency: "rep",     bodyLevelReq: 2 },
+    starcrown:     { shipId: "starcrown",     factionId: "angel",  price: 1000, currency: "rep",     bodyLevelReq: 3 },
+    // —— 赤誓教团（blood）——
+    bloodthorn:    { shipId: "bloodthorn",    factionId: "blood",  price: 60,   currency: "rep",     bodyLevelReq: 0 },
+    crimson:       { shipId: "crimson",       factionId: "blood",  price: 100,  currency: "rep",     bodyLevelReq: 1 },
+    crimson_bastion: { shipId: "crimson_bastion", factionId: "blood", price: 150, currency: "rep",    bodyLevelReq: 2 },
+    eternal_fortress: { shipId: "eternal_fortress", factionId: "blood", price: 1000, currency: "rep", bodyLevelReq: 3 },
+    // —— 中立（无势力归属，付星币；商店里挂在联邦拓殖公社页的「中立船坞」）——
+    rifter:        { shipId: "rifter",        factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+    kestrel:       { shipId: "kestrel",       factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+    atron:         { shipId: "atron",         factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+    miner_frigate: { shipId: "miner_frigate", factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+    gas_frigate:   { shipId: "gas_frigate",   factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+    heron:         { shipId: "heron",         factionId: null,     price: 50000, currency: "credits", bodyLevelReq: 0 },
+  };
+  function shipBlueprintDef(shipId) { return SHIP_BLUEPRINT_DEFS[shipId] || null; }
+  // 该舰是否要蓝图才能造（真值只来自 SHIP_BLUEPRINT_DEFS；表外舰船一律放行）
+  function shipNeedsBlueprint(shipId) { return !!SHIP_BLUEPRINT_DEFS[shipId]; }
+
   function bodyLevelPlan(lv) { return BODY_LEVELS[Math.max(0, Math.min(3, lv))] || BODY_LEVELS[0]; }
   function canBuildAt(shipId, bodyLevel) {
     const s = SHIPS[shipId];
@@ -360,19 +394,35 @@
   }
   function shipById(id) { return SHIPS[id] || null; }
   // 舰船三防满载（成员 hp 上限来源）。enhLvl=舰船强化等级，乘 hpMultiplier（惰性取 ShipEnh，enhLvl=0 时 enh=1 不依赖模块）。
-  function maxHp(shipId, enhLvl) {
+  // capBonus=防御技能容量加成（小数，如 0.20），三层同系数。
+  //   2026-11-27 防御技能对回 1 代口径：1 代 shieldOperation/armorReinforcement/hullEngineering
+  //   三个技能各管一层容量（selectors.js:2532/2544/2555，均 ×(1+lv×0.03)），本作三合一为 defense，
+  //   故同一系数作用于三层。此前 defense 被接进 combat 的 dmgRedRaw（减伤），1 代技能从不产生减伤，已废除。
+  function maxHp(shipId, enhLvl, capBonus) {
     const s = SHIPS[shipId];
     if (!s) return { shield: 100, armor: 100, structure: 100 };
     // 舰船级 HP 容量加成（1 代 shield/armor/structureCapacity，全局生效 = 舰船本体属性，与 1 代一致）
     const b = s.bonuses || {};
+    const c = (typeof capBonus === "number" && isFinite(capBonus)) ? capBonus : 0;
     const enh = (enhLvl && enhLvl > 0)
       ? (function () { const SE = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.ShipEnhancement : null; return SE ? SE.getBonuses(shipId, enhLvl).hpMultiplier : 1; })()
       : 1;
     return {
-      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)) * enh,
-      armor: s.hp.armor * (1 + (b.armorCapacity || 0)) * enh,
-      structure: s.hp.structure * (1 + (b.structureCapacity || 0)) * enh,
+      // 船体容量与技能容量**连乘**：1 代 selectors.js:2532 是两条独立 multiply
+      // （priority 10 船体、20 技能），combat-modifiers.js:31 逐条 `value *= amount`，不复利合并。
+      shield: s.hp.shield * (1 + (b.shieldCapacity || 0)) * (1 + c) * enh,
+      armor: s.hp.armor * (1 + (b.armorCapacity || 0)) * (1 + c) * enh,
+      structure: s.hp.structure * (1 + (b.structureCapacity || 0)) * (1 + c) * enh,
     };
+  }
+  // 成员级三围上限：maxHp + 防御技能容量。接受「成员对象」（含 shipId/enhancementLevel/skills），
+  // 也接受招募期尚未落库的临时对象（{shipId, enhancementLevel:0, skills}）——state.js 建造成员时用。
+  // Settle 未就绪时退化为不含技能容量（安全降级，repair/settle 之后会按新上限修正）。
+  function maxHpOf(m) {
+    if (!m) return maxHp(m, 0, 0);
+    const eng = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine : null;
+    const bonus = (eng && eng.Settle && eng.Settle.defenseCapBonus) ? eng.Settle.defenseCapBonus(m) : 0;
+    return maxHp(m.shipId, m.enhancementLevel, bonus);
   }
   function upgradeCost(lv) {
     // lv = 当前等级，返回升到下一级的代价
@@ -380,7 +430,8 @@
     return COST[lv] || null;
   }
 
-  return { SHIPS, BODY_LEVELS, bodyLevelPlan, canBuildAt, shipsAtLevel, shipById, maxHp, upgradeCost, ENERGY_OUTPUT,
+  return { SHIPS, BODY_LEVELS, bodyLevelPlan, canBuildAt, shipsAtLevel, shipById, maxHp, maxHpOf, upgradeCost, ENERGY_OUTPUT,
+    SHIP_BLUEPRINT_DEFS, shipBlueprintDef, shipNeedsBlueprint,
     SLOT_LAYOUT, slotLayout, totalSlots,
     BASE_MODULES, BASE_HULLS, baseHullById, baseModuleByType, baseHullSlots, createInitialBase,
     EXTRA_CELLS, SPECIAL_CELL, hullCells, hullCellAt, hullSpecialCell,

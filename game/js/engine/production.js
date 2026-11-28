@@ -57,6 +57,46 @@
   }
   function spend(res, cost) { for (const k in cost) res[k] = Math.max(0, (res[k] || 0) - cost[k]); }
   function gain(res, out, qty) { res[out] = (res[out] || 0) + qty; }
+
+  // ---- 考古文物充作制造成本（2026-11-27 接线校准基体）----
+  // 1 代把校准基体注册进 ResourceRegistry 的 "calibration:" 命名空间，与矿物同表，
+  // 所以改装件 cost 里可以直接写 `calibration:art_i_calib`（data/equipment.js:223-228 的
+  // RIG_TIER_META.calib / calibQty），造一件 rig 就是「矿物 + 校准基体」。
+  // 本作文物真值在 state.archaeology.artifacts（**不镜像 state.res**，见 data/resources.js:222），
+  // 两套存储不互通 → 这里按键前缀 `art:` 显式桥接，且只对走本函数的制造路径生效，
+  // 不改 canAfford/spend 的通用语义（其余队列仍纯 state.res，避免波及全部产线）。
+  function artKeyOf(k) { return (typeof k === "string" && k.indexOf("art:") === 0) ? k.slice(4) : null; }
+  function artQty(state, id) {
+    const A = state && state.archaeology;
+    return Math.max(0, Math.floor(Number(A && A.artifacts && A.artifacts[id]) || 0));
+  }
+  function splitArtCost(cost) {
+    const resCost = {}, artCost = {};
+    for (const k in (cost || {})) {
+      const id = artKeyOf(k);
+      if (id) artCost[id] = (artCost[id] || 0) + cost[k];
+      else resCost[k] = cost[k];
+    }
+    return { resCost: resCost, artCost: artCost };
+  }
+  // UI 用：一次判定「state.res + 考古文物」是否都够（不做扣减）
+  function canAffordWithArt(state, cost) {
+    const sp = splitArtCost(cost);
+    if (!canAfford(state.res, sp.resCost)) return false;
+    for (const id in sp.artCost) if (artQty(state, id) < sp.artCost[id]) return false;
+    return true;
+  }
+  function spendWithArt(state, cost) {
+    const sp = splitArtCost(cost);
+    spend(state.res, sp.resCost);
+    const A = state.archaeology;
+    if (A && A.artifacts) {
+      for (const id in sp.artCost) {
+        A.artifacts[id] = Math.max(0, (artQty(state, id)) - sp.artCost[id]);
+        if (A.artifacts[id] <= 0) delete A.artifacts[id];
+      }
+    }
+  }
   // 总装船坞（manufacture）槽位由「部件制造队列」+「造船队列」+「强化队列」+「舱段建造队列」共享
   function manufactureUsed(state) {
     const ind = state.base.industry;
@@ -138,6 +178,10 @@
   function enqueueFuel(state, recipeId, repeat) {
     const r = ((Data.Recipes && Data.Recipes.FUEL) || []).find(x => x.id === recipeId);
     if (!r) return { ok: false, err: "配方不存在" };
+    // 等级门禁（2026-11-27 补）：1 代 ammunition.js fuel_t1/t2/t3 的 level = 1/20/55，
+    // 本作沿用装备同一映射 equipGateLevel ⇒ 核心 Lv1 / Lv1 / Lv3。顺序同 buildEquipment：等级在槽位之前。
+    const gate = equipGateLevel(r.level || 1);
+    if (state.base.bodyLevel < gate) return { ok: false, err: "核心等级不足（需 Lv." + (gate + 1) + "）" };
     const plan = Data.Ships.bodyLevelPlan(state.base.bodyLevel);
     const eqQueue = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
     if (eqQueue.length >= plan.equip) return { ok: false, err: "制造车间槽位已满（需升级舰基）" };
@@ -328,6 +372,13 @@
     const Ship = Data.Ships;
     const ship = Ship.shipById(shipId);
     if (!ship) return { ok: false, err: "舰船不存在" };
+    // 蓝图门禁（2026-11-28 势力商店上线）：照 1 代 SHIP_ASSEMBLY_RECIPES 的 requiresBlueprint，
+    //   顺序同 1 代「蓝图 → 等级 → 船坞 → 材料」，蓝图排在最前。
+    //   真值只来自 Data.Ships.SHIP_BLUEPRINT_DEFS（14 艘）；表外舰船（含 sansha 4 艘）放行。
+    if (Ship.shipNeedsBlueprint && Ship.shipNeedsBlueprint(shipId)
+        && !(Array.isArray(state.ownedBlueprints) && state.ownedBlueprints.indexOf(shipId) >= 0)) {
+      return { ok: false, err: "缺少蓝图：需先在势力商店解锁「" + ship.name + "」的制造蓝图" };
+    }
     if (!Ship.canBuildAt(shipId, state.base.bodyLevel)) return { ok: false, err: "核心等级不足（需 Lv." + (ship.bodyLevelReq + 1) + "）" };
     // ④ 泰坦子系统门禁：requiresTech（8 节点顶点 titan_command）+ 需成立军团 + 需完成星图主线
     if (ship.requiresTech != null && techLevelOf(state, ship.requiresTech) < 1)
@@ -452,8 +503,18 @@
     if (eqUsed >= plan.equip) return { ok: false, err: "制造车间槽位已满（需升级舰基）" };
     // 精密配给剂装备材料折扣（与 1 代 getEquipEngBuildingQuote 同口径）
     const eqCost = (Booster && Booster.discountedCost) ? Booster.discountedCost(state, Eq.cost, "equip") : Eq.cost;
-    if (!canAfford(state.res, eqCost)) return { ok: false, err: "原料不足" };
-    spend(state.res, eqCost);
+    // 成本可能混入考古文物（`art:` 前缀，改装件吃校准基体，1 代 RIG_TIER_META.calib）：
+    // 先查 state.res 那部分，再查 state.archaeology.artifacts 那部分，分开报错以便玩家知道缺什么。
+    const spCost = splitArtCost(eqCost);
+    if (!canAfford(state.res, spCost.resCost)) return { ok: false, err: "原料不足" };
+    for (const artId in spCost.artCost) {
+      const have = artQty(state, artId);
+      if (have < spCost.artCost[artId]) {
+        const m = (Data.Resources && Data.Resources.meta) ? Data.Resources.meta("art:" + artId) : null;
+        return { ok: false, err: "校准基体不足（需 " + ((m && m.name) || artId) + " ×" + spCost.artCost[artId] + "，持有 " + have + "）" };
+      }
+    }
+    spendWithArt(state, eqCost);
     const durationMult = Base && Base.queueDurationMultiplier ? Base.queueDurationMultiplier(state, "equip") : 1;
     const q = state.base.industry.equipQueue || (state.base.industry.equipQueue = []);
     q.push({ recipeId: equipId, outType: "equipment", out: equipId, qty: 1, in: eqCost, dur: Eq.time * durationMult, startedAt: Date.now(), repeat: repeat || 1, done: 0 });
@@ -745,5 +806,5 @@
     });
   }
 
-  return { enqueue, enqueueFuel, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processModuleQueue, processEnhanceQueue, buildShip, enqueueModule, enhanceShip, buildEquipment, probeCostOf, buildProbe, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, spend, gain, dismantleEquipment, dismantlePreview, recoverRate };
+  return { enqueue, enqueueFuel, enqueueStudy, boosterSpeedFor, processAll, processQueue, processBuildQueue, processModuleQueue, processEnhanceQueue, buildShip, enqueueModule, enhanceShip, buildEquipment, probeCostOf, buildProbe, equipGateLevel, fitEquipment, unfitEquipment, buildStatus, manufactureUsed, queueStatus, canAfford, canAffordWithArt, spend, spendWithArt, gain, dismantleEquipment, dismantlePreview, recoverRate };
 });

@@ -1088,17 +1088,22 @@ ok("词条修正O(1):多倍率词条不增加结算耗时", traitRatio < 3, "无
   const rEq2 = P.buildEquipment(sb4, "analyzer_t1");
   ok("装备:制造车间槽满(1/1)时被拒", rEq2.ok === false && rEq2.err.indexOf("制造车间槽位已满") > -1, JSON.stringify(rEq2));
 
-  // 27e) 蓝图门禁（1 代 ownedBlueprints 原样）：势力商店未实装期间由 BP_GRANT_ALL 全量授予
+  // 27e) 蓝图门禁（1 代 ownedBlueprints 原样）：2026-11-28 势力商店上线，BP_GRANT_ALL 关闭，
+  //      新档只带初始免费集 2 键，其余 requiresBlueprint 装备必须先在商店买断。
   const sb5 = Engine.State.defaultState(now, Data);
   const bpEqs = Data.Equipment.all().filter(e => e.requiresBlueprint);
-  ok("蓝图:新档授予全部 requiresBlueprint 装备",
-    bpEqs.every(e => Data.Equipment.hasBlueprint(sb5, e.id)),
-    "标蓝图=" + bpEqs.length + " 授予后 owned=" + sb5.ownedBlueprints.length);
+  ok("蓝图:新档只授予初始免费集",
+    sb5.ownedBlueprints.length === Data.Equipment.FREE_BLUEPRINT_KEYS.length &&
+    Data.Equipment.FREE_BLUEPRINT_KEYS.every(k => sb5.ownedBlueprints.indexOf(k) >= 0),
+    "标蓝图=" + bpEqs.length + " 新档 owned=" + sb5.ownedBlueprints.length);
+  ok("蓝图:非免费件默认未解锁",
+    bpEqs.filter(e => Data.Equipment.FREE_BLUEPRINT_KEYS.indexOf(Data.Equipment.bpKey(e.id)) < 0)
+      .every(e => !Data.Equipment.hasBlueprint(sb5, e.id)));
   ok("蓝图:key 前缀为 equipment:",
     Data.Equipment.bpKey("analyzer_t1") === "equipment:analyzer_t1", Data.Equipment.bpKey("analyzer_t1"));
   const nBp = sb5.ownedBlueprints.length;
-  Data.Equipment.grantAllBlueprints(sb5);
-  ok("蓝图:重复授予幂等", sb5.ownedBlueprints.length === nBp, nBp + " -> " + sb5.ownedBlueprints.length);
+  ok("蓝图:全量授予已短路（返回 0）", Data.Equipment.BP_GRANT_ALL === false && Data.Equipment.grantAllBlueprints(sb5) === 0);
+  ok("蓝图:短路后 owned 不变", sb5.ownedBlueprints.length === nBp, nBp + " -> " + sb5.ownedBlueprints.length);
 
   // 27f) 门真实生效：清空后同一件装备被拦，补回后可造（开关语义 = 只改授予，不改门）
   const sb6 = Engine.State.defaultState(now, Data);

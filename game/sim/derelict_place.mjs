@@ -69,33 +69,70 @@ ok("新版视觉半径 15 也完全在画布内", newTight === 0, String(newTigh
 const minEdge = Math.min(...drNew.map(x => edgeDist(x.b)));
 ok("新版距画布边最近 ≥ 80 单位", minEdge >= 80, minEdge.toFixed(1));
 
-// ── 2. 其它天体：必须一个都没动 ────────────────────────────────────────
-for (const kind of ["star", "belt", "gas", "planet", "station"]) {
-  const a = bodiesOf(oldMap, kind), b = bodiesOf(newMap, kind);
-  if (!a.length && !b.length) { ok("其它天体 " + kind + "：两版都无", true); continue; }
-  // 气云自 2026-11-01 起改为「每星系必有」（原本 40% 概率），总数必然从 76 涨到 207。
-  // 这里要验的不是「数量相同」，而是**既有那 76 个一个都没动**（参数取自原 rand 序列），
-  // 新增的 131 个走独立 hashPrng，不能反过来扰动别的东西（下面 planet/station 的零漂移就是证据）。
-  if (kind === "gas") {
-    const byNode = {};
-    for (const x of b) byNode[x.node] = x;
-    const kept = a.filter(x => byNode[x.node] && byNode[x.node].b.id === x.b.id &&
-      Math.abs(byNode[x.node].b.orbit - x.b.orbit) < 1e-9 && byNode[x.node].b.ang === x.b.ang &&
-      byNode[x.node].b.size === x.b.size);
-    ok("既有气云 76 个位置完全不变（新增 " + (b.length - a.length) + " 个补全）",
-      kept.length === a.length && b.length === 207, kept.length + "/" + a.length + " 保留，总数 " + b.length);
-    continue;
-  }
-  const same = a.length === b.length && a.every((x, i) =>
-    x.node === b[i].node && x.b.id === b[i].b.id &&
-    Math.abs(x.b.orbit - b[i].b.orbit) < 1e-9 && x.b.ang === b[i].b.ang && x.b.size === b[i].b.size);
-  const drift = a.length === b.length ? a.filter((x, i) => x.b.ang !== b[i].b.ang).length : -1;
-  ok(kind + " 位置完全不变（" + a.length + " 个）", same, "漂移 " + drift + " 个");
+// ── 2. 天体结构契约（2026-11-28 改：不再与 11-01 快照逐点比） ────────────
+//   原断言是「与旧快照逐点比 orbit/ang/size，一个都不许动」。星图改成极坐标分层后，
+//   节点数/星座分配全变 → 主 PRNG 消耗序列不同 → 每个星系的天体参数必然重算，
+//   逐点比只会恒红（实测 5 条 FAIL 全部来自这里）。
+//   改为钉住**每个 kind 的结构契约**：数量分布 + 轨道/尺寸/角度合法域。
+//   「残骸场不越界、不撞天体」这类几何问题仍由第 1 / 3 节守住，不受影响。
+const byKind = {};
+for (const n of newMap.nodes) for (const b of n.bodies) (byKind[b.kind] = byKind[b.kind] || []).push({ node: n, b });
+const kindOf = k => byKind[k] || [];
+
+// 每星系必带 1 个：主星 / 小行星带 / 气云 / 残骸场 / 月岩区
+for (const kind of ["star", "belt", "gas", "derelict", "moon"]) {
+  const everyNode = newMap.nodes.every(n => n.bodies.filter(b => b.kind === kind).length === 1);
+  ok("每星系恰好 1 个 " + kind, everyNode && kindOf(kind).length === newMap.nodes.length,
+    kindOf(kind).length + " 个 / " + newMap.nodes.length + " 节点");
 }
 
-// 残骸场的 id/name/band 不该被这次定位改动影响
-const drSameMeta = drNew.every((x, i) => x.b.id === drOld[i].b.id && x.b.name === drOld[i].b.name && x.b.band === drOld[i].b.band && x.b.size === drOld[i].b.size);
-ok("残骸场 id / name / band / size 未变", drSameMeta);
+// 固定轨道与尺寸
+ok("主星 orbit 0 / ang 0 / size 26",
+  kindOf("star").every(x => x.b.orbit === 0 && x.b.ang === 0 && x.b.size === 26));
+ok("小行星带 orbit 72 / size 17",
+  kindOf("belt").every(x => x.b.orbit === 72 && x.b.size === 17));
+ok("气云 orbit 50 / size 22",
+  kindOf("gas").every(x => x.b.orbit === 50 && x.b.size === 22));
+ok("残骸场 orbit = DR_ORBIT / size 9",
+  kindOf("derelict").every(x => x.b.orbit === SM.DR_ORBIT && x.b.size === 9));
+// 月岩区：size 6，轨道 = min(196, 宿主行星 orbit + 9)，无行星则走兜底 88
+ok("月岩区 size 6 / orbit 合法（88~196）",
+  newMap.nodes.every(n => {
+    const mo = n.bodies.find(b => b.kind === "moon");
+    return !!mo && mo.size === 6 && mo.orbit >= 88 && mo.orbit <= 196;
+  }));
+
+// 行星 / 空间站：每星系 2~3 个
+ok("每星系 2~3 个行星/空间站",
+  newMap.nodes.every(n => {
+    const k = n.bodies.filter(b => b.kind === "planet" || b.kind === "station").length;
+    return k >= 2 && k <= 3;
+  }));
+const extras = [...kindOf("planet"), ...kindOf("station")];
+ok("行星 size 11~18 / 空间站 size 12",
+  kindOf("planet").every(x => x.b.size >= 11 && x.b.size <= 18) &&
+  kindOf("station").every(x => x.b.size === 12));
+ok("行星/空间站 orbit ∈ [112,202]",
+  extras.every(x => x.b.orbit >= 112 && x.b.orbit <= 202),
+  "越界 " + extras.filter(x => x.b.orbit < 112 || x.b.orbit > 202).length + " 个");
+
+// 角度一律 [0,360) 整数
+ok("所有天体角度 ∈ [0,360) 整数",
+  Object.keys(byKind).every(k => kindOf(k).every(x =>
+    Number.isInteger(x.b.ang) && x.b.ang >= 0 && x.b.ang < 360)));
+
+// 残骸场元数据自洽：id 后缀固定、名字非空、band 与所属区域一致（band 由区域安等决定）
+const bandByRegion = {};
+let bandConflict = 0;
+for (const x of kindOf("derelict")) {
+  if (bandByRegion[x.node.region] === undefined) bandByRegion[x.node.region] = x.b.band;
+  else if (bandByRegion[x.node.region] !== x.b.band) bandConflict++;
+}
+ok("残骸场 id / name / band 自洽（band 与所属区域一致）",
+  kindOf("derelict").every(x => x.b.id === x.node.id + "_dr" &&
+    typeof x.b.name === "string" && x.b.name.length > 0 &&
+    Number.isInteger(x.b.band) && x.b.band >= 1 && x.b.band <= 5) && bandConflict === 0,
+  "band 冲突 " + bandConflict + " 个");
 
 // ── 3. 角度避让：与邻近天体的间隙 ──────────────────────────────────────
 let worstGap = Infinity, worstNode = "";

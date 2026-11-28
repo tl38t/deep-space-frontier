@@ -99,7 +99,8 @@
 
   // 对成员三防船体施加比例伤害（shield→armor→structure 顺序）。返回是否阵亡。
   function applyHullDamage(m, frac) {
-    const maxHp = Data.Ships.maxHp(m.shipId);
+    // 用含防御技能容量的上限算总血池：frac 是「满血的比例」，取错上限会让实际扣血比例失真。
+    const maxHp = Data.Ships.maxHpOf(m);
     const total = maxHp.shield + maxHp.armor + maxHp.structure;
     let dmg = Math.max(0, frac) * total;
     const order = ["shield", "armor", "structure"];

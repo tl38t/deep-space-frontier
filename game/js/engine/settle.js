@@ -100,10 +100,41 @@
   //   与「烈度」目标（危险处更值钱）相反；按齐射(战斗秒)则天然让高安等经验更高。
   const COMBAT_VOLLEY_XP = 2;
   const COMBAT_DEF_XP = 1;
+  // 电容管理经验系数（1 代 combat.js:1771 真值）：每齐射 volleyFuel × 0.3。
+  const COMBAT_CAP_XP_RATIO = 0.3;
   // 安等烈度：高安等敌舰更硬（每波耗时↑→同时间清波数↓），故按 band 给额外烈度乘区补偿，
   // 使高安等剿匪经验回报高于低安等（提议值，待标定）。
   const COMBAT_INTENSITY_BY_BAND = { 1: 1.0, 2: 1.4, 3: 1.9, 4: 2.6, 5: 3.5 };
   function combatIntensity(band) { return COMBAT_INTENSITY_BY_BAND[band] || COMBAT_INTENSITY_BY_BAND[1]; }
+
+  // ★ 战斗技能经验：普通据点与死亡空间**共用同一条循环**。
+  //   1 代副本战斗走的就是同一段 combat tick 经验（combat.js:1771 电容 / :1808 武器 /
+  //   :2018-2020 三围防御 / :2022 驾驶 / :2100 维修），不存在第二套；本作若给副本另起
+  //   一条路，后果是「刷副本完全不涨战斗技能」，与 1 代相反。
+  //   ledger 需要的字段：fightSec / combatants([{id,keys}]) / fuelPerVolley / damage。
+  //   hitLayers[成员id] = 本段实际掉血层数（0–3），防御经验按层计份（三合一技能对回三代技能）。
+  //   锚点取 fightSec（齐射数 = fightSec/ROUND_SEC），O(1)，与离线时长无关。
+  function grantCombatSkillXp(state, ledger, memberById, band, hitLayers) {
+    const Combat = (typeof window !== "undefined" && window.NSK && window.NSK.Engine) ? window.NSK.Engine.Combat : null;
+    if (!Combat || !ledger || !(ledger.fightSec > 0) || !ledger.combatants) return;
+    const inten = combatIntensity(band);
+    const volleys = ledger.fightSec / Combat.ROUND_SEC;   // 1 代 1 齐射 = ROUND_SEC 秒
+    // 电容管理经验锚（1 代 combat.js:1771 `volleyFuel × 0.3`）：volleyFuel 已含电容折扣 capMult。
+    const capLv = Combat.maxCapacitorLevel ? Combat.maxCapacitorLevel(state) : 0;
+    const volleyFuel = (ledger.fuelPerVolley || 0) / (1 + capLv * 0.02);
+    for (const c of ledger.combatants) {
+      const m = memberById[c.id];
+      if (!m || m.destroyed) continue;
+      for (const key of c.keys) grantBatchXp(state, m, key, COMBAT_VOLLEY_XP * volleys * inten);
+      // 受创才发的两项（1 代同源：受创事件触发）
+      if (ledger.damage > 0) {
+        const nl = hitLayers ? (hitLayers[m.id] || 0) : 1;
+        if (nl > 0) grantBatchXp(state, m, "defense", COMBAT_DEF_XP * volleys * inten * nl);
+        grantBatchXp(state, m, "piloting", COMBAT_DEF_XP * volleys * inten);
+      }
+      grantBatchXp(state, m, "capacitor", volleyFuel * volleys * COMBAT_CAP_XP_RATIO * inten);
+    }
+  }
   function miningXpRate(node, isGas) {
     const rich = node ? (node.richness != null ? node.richness : (node.tier != null ? node.tier : 1)) : 1;
     const tbl = isGas ? GAS_XP_RATE : MINING_XP_RATE;
@@ -143,6 +174,16 @@
     return 1 + Math.floor(Math.log(x / 1000 + 1) / Math.log(1.1));
   }
   function skillBonus(skills, key) { return 1 + levelOf(skills[key]) * 0.02; }
+  // 防御技能的三围容量加成（2026-11-27 定案 A：从「减伤」改为「三围容量」）。
+  // 1 代真值：shieldOperation/armorReinforcement/hullEngineering 各 lv×0.03 作用于对应一层
+  //   （selectors.js:2532 / 2544 / 2555）；本作三合一为单个 defense 键，故同一系数作用三层。
+  // ⚠️ 系数 0.02 是**提议值待标定**：1 代单技能真值 0.03，但本作一个技能吃三层收益，
+  //    取 0.02 是「每层略弱于 1 代、但不用分练三个技能」的折中；调平衡只改这一个常量。
+  const DEFENSE_CAP_PER_LEVEL = 0.02;
+  function defenseCapBonus(m) {
+    if (!m || !m.skills) return 0;
+    return levelOf(m.skills.defense || 0) * DEFENSE_CAP_PER_LEVEL;
+  }
   // ⚠️ 已删 combatBonus()（三技能 skillBonus 的算术平均）：无调用方，且与 1 代不符。
   //    1 代是每门武器按自己的 skillKey 取技能（命中 +lv×4、伤害 ×(1+lv×0.02)），
   //    见 engine/combat.js scanFit / SKILL_OF_WEAPON。这里保留注释，防有人再把它加回来。
@@ -219,23 +260,30 @@
   // 返港后 status="idle"，下一 tick 由 Repair.tick 自动拉进修复泊位（复用 1-E 队列）。
   // O(参战成员)，与离线时长无关（受击量由 Combat.advance 一次算出）。
   function applyCombatDamage(state, nodeId, totalDamage) {
-    if (!(totalDamage > 0)) return [];
+    if (!(totalDamage > 0)) return { withdrawn: [], layers: {} };
     const fighters = (state.members || []).filter(function (m) {
       return m && !m.destroyed && m.assignment && m.assignment.type === "combat" && m.assignment.nodeId === nodeId;
     });
-    if (!fighters.length) return [];
+    if (!fighters.length) return { withdrawn: [], layers: {} };
     const share = totalDamage / fighters.length;
     const withdrawn = [];
+    // layers[成员 id] = 本段实际掉血的层数（0–3）。1 代按层发防御经验（combat.js:2018-2020：
+    // 护盾掉血涨 shieldOperation、装甲掉血涨 armorReinforcement、结构掉血涨 hullEngineering 各 +1），
+    // 本作三合一为 defense，故「掉几层 = 发几份」是等价的忠实映射。
+    const layers = {};
     for (const m of fighters) {
       m.hp = m.hp || {};
       let dmg = share;
+      let hit = 0;
       for (const key of ["shield", "armor", "structure"]) {
         if (dmg <= 0) break;
         const cur = Math.max(0, m.hp[key] || 0);
         const take = Math.min(cur, dmg);
+        if (take > 0) hit++;
         m.hp[key] = cur - take;
         dmg -= take;
       }
+      layers[m.id] = hit;
       // 浮点容差：血池封顶后 damage 恰等于血池，逐项相减会残留 ~1e-13，不能因此判定「还有结构」
       if ((m.hp.structure || 0) <= 1e-6) {
         m.hp.structure = 0;
@@ -248,7 +296,28 @@
         withdrawn.push(m.id);
       }
     }
-    return withdrawn;
+    return { withdrawn: withdrawn, layers: layers };
+  }
+
+  // 防御技能容量提升后，把「原本满血」的层抬到新上限（O(members)，与离线时长无关）。
+  // 2026-11-27 定案 A：defense 从减伤改为三围容量，容量随时可涨（技能无等级上限），
+  // 而成员 hp 存的是**当前剩余值**（state.js 招募时一次性写入），不刷新就永远停留在旧上限。
+  // 口径：满血层跟随上限（扩容即补满），受伤层不动（避免战斗中凭空回血），超过上限则夹回。
+  function refreshHpCaps(state) {
+    const Ships = Data && Data.Ships;
+    if (!Ships || !Ships.maxHpOf || !Ships.maxHp) return;
+    for (const m of (state.members || [])) {
+      if (!m || m.destroyed || !m.hp) continue;
+      const cap = Ships.maxHpOf(m);
+      const base = Ships.maxHp(m.shipId, m.enhancementLevel);   // 不含技能容量的旧上限 = 满血判据
+      for (const k of ["shield", "armor", "structure"]) {
+        const c = cap[k] || 0;
+        const b = base[k] || 0;
+        if (!(c > 0)) continue;
+        if (m.hp[k] >= b - 1e-6) m.hp[k] = c;   // 满血层 → 跟随新上限
+        else if (m.hp[k] > c) m.hp[k] = c;      // 技能被削/换小船 → 夹回上限
+      }
+    }
   }
 
   // 整队撤退（断弹）：该节点所有参战成员解除派遣返港待命。
@@ -359,7 +428,8 @@
           if (dr.rep) state.res.rep += dr.rep;
           if (dr.ammoUsed) for (const k in dr.ammoUsed) state.res[k] = Math.max(0, (state.res[k] || 0) - dr.ammoUsed[k]);
           if (dr.drops) for (const k in dr.drops) if (dr.drops[k] > 0) state.res[k] = (state.res[k] || 0) + dr.drops[k];
-          if (dr.damage > 0) applyCombatDamage(state, nid, dr.damage);
+          let dsLayers = null;
+          if (dr.damage > 0) dsLayers = applyCombatDamage(state, nid, dr.damage).layers;
           // 密钥掉落：据点精英/BOSS 5%（用普通战斗的击坠账本在下方另记，这里只处理副本内不重复掉）
           const b = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
           b.waves += dr.waves || 0;
@@ -370,6 +440,9 @@
           const dsSite = (window.NSK && window.NSK.Data && window.NSK.Data.DeathSpace)
             ? window.NSK.Data.DeathSpace.byId(dr.siteId) : null;
           if (dsSite) b.band = dsSite.band;
+          // ★ 战斗技能经验：1 代副本战斗和普通战斗是同一条循环（combat.js 同一段 tick 经验），
+          //   此前这里直接 continue，导致「刷副本完全不涨战斗技能」。现与据点共用 grantCombatSkillXp。
+          grantCombatSkillXp(state, dr, memberById, dr.band || (dsSite && dsSite.band) || 1, dsLayers);
           continue;
         }
         const focus = (state.combatFocus === nid);
@@ -430,25 +503,11 @@
           }
         }
         // 我方受击（离线同规则）：打到结构归零就当场撤离返港，下一 tick 进修复泊位
-        if (r.damage > 0) applyCombatDamage(state, nid, r.damage);
-        // 战斗经验对回 1 代（按「齐射=ROUND_SEC 战斗秒」发，O(1)；复用 grantBatchXp 接 passionMult×xpMultOf）：
-        //   · 武器系：参战成员每装一门武器类型，每齐射给对应技能 VOLLEY_XP×烈度（没装就不涨）
-        //   · defense：本 tick 本舰受创(r.damage>0)才给 DEF_XP×烈度（1 代每齐射受创+1）
-        //   锚点取 r.fightSec（本次实际战斗秒数，焦点/闭式同产出，离线不爆炸），非逐波循环。
-        if (r.fightSec > 0 && r.combatants) {
-          const inten = combatIntensity(r.band);
-          const volleys = r.fightSec / Combat.ROUND_SEC;   // 1 代 1 齐射 = ROUND_SEC 秒
-          for (const c of r.combatants) {
-            const m = memberById[c.id];
-            if (!m || m.destroyed) continue;
-            for (const key of c.keys) grantBatchXp(state, m, key, COMBAT_VOLLEY_XP * volleys * inten);
-            if (r.damage > 0) grantBatchXp(state, m, "defense", COMBAT_DEF_XP * volleys * inten);
-            // 电容管理 / 驾驶（均对回 1 代 combat 系技能）：战斗涨经验，量级与武器技能同锚（volleys×inten）。
-            // 1 代真值 volleyFuel×0.3 依赖 volleyFuel 追踪，本作战斗不扣燃料，故用同口径 volleys×inten 等价表达（待标定）。
-            grantBatchXp(state, m, "capacitor", COMBAT_VOLLEY_XP * volleys * inten);
-            grantBatchXp(state, m, "piloting", COMBAT_VOLLEY_XP * volleys * inten);
-          }
-        }
+        // 返回值里的 layers 供下方防御经验按「实际掉血层数」加权（1 代每层各发一份）。
+        let hitLayers = null;
+        if (r.damage > 0) hitLayers = applyCombatDamage(state, nid, r.damage).layers;
+        // 战斗经验：与死亡空间共用 grantCombatSkillXp（1 代副本战斗与普通战斗是同一条经验循环）
+        grantCombatSkillXp(state, r, memberById, r.band, hitLayers);
         // 战报每 tick 刷新（含波内进度，供 UI 画编队血条）；只写标量，不拼字符串、不建数组
         const b = state.battles[nid] || (state.battles[nid] = { waves: 0, credits: 0, rep: 0, lastTs: 0 });
         b.waves += r.waves;
@@ -712,6 +771,9 @@
     // 4) 势力刷新（rng 内部派生，见 faction.js）
     Faction.refreshFactions(state, now);
 
+    // 防御技能容量刷新（放在经验发放之后：本 tick 涨的 defense 等级立刻体现在上限上）
+    refreshHpCaps(state);
+
     state.lastSeen = now;
     return { dt: dt, produced: produced, events: events };
   }
@@ -789,6 +851,7 @@
 
   return {
     settle, moveBase, levelOf, skillBonus, xpForLevel, XP_RATE, BASE_MINE, LV_THRESHOLD, MAX_OFFLINE_SECONDS,
+    defenseCapBonus, DEFENSE_CAP_PER_LEVEL,
     passionMult, xpMultOf, enqueuePending, MAX_PENDING_EVENTS, grantBatchXp, recipeBatchXp, BATCH_XP_RATIO,
     MINING_XP_RATE, GAS_XP_RATE, miningXpRate,
     ARCH_XP_BY_BAND, archXpForBand,

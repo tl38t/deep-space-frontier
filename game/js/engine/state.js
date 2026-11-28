@@ -126,9 +126,17 @@
       ownedBlueprints: [],
     };
 
-    // ⏳ 势力商店未实装期间：按 Data.Equipment.BP_GRANT_ALL 一次性授予全部装备蓝图
-    //    （开关在 data/equipment.js，翻成 false 即变成真门禁，本文件无需再改）
+    // 势力商店（2026-11-28 上线）：BP_GRANT_ALL 已关，全量授予是 no-op（调用点保留）。
+    // 随后走一次性回落：新档 ownedBlueprints 本就是空，等价于「发初始免费集 + 打 shopMigrated」。
     if (Data.Equipment && Data.Equipment.grantAllBlueprints) Data.Equipment.grantAllBlueprints(st);
+    const FS = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+      ? window.NSK.Engine.FactionShop : null;
+    if (FS && FS.migrate) FS.migrate(st);
+    else {
+      st.ownedBlueprints = (Data.Equipment && Data.Equipment.FREE_BLUEPRINT_KEYS)
+        ? Data.Equipment.FREE_BLUEPRINT_KEYS.slice() : [];
+      st.shopMigrated = true;
+    }
 
     return st;
   }
@@ -345,7 +353,8 @@
     // 初始舰船：多数启程级，约 1/3 星矛级（绑定舰船 → hp 上限来自舰船）
     // 替换 7 抽象桩为具名舰后，默认落到 rookie_corvette(启程级)/raylight(雷光级 T1 驱逐)
     const shipId = rng() < 0.34 ? "raylight" : "rifter";
-    const hp = Data.Ships.maxHp(shipId);
+    // 上限含防御技能容量：招募期成员尚未落库，用临时对象喂 maxHpOf（skills 已过 clampSkills 钳制）
+    const hp = Data.Ships.maxHpOf({ shipId: shipId, enhancementLevel: 0, skills: skills });
     return {
       id: "m_" + Date.now().toString(36) + "_" + Math.floor(rng() * 1e6).toString(36),
       name: Data.Names.makeName(rng, {

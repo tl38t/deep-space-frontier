@@ -335,7 +335,11 @@
     for (const k in cost) {
       const need = cost[k];
       if (!need) continue;
-      m = Math.min(m, Math.floor((st.res[k] || 0) / need));
+      // `art:` 前缀 = 考古文物（校准基体等），真值在 state.archaeology.artifacts，不在 state.res
+      const have = (k.indexOf("art:") === 0)
+        ? (((st.archaeology || {}).artifacts || {})[k.slice(4)] || 0)
+        : (st.res[k] || 0);
+      m = Math.min(m, Math.floor(have / need));
     }
     return m === Infinity ? 0 : m;
   }
@@ -369,8 +373,13 @@
       can = gateOk && Prod().canAfford(st.res, bp.costCycle);
     } else if (cur.type === "manufacture" && cur.tab === "ship") {
       const s = Data().Ships.shipById(id);
-      gateOk = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel));
-      gateText = gateOk ? "" : "需核心 Lv" + (s ? s.bodyLevelReq + 1 : "?");
+      // 蓝图门禁（2026-11-28 势力商店）：与 Production.buildShip 同口径，表外舰船放行。
+      const Sd = Data().Ships;
+      const bpOk = !Sd.shipNeedsBlueprint || !Sd.shipNeedsBlueprint(id)
+        || (st.ownedBlueprints || []).includes(id);
+      const lvOk = !!(s && Sd.canBuildAt(s.id, st.base.bodyLevel));
+      gateOk = lvOk && bpOk;
+      gateText = !lvOk ? "需核心 Lv" + (s ? s.bodyLevelReq + 1 : "?") : (!bpOk ? "需蓝图（势力商店）" : "");
       can = gateOk && Prod().canAfford(st.res, s ? s.cost : {});
     } else if (isModule()) {
       const S = Data().Ships;
@@ -387,8 +396,12 @@
       if (fr) {
         const B0 = BEngine();
         const fcost = (B0 && B0.discountedCost) ? B0.discountedCost(st, fr.in || {}, "equip") : (fr.in || {});
-        gateOk = true;
-        can = Prod().canAfford(st.res, fcost);
+        // 等级门禁（1 代 fuel_t1/t2/t3 level 1/20/55 → 核心 Lv1/1/3），与 enqueueFuel 同口径。
+        const gate = Prod().equipGateLevel(fr.level || 1);
+        const lvOk = st.base.bodyLevel >= gate;
+        gateOk = lvOk;
+        gateText = lvOk ? "" : "需核心 Lv" + (gate + 1);
+        can = gateOk && Prod().canAfford(st.res, fcost);
       } else if (pr && pr.craft) {
         const gate = Prod().equipGateLevel(pr.level);
         const lvOk = st.base.bodyLevel >= gate;
@@ -404,7 +417,8 @@
           const bpOk = !eq.requiresBlueprint || (E.hasBlueprint && E.hasBlueprint(st, id));
           gateOk = lvOk && bpOk;
           gateText = !lvOk ? "需核心 Lv" + (gate + 1) : (!bpOk ? "需蓝图" : "");
-          can = gateOk && Prod().canAfford(st.res, eq.cost || {});
+          // 改装件吃校准基体（`art:` 前缀键）：必须用含文物的判定，否则这些装备恒显示「材料不足」
+          can = gateOk && (Prod().canAffordWithArt ? Prod().canAffordWithArt(st, eq.cost || {}) : Prod().canAfford(st.res, eq.cost || {}));
         }
       }
     } else if (cur.type === "booster") {
@@ -534,7 +548,10 @@
     const mats = Object.keys(cost).length
       ? Object.entries(cost).map(function (kv) {
           const k = kv[0], v = kv[1];
-          const have = (st.res && st.res[k]) || 0;
+          // `art:` 前缀 = 考古文物（校准基体），持有量在 state.archaeology.artifacts
+          const have = (k.indexOf("art:") === 0)
+            ? (((st.archaeology || {}).artifacts || {})[k.slice(4)] || 0)
+            : ((st.res && st.res[k]) || 0);
           const short = have < v;
           return '<div class="wb-mat' + (short ? " short" : "") + '">'
             + '<span class="wb-mat-name">' + '<span class="wb-ic">' + CTX.resIcon(k) + '</span>' + CTX.resName(k) + ' <b>×' + CTX.fmt(v) + '</b></span>'
@@ -1297,7 +1314,10 @@
         can = !!(bp && M.isUnlocked(st, bp) && Prod().canAfford(st.res, bp.costCycle));
       } else if (cur.type === "manufacture" && cur.tab === "ship") {
         const s = Data().Ships.shipById(id);
-        can = !!(s && Data().Ships.canBuildAt(s.id, st.base.bodyLevel) && Prod().canAfford(st.res, s.cost));
+        const Sd = Data().Ships;
+        const bpOk = !Sd.shipNeedsBlueprint || !Sd.shipNeedsBlueprint(id)
+          || (st.ownedBlueprints || []).includes(id);
+        can = !!(s && bpOk && Sd.canBuildAt(s.id, st.base.bodyLevel) && Prod().canAfford(st.res, s.cost));
       } else if (isModule()) {
         const S = Data().Ships;
         const cost = S.moduleBuildCost(id);

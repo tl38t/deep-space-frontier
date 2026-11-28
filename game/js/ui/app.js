@@ -58,6 +58,11 @@
   // 星图平移/缩放状态（跨 1Hz 重渲染保持，避免每次重建丢视角）
   // 默认聚焦星图中部，避免整张图被缩成一团；仍可拖拽查看外围星域。
   let mapView = { x: 0, y: 0, scale: 2.3 };
+  // 首次渲染时把视野对到「当前所在节点」（径向布局的起点在外圈，居中会把人甩出视野）。
+  // _mapSizeKey 变化 = 星图尺寸变了（布局改版 / 换档），需要重置一次视角；手动拖拽后不再干预。
+  let _mapSizeKey = "";
+  let _mapFocusNode = null;
+  let _mapBox = { w: 0, h: 0 };
   // 以缩放分层显示标签：概览只突出当前/可达节点，放大后再显示全部已探明节点与星座。
   const NODE_LABEL_SHOW_SCALE = 2.7;
   const CONST_SHOW_SCALE = 3.0;
@@ -190,34 +195,14 @@
     const adj = Data.StarMap.adjacency(map);
     const neighbours = (adj[cur] || []).map(e => ({ node: Data.StarMap.nodeById(map, e.to), fuelCost: e.fuelCost }));
     const reachIds = new Set(neighbours.filter(nb => nb.node && state.base.fuel >= nb.fuelCost).map(nb => nb.node.id));
-    // 星图展示坐标：12 星域 = 4 安等列 × 3 势力行，排成疏朗阵列。
-    // 只用于绘制，不改存档坐标或航线数据。
-    // 顺序与 REGION_DEFS 对齐：高安(3) → 边境(3) → 低安(3) → 00(3)，列=安等，行=势力。
-    const regionAnchors = [
-      { x: 700,  y: 500 },  { x: 700,  y: 1600 }, { x: 700,  y: 2700 },  // 高安 苍/赤/静
-      { x: 1900, y: 500 },  { x: 1900, y: 1600 }, { x: 1900, y: 2700 },  // 边境 苍/赤/静
-      { x: 3100, y: 500 },  { x: 3100, y: 1600 }, { x: 3100, y: 2700 },  // 低安 苍/赤/静
-      { x: 4300, y: 500 },  { x: 4300, y: 1600 }, { x: 4300, y: 2700 },  // 00   苍/赤/静
-    ];
-    const sourceRegionById = {};
-    for (const r of (map.regions || [])) sourceRegionById[r.id] = r;
-    const anchorByRegionId = {};
-    const displayRegions = (map.regions || []).map((r, i) => {
-      const match = /region_(\d+)/.exec(r.id || "");
-      const anchor = regionAnchors[match ? Number(match[1]) : i] || { x: r.cx, y: r.cy };
-      anchorByRegionId[r.id] = anchor;
-      return { ...r, cx: anchor.x, cy: anchor.y };
-    });
-    const displayNodes = map.nodes.map(n => {
-      const source = sourceRegionById[n.region], anchor = anchorByRegionId[n.region];
-      return source && anchor ? { ...n, x: anchor.x + n.x - source.cx, y: anchor.y + n.y - source.cy } : n;
-    });
+    // 星图展示坐标：**直接用数据层坐标**。
+    // 2026-11-28 布局改版：星图改「径向分层 + 先驱遗迹居中」，旧的 4×3 等距锚点重映射已删除
+    // —— 那一层会把数据层怎么调都盖回表格状（12 域排成 4 列 × 3 行），是「太规则」的根源。
+    const displayRegions = (map.regions || []).map(r => ({ ...r }));
+    const displayNodes = map.nodes.map(n => ({ ...n }));
     const displayNodeById = {};
     for (const n of displayNodes) displayNodeById[n.id] = n;
-    const displayConstellations = (map.constellations || []).map(c => {
-      const source = sourceRegionById[c.regionId], anchor = anchorByRegionId[c.regionId];
-      return source && anchor ? { ...c, cx: anchor.x + c.cx - source.cx, cy: anchor.y + c.cy - source.cy } : c;
-    });
+    const displayConstellations = (map.constellations || []).map(c => ({ ...c }));
     const regionById = {}; for (const r of displayRegions) regionById[r.id] = r;
     const boundsPoints = displayNodes.concat(displayRegions, displayConstellations).map(p => ({
       x: typeof p.x === "number" ? p.x : p.cx,
@@ -232,7 +217,15 @@
     for (const r of displayRegions) { r.cx += dx; r.cy += dy; }
     for (const c of displayConstellations) { c.cx += dx; c.cy += dy; }
     for (const n of displayNodes) { n.x += dx; n.y += dy; }
-    const regColor = id => (regionById[id] || { color: "#5ad1a0" }).color;
+    // 星图配色按「安等」而非「一域一色」（2026-11-28 用户确认）：
+    // 四档色让玩家一眼读出危险度；12 个域的辨识交给名字与位置。
+    // 地图节点、域标签、下方图例色块三处必须同源，否则图例与地图对不上。
+    const MAP_SEC_COLOR = { "1.0-0.8": "#57d2ac", "0.7-0.5": "#b9cd5f", "0.4-0.3": "#e0994a", "0.2-0.1": "#e2605c" };
+    const regColor = id => {
+      const r = regionById[id];
+      if (!r) return "#5ad1a0";
+      return MAP_SEC_COLOR[r.secLevel] || r.color;
+    };
 
     let html = "<h2>星图 · 当前舰基位于「" + esc(curNode.name) + "」</h2>";
     html += '<div class="panel map-hint"><span class="dim">燃料 <b>' + fmt(fuelOf(state)) +
@@ -250,7 +243,7 @@
     }
     // 区域漂浮文字标签（EVE 式：以文字标识区域，无边界圈）
     for (const r of displayRegions) {
-      html += '<text class="region-label" x="' + r.cx + '" y="' + r.cy + '" fill="' + r.color + '">' + esc(r.name) + '</text>';
+      html += '<text class="region-label" x="' + r.cx + '" y="' + r.cy + '" fill="' + regColor(r.id) + '">' + esc(r.name) + '</text>';
     }
     // 星座文字标签（缩放可见：地图放大到一定倍率才显形，避免与星域名挤在一起）
     for (const con of displayConstellations) {
@@ -303,7 +296,7 @@
         const stageTag = r.stage === 3 ? "后期" : r.stage === 2 ? "中期" : "初期";
         const secCls = (sl === "1.0-0.8" || sl === "0.7-0.5") ? "good" : (sl === "0.4-0.3") ? "warn" : "bad";
         html += '<div class="region-chip">'
-          + '<div class="rc-top"><span class="sw" style="background:' + r.color + '"></span><b>' + esc(r.name) + "</b>" + home
+          + '<div class="rc-top"><span class="sw" style="background:' + regColor(r.id) + '"></span><b>' + esc(r.name) + "</b>" + home
           + '<span class="rc-prog">' + disc + "/" + cnt + "</span></div>"
           + '<div class="rc-tags">'
           + '<span class="tag">' + stageTag + "</span>"
@@ -340,6 +333,10 @@
         '<div class="row"><button class="sm" data-act="sys:' + n.id + '">查看星系</button></div></div>';
     }
     html += "</div>";
+    // 供 applyMapTransform 首次对焦：把视野落到当前节点上（见 applyMapTransform 注释）
+    _mapSizeKey = W + "x" + H;
+    _mapBox = { w: W, h: H };
+    _mapFocusNode = displayNodeById[cur] || null;
     _starCache = html;
     return html;
   }
@@ -840,7 +837,7 @@
     // 左：我方参战舰船
     html += '<div class="battle-side"><div class="battle-kicker">我方参战 · ' + fighters.length + ' 艘</div>';
     for (const m of fighters) {
-      const max = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
+      const max = Data.Ships.maxHpOf(m);
       const ship = Data.Ships.shipById(m.shipId);
       html += '<div class="battle-unit">'
         + '<div class="battle-unit-head"><b>' + esc((ship && ship.name) || "舰船") + '</b>'
@@ -2032,7 +2029,7 @@
         return '<div class="sk-cell"><span class="sk-n">' + (SKILL_CN[k] || k) + '</span>'
           + '<span class="sk-l">L' + lv + '</span>' + pfMark + '</div>';
       }).join("");
-      const hpMax = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
+      const hpMax = Data.Ships.maxHpOf(m);
       const hpRow = hpBar("shield", m.hp.shield, hpMax.shield, "护盾")
         + hpBar("armor", m.hp.armor, hpMax.armor, "装甲")
         + hpBar("struct", m.hp.structure, hpMax.structure, "结构");
@@ -2620,6 +2617,90 @@
     return html;
   }
 
+  // ============================================================
+  // 势力商店（2026-11-28 实装）
+  //   设计正本：深空星疆·势力商店_设计稿.md（67 张蓝图 = 装备 27 + 增强剂 26 + 舰船 14）
+  //   目录/校验/扣款全在 Engine.FactionShop（引擎单一入口），本层只负责渲染与转发点击。
+  //   sansha 静默集群 14 张挂起（战斗掉落，另开一轮）：商店页只显示「已挂起」说明，不列商品。
+  // ============================================================
+  let shopFaction = "federation";   // 商店内当前选中的势力页
+
+  function shopCard(it) {
+    const FS = Engine.FactionShop;
+    const r = FS.check(state, it);
+    const owned = r.tone === "owned";
+    const cur = FS.curMeta(it.currency);
+    const tip = it.name + "\n" + it.tag + "\n" + it.desc + "\n价格：" + it.price + " " + cur.name
+      + (it.relMin ? "\n关系门槛：" + it.relMin : "") + "\n归属键：" + it.key;
+    return '<article class="shop-card' + (owned ? " owned" : "") + (r.tone === "lock" ? " locked" : "") + '">'
+      + '<div class="shop-card-head"><b>' + esc(it.name) + '</b><span class="shop-tag">' + esc(it.tag) + '</span></div>'
+      + '<p class="shop-card-desc" title="' + esc(tip) + '">' + esc(it.desc) + '</p>'
+      + '<div class="shop-card-foot"><span class="shop-price">' + esc(cur.icon || "") + " " + fmt(it.price)
+      + ' <small>' + esc(cur.name) + '</small></span>'
+      + (owned
+        ? '<span class="shop-state ok">已拥有</span>'
+        : (r.ok
+          ? '<button class="sm primary" data-act="shopBuy:' + it.kind + ":" + it.id + '">购买</button>'
+          : '<span class="shop-state lock" title="' + esc(r.why) + '">' + esc(r.why) + '</span>'))
+      + '</div></article>';
+  }
+
+  function viewFactionShop() {
+    const FS = Engine.FactionShop;
+    if (!FS) return '<div class="fac-empty">势力商店未加载（js/engine/faction-shop.js 缺失）。</div>';
+    const cat = FS.catalog();
+    const row = cat.byId[shopFaction] || cat.list[0];
+    if (!row) return '<div class="fac-empty">当前没有可交易的势力节点。</div>';
+
+    const ownedN = (state.ownedBlueprints || []).length;
+    let html = '<div class="fac-overview shop-overview">'
+      + '<div><small>宇宙声望</small><b>' + fmt(Number(state.res.rep) || 0) + '</b></div>'
+      + '<div><small>星币</small><b>' + fmt(Number(state.res.credits) || 0) + '</b></div>'
+      + '<div><small>已解锁蓝图</small><b>' + ownedN + ' / ' + cat.total + '</b></div>'
+      + '</div>';
+
+    // 势力切换条（每页显示该势力货架条目数）
+    html += '<div class="shop-factions">';
+    for (const f of cat.list) {
+      const n = f.items.length;
+      html += '<button type="button" class="shop-chip' + (f.id === row.id ? " on" : "")
+        + '" style="--fac-color:' + esc(f.color || "#4fc4d3") + '" data-act="shopFaction:' + esc(f.id) + '">'
+        + '<span>' + esc(f.name) + '</span>'
+        + '<b>' + (f.suspended ? "挂起" : n) + '</b></button>';
+    }
+    html += '</div>';
+
+    html += '<div class="shop-shelf" style="--fac-color:' + esc(row.color || "#4fc4d3") + '">'
+      + '<header><div><small>' + (row.tier === "major" ? "CORE FACTION" : "LOCAL FACTION") + '</small><b>' + esc(row.name) + '</b></div>'
+      + '<span>' + (row.suspended ? "SUSPENDED" : row.items.length + " 件在售") + '</span></header>';
+
+    if (row.suspended) {
+      html += '<div class="shop-note">该势力的 10 件装备蓝图与 4 艘舰船蓝图<b>暂不进商店</b>：当前不加门禁、不展示，'
+        + '未来改走战斗掉落通道（另开一轮实现）。</div>';
+    } else {
+      const groups = [["equip", "装备蓝图"], ["booster", "增强剂蓝图"], ["ship", "舰船蓝图"]];
+      for (const [k, label] of groups) {
+        const list = row[k];
+        html += '<div class="shop-group-head"><b>' + label + '</b><span>' + list.length + ' 件</span></div>';
+        html += list.length
+          ? '<div class="shop-grid">' + list.map(shopCard).join("") + '</div>'
+          : '<div class="shop-note dim">本势力无此类蓝图。</div>';
+      }
+      if (row.hull.length) {
+        html += '<div class="shop-group-head"><b>母舰</b><span>不在本商店购买</span></div>'
+          + '<div class="shop-note dim">' + row.hull.map(h => esc(h.name)).join(" / ")
+          + ' —— 购买入口在「舰基 → 母舰蓝图」（星币，单一入口），此处仅作信息登记。</div>';
+      }
+    }
+    html += '</div>';
+
+    html += '<div class="shop-tips">'
+      + '<span>蓝图一次性买断，解锁后可在对应车间无限制造。</span>'
+      + '<span>装备蓝图受势力关系门槛约束；舰船蓝图受舰基核心等级约束。</span>'
+      + '</div>';
+    return html;
+  }
+
   function viewFactions() {
     const factions = state.factions.map(f => ({ ...f, relation: Number(f.relation) || 0 }));
     // questGiver:false 的野怪势力显示在档案中，但不发布委托。
@@ -2629,12 +2710,15 @@
     });
     const taskCount = board.reduce((sum, f) => sum + ((f.quests || []).length), 0);
     const missionTab = factionSubtab === "missions";
+    const shopTab = factionSubtab === "shop";
+    const shopTotal = (Engine.FactionShop && Engine.FactionShop.catalog) ? Engine.FactionShop.catalog().total : 0;
     let html = '<section class="faction-page"><header class="fac-page-head"><div><div class="fac-kicker"><i></i> FACTION NETWORK / BORDER SECTOR</div>'
       + '<h2>势力关系网</h2><p>边疆势力情报、关系指数与外部契约接入点。</p></div><div class="fac-head-readout"><small>OPEN CONTRACTS</small><b>' + String(taskCount).padStart(2, "0") + '</b><span>任务协议在线</span></div></header>'
       + '<div class="fac-subtabs" role="tablist" aria-label="势力与任务子页面">'
-      + '<button type="button" role="tab" aria-selected="' + (!missionTab) + '" class="fac-subtab' + (!missionTab ? ' on' : '') + '" data-act="factionView:factions"><span class="fac-subtab-index">01</span><span><b>势力档案</b><small>' + factions.length + ' 个关系节点</small></span><i>↗</i></button>'
-      + '<button type="button" role="tab" aria-selected="' + missionTab + '" class="fac-subtab' + (missionTab ? ' on' : '') + '" data-act="factionView:missions"><span class="fac-subtab-index">02</span><span><b>任务终端</b><small>' + taskCount + ' 项可用委托</small></span><i>↗</i></button></div>'
-      + (missionTab ? viewFactionMissions(board, taskCount) : viewFactionDirectory(factions))
+      + '<button type="button" role="tab" aria-selected="' + (!missionTab && !shopTab) + '" class="fac-subtab' + (!missionTab && !shopTab ? ' on' : '') + '" data-act="factionView:factions"><span class="fac-subtab-index">01</span><span><b>势力档案</b><small>' + factions.length + ' 个关系节点</small></span><i>↗</i></button>'
+      + '<button type="button" role="tab" aria-selected="' + missionTab + '" class="fac-subtab' + (missionTab ? ' on' : '') + '" data-act="factionView:missions"><span class="fac-subtab-index">02</span><span><b>任务终端</b><small>' + taskCount + ' 项可用委托</small></span><i>↗</i></button>'
+      + '<button type="button" role="tab" aria-selected="' + shopTab + '" class="fac-subtab' + (shopTab ? ' on' : '') + '" data-act="factionView:shop"><span class="fac-subtab-index">03</span><span><b>势力商店</b><small>' + shopTotal + ' 张蓝图在售</small></span><i>↗</i></button></div>'
+      + (shopTab ? viewFactionShop() : (missionTab ? viewFactionMissions(board, taskCount) : viewFactionDirectory(factions)))
       + '</section>';
     return html;
   }
@@ -3318,7 +3402,8 @@
       const isRep = info.repairing.indexOf(e) >= 0;
       const badge = isRep ? '<span class="tag warn">修复中</span>' : '<span class="tag">排队中</span>';
       const eta = isRep ? ("预计 " + fmtDur(e.eta) + " 回满") : ("约 " + fmtDur(e.startEta || 0) + " 后开始");
-      const hpMax = Data.Ships.maxHp(e.shipId, m ? m.enhancementLevel : 0);
+      // 血条上限必须与 repair.js 的 maxHpOf 同口径，否则防御技能扩容后条宽与 ETA 对不上
+      const hpMax = m ? Data.Ships.maxHpOf(m) : Data.Ships.maxHp(e.shipId, 0);
       const hp = (m && m.hp) || { shield: 0, armor: 0, structure: 0 };
       const bars = [["shield", "护盾"], ["armor", "装甲"], ["struct", "结构"]].map(([k, lab]) => {
         const max = (hpMax && hpMax[k === "struct" ? "structure" : k]) || 0;
@@ -3342,7 +3427,7 @@
     const shipName = ship ? ship.name : "—";
     const statusLabel = m.destroyed ? "阵亡" : m.assignment ? jobName(m.assignment.type) : "待命";
     const statusClass = m.destroyed ? "bad" : m.assignment ? "good" : "idle";
-    const hpMax = Data.Ships.maxHp(m.shipId, m.enhancementLevel);
+    const hpMax = Data.Ships.maxHpOf(m);
     const bs = m.backstory || {};
     const goalXp = (m.mods && m.mods.goalXp) || 1;
     const doneN = (m.goals || []).filter(g => g.done).length;
@@ -3580,6 +3665,25 @@
   function applyMapTransform() {
     const c = document.getElementById("nsk-map-canvas");
     if (c) {
+      // 首次进入 / 星图尺寸变化：把「当前所在节点」摆到视野中心。
+      // 旧 4×3 阵列里起点靠近图心，居中还能勉强看见自己；径向布局起点落在最外圈，
+      // 居中会把玩家甩到视野外（2026-11-28 布局改版实测）。
+      if (_mapSizeKey && mapView._key !== _mapSizeKey && c.clientWidth) {
+        mapView._key = _mapSizeKey;
+        const n = _mapFocusNode;
+        if (n && _mapBox.w && _mapBox.h) {
+          // SVG 是 preserveAspectRatio="meet"：先按短边等比缩放进容器，再居中留边（letterbox）。
+          // 不换算这一步，横向偏移会随节点位置漂移（实测起点会偏出中心约 80px）。
+          const k = Math.min(c.clientWidth / _mapBox.w, c.clientHeight / _mapBox.h);
+          const offX = (c.clientWidth - _mapBox.w * k) / 2;
+          const offY = (c.clientHeight - _mapBox.h * k) / 2;
+          const s = mapView.scale;
+          mapView.x = -((offX + n.x * k) - c.clientWidth / 2) * s;
+          mapView.y = -((offY + n.y * k) - c.clientHeight / 2) * s;
+        } else {
+          mapView.x = 0; mapView.y = 0;
+        }
+      }
       c.style.transform = "translate(" + mapView.x + "px," + mapView.y + "px) scale(" + mapView.scale + ")";
       // 缩放分层：先显示已探明节点，再显示星座标签；远景保留星域名作索引。
       c.classList.toggle("show-nodes", mapView.scale >= NODE_LABEL_SHOW_SCALE);
@@ -3625,7 +3729,22 @@
   function onAction(act, e) {
     hideNodeMenu();   // 任何操作先收起星图节点浮层
     const [cmd, a, b] = act.split(":");
-    if (cmd === "factionView") { factionSubtab = a === "missions" ? "missions" : "factions"; renderView(); return; }
+    if (cmd === "factionView") {
+      factionSubtab = (a === "missions" || a === "shop") ? a : "factions";
+      renderView(); return;
+    }
+    // ---- 势力商店（2026-11-28）：切换势力页 / 购买蓝图 ----
+    if (cmd === "shopFaction") { shopFaction = a || "federation"; renderView(); return; }
+    if (cmd === "shopBuy") {
+      const FS = Engine.FactionShop;
+      if (!FS) { toast("势力商店未加载"); return; }
+      const r = FS.buy(state, a, b);
+      if (!r.ok) { toast(r.err || "购买失败"); return; }
+      const cur = FS.curMeta(r.currency);
+      toast("已解锁蓝图：" + r.item.name + "（-" + r.paid + " " + cur.name + "）");
+      renderView();
+      return;
+    }
     if (cmd === "workbench") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.handle) Wb.handle(act); return; }
     if (cmd === "enhance_open") { const Wb = window.NSK.UI && NSK.UI.Workbench; if (Wb && Wb.openEnhance) { closeNpcDetail(); Wb.openEnhance(a); } else toast("工作台未加载（js/ui/workbench.js 缺失）"); return; }
     if (cmd === "tab") { closeNpcDetail(); closeWhDetail(); closeFleetPicker(); closeFleetFit(); const Wb2 = window.NSK.UI && NSK.UI.Workbench; if (Wb2) Wb2.close(); const Bi2 = window.NSK.UI && NSK.UI.BaseInfo; if (Bi2) Bi2.close(); tab = a; renderTabs(); renderView(); return; }

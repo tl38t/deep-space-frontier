@@ -60,26 +60,74 @@
   //   高安 band1 / 边境 band2 / 低安 band3 / 00 band4（secLevel 用 0.2-0.1）；
   //   band5 由各域内 1/4 的「高档节点」产生（见 data/raids.js attach），不占独立安等。
   //   ⇒ 1 代档4/5/6 三档压进本作 band4/5：00 普通节点=档4，高档节点=档5。
-  // 势力总量严格均分：苍 69 / 赤 69 / 静 69（5 域×... → 4 域×17~18）。
-  // 旧档强制升级（STATE_VERSION 9 / SAVE_KEY v8）：星图整体重排，无兼容负担。
+  //
+  // 2026-11-28 布局改版（用户定案）：弃用 4×3 等距阵列，改「径向分层 + 先驱遗迹居中」——
+  //   径向序（由内向外）：先驱遗迹 ⊘（纯空，后续接遗迹玩法）→ 00 → 低安 → 边境 → 高安。
+  //   ring 0=00（紧贴遗迹） 1=低安 2=边境 3=高安（最外圈）；deg/half = 该域在环带上的
+  //   角度中心与半宽（度）。同层三个域宽度刻意不等，段与段之间留深空缺口 ——
+  //   外圈因此天然断成三段，读作「文明的孤岛带」，而不是一整圈靶环。
+  //   几何实现在下方 LAY_* 常量 + layBandR/laySegOK/layWarp。
+  //   旧档强制升级（STATE_VERSION 10 / SAVE_KEY v9）：星图整体重排，无兼容负担。
   const REGION_DEFS = [
-    // 高安 band1（stage1 试玩开放）
-    { name: "苍曜星域", color: "#5ad1a0", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ax: 500,  ay: 450,  sigma: 180, size: 17 },
-    { name: "霜环星域", color: "#5fb8ff", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "blood",  ax: 500,  ay: 1100, sigma: 180, size: 17 },
-    { name: "沉沙星域", color: "#e8b45a", rich: 1, stage: 1, secLevel: "1.0-0.8", pirate: "sansha", ax: 500,  ay: 1750, sigma: 180, size: 17 },
-    // 边境 band2（stage1 试玩开放）
-    { name: "远寂星域", color: "#cfd8e3", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "angel",  ax: 1150, ay: 450,  sigma: 180, size: 17 },
-    { name: "烬晓星域", color: "#e0935a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "blood",  ax: 1150, ay: 1100, sigma: 180, size: 17 },
-    { name: "缚沙星域", color: "#c9d45a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "sansha", ax: 1150, ay: 1750, sigma: 180, size: 17 },
-    // 低安 band3
-    { name: "裂穹星域", color: "#4aa8c8", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "angel",  ax: 1800, ay: 450,  sigma: 180, size: 17 },
-    { name: "幽烬星域", color: "#9b8cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "blood",  ax: 1800, ay: 1100, sigma: 180, size: 17 },
-    { name: "玄渊星域", color: "#b07cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "sansha", ax: 1800, ay: 1750, sigma: 180, size: 17 },
-    // 00 band4（本作安等名沿用「深空」0.2-0.1；死亡空间 8/10/10/10 的钥匙挂高档节点）
-    { name: "碧落星域", color: "#7ee0c0", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "angel",  ax: 2450, ay: 450,  sigma: 180, size: 18 },
-    { name: "残辉星域", color: "#e879a8", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "blood",  ax: 2450, ay: 1100, sigma: 180, size: 18 },
-    { name: "赤潮星域", color: "#ef6b5a", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "sansha", ax: 2450, ay: 1750, sigma: 180, size: 18 },
+    // 高安 band1（stage1 试玩开放）—— ring 3：最外圈
+    { name: "苍曜星域", color: "#5ad1a0", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "angel",  ring: 3, deg: 137, half: 34, size: 17 },
+    { name: "霜环星域", color: "#5fb8ff", rich: 2, stage: 1, secLevel: "1.0-0.8", pirate: "blood",  ring: 3, deg: 250, half: 26, size: 17 },
+    { name: "沉沙星域", color: "#e8b45a", rich: 1, stage: 1, secLevel: "1.0-0.8", pirate: "sansha", ring: 3, deg: 20,  half: 30, size: 17 },
+    // 边境 band2（stage1 试玩开放）—— ring 2
+    { name: "远寂星域", color: "#cfd8e3", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "angel",  ring: 2, deg: 92,  half: 42, size: 17 },
+    { name: "烬晓星域", color: "#e0935a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "blood",  ring: 2, deg: 222, half: 38, size: 17 },
+    { name: "缚沙星域", color: "#c9d45a", rich: 2, stage: 1, secLevel: "0.7-0.5", pirate: "sansha", ring: 2, deg: 335, half: 36, size: 17 },
+    // 低安 band3 —— ring 1
+    { name: "裂穹星域", color: "#4aa8c8", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "angel",  ring: 1, deg: 47,  half: 52, size: 17 },
+    { name: "幽烬星域", color: "#9b8cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "blood",  ring: 1, deg: 177, half: 42, size: 17 },
+    { name: "玄渊星域", color: "#b07cff", rich: 3, stage: 2, secLevel: "0.4-0.3", pirate: "sansha", ring: 1, deg: 290, half: 44, size: 17 },
+    // 00 band4（ring 0：紧贴遗迹；死亡空间 8/10/10/10 的钥匙挂高档节点）
+    { name: "碧落星域", color: "#7ee0c0", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "angel",  ring: 0, deg: 2,   half: 60, size: 18 },
+    { name: "残辉星域", color: "#e879a8", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "blood",  ring: 0, deg: 132, half: 64, size: 18 },
+    { name: "赤潮星域", color: "#ef6b5a", rich: 4, stage: 3, secLevel: "0.2-0.1", pirate: "sansha", ring: 0, deg: 245, half: 56, size: 18 },
   ];
+
+  // ============================================================
+  // 星图布局几何（2026-11-28 布局改版）
+  //   极坐标：t = 角度(rad)；r = 半径（纵向未压缩）；落地坐标 y 再乘 LAY_YS 压成椭圆视角。
+  //   5 条层边界全部由角度决定（正弦叠加）⇒ 每层都是「歪的环带」，没有任何一段正圆弧。
+  // ============================================================
+  const LAY_YS = 0.72;      // 纵向压缩（16:10 视野）
+  const LAY_STEP = 20;      // 格点步长（只用于归属判定与相邻统计，不进入最终坐标）
+  const LAY_LIM = 1900;     // 格点扫描半径（> 最外缘 1830）
+  const LAY_GAP = [92, 82, 72, 60];   // 域内点间最小间距，ring 0(00) → 3(高安)：越靠外越密
+  const LAY_ADJ_MIN = 9;    // 相邻判定阈值：两域共享的格点边数 ≥ 9（≈180px 实际边界）
+
+  function layBandR(t) {
+    const s = Math.sin;
+    return [
+      365 + 62 * s(3 * t + 0.9) + 34 * s(5 * t - 2.1),    // 0 遗迹边界（= 00 内界）
+      905 + 96 * s(2 * t + 0.5) + 48 * s(4 * t + 1.9),    // 1 00 外边界
+      1245 + 88 * s(2 * t + 2.6) + 44 * s(5 * t + 0.7),   // 2 低安外边界
+      1500 + 78 * s(3 * t + 1.5) + 38 * s(4 * t - 0.6),   // 3 边境外边界
+      1720 + 70 * s(2 * t - 1.1) + 36 * s(5 * t + 2.4),   // 4 高安外缘
+    ];
+  }
+  const LAY_BY_RING = [[], [], [], []];
+  REGION_DEFS.forEach((rd, i) => LAY_BY_RING[rd.ring].push(i));
+  // 段窗口判定：窗口边界加正弦抖动，避免「刀切直线」的角度切口
+  function laySegOK(ring, tDeg) {
+    const a = tDeg * Math.PI / 180;
+    const jit = 6.0 * Math.sin(a * 6 + ring * 1.7) + 3.2 * Math.sin(a * 11 - ring);
+    for (const di of LAY_BY_RING[ring]) {
+      const rd = REGION_DEFS[di];
+      const d = ((tDeg - rd.deg + 540) % 360) - 180;
+      if (Math.abs(d) <= rd.half + jit) return true;
+    }
+    return false;
+  }
+  // 坐标扰动：域界不能是直线中垂线，否则 12 个域会被切成规整的扇形
+  function layWarp(x, y) {
+    return {
+      x: x + 42 * Math.sin(y / 205 + 1.7) + 23 * Math.sin(y / 81 + 0.3),
+      y: y + 42 * Math.sin(x / 193 + 2.4) + 23 * Math.sin(x / 77 + 1.5),
+    };
+  }
 
   // —— MVP 试玩门禁（用户 2026-10-26 确认）：仅开放 stage ≤ TRIAL_STAGE_MAX 的区域 ——
   // 试玩 = stage1 两档（高安 1.0-0.8 + 边境 0.7-0.5）；stage ≥ 2（低安/深空/0.0）本周锁定。
@@ -181,15 +229,7 @@
     return 0.12 + rand() * 0.3;
   }
 
-  // 坐标空间（逻辑画布；实际 extent 由生成结果回填 width/height）
-  const W = 3000, H = 2200, MARGIN = 170;
-
-  function gauss(rand, mu, sigma) {
-    let u = 0, v = 0;
-    while (u === 0) u = rand();
-    while (v === 0) v = rand();
-    return mu + sigma * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-  }
+  // 坐标空间不再有固定 W/H：径向布局的 extent 完全由 layBandR 决定，生成后回填 width/height。
 
   // —— 星系内部天体（程序化、确定性）——
   // 每个星系 = 1 恒星 + 1 必带小行星带（采矿点，继承节点矿种）+ 2~4 其他天体。
@@ -463,6 +503,9 @@
   function generateStarMap(rng, opts) {
     opts = opts || {};
     const names = NODE_NAMES;
+    // 区域互连规则（可选）：(nodeIdA, nodeIdB, regions) => bool。缺省 null = 全允许。
+    // 传规则可禁跨档直连（让 00 域只能从低安进，EVE 语义）。
+    const adjacencyRule = opts.adjacency || null;
     const count = Math.min(opts.count || names.length, names.length);
 
     // 固定种子 PRNG（mulberry32）——保证每次新存档都是「同一张固定星图」
@@ -474,42 +517,98 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     }
 
-    // ---- 1) 区域：锚点 + 抖动（去掉手摆感），sigma/规模来自定义 ----
-    const regions = REGION_DEFS.map((rd, i) => ({
-      id: "region_" + i,
-      name: rd.name,
-      color: rd.color,
-      rich: rd.rich,
-      stage: rd.stage,            // 进度档（1 初期 / 2 中期 / 3 后期）
-      secLevel: rd.secLevel,      // EVE 式安全等级分档（见 SECLEVEL_TABLE）
-      pirate: rd.pirate,          // 主导海盗势力 id
-      trialOpen: rd.stage <= TRIAL_STAGE_MAX,  // MVP 试玩门禁：仅 stage1 开放
-      cx: Math.round(Math.max(MARGIN, Math.min(W - MARGIN, rd.ax + (rand() - 0.5) * 140))),
-      cy: Math.round(Math.max(MARGIN, Math.min(H - MARGIN, rd.ay + (rand() - 0.5) * 140))),
-      radius: Math.round(rd.sigma * 1.3),
-      _sigma: rd.sigma,
-      _size: rd.size,
-    }));
+    // ---- 1) 区域：径向分层（ring 0=00 贴遗迹 → ring 3=高安 最外）----
+    // 种子落在各层中线的角度位置上；cx/cy 即「域心」，供星座桥 / 起点 hub / UI 标签使用。
+    const regions = REGION_DEFS.map((rd, i) => {
+      const t = rd.deg * Math.PI / 180;
+      const b = layBandR(t);
+      const rMid = (b[rd.ring] + b[rd.ring + 1]) / 2;
+      return {
+        id: "region_" + i,
+        name: rd.name,
+        color: rd.color,
+        rich: rd.rich,
+        stage: rd.stage,            // 进度档（1 初期 / 2 中期 / 3 后期）
+        secLevel: rd.secLevel,      // EVE 式安全等级分档（见 SECLEVEL_TABLE）
+        pirate: rd.pirate,          // 主导海盗势力 id
+        trialOpen: rd.stage <= TRIAL_STAGE_MAX,  // MVP 试玩门禁：仅 stage1 开放
+        ring: rd.ring,              // 0=00（贴遗迹）… 3=高安（最外圈）
+        cx: Math.round(Math.cos(t) * rMid),
+        cy: Math.round(Math.sin(t) * rMid * LAY_YS),
+        radius: Math.round((b[rd.ring + 1] - b[rd.ring]) * 0.8),
+        _cons: 0,                   // 显式星座数（0 = 按节点数自动）
+        _size: rd.size,
+      };
+    });
 
-    // ---- 2) 系统落点：各区域高斯散布（重叠 -> 颜色犬牙交错），轻量最小间距防完全重合 ----
-    const nodes = [];
-    const placed = [];
-    let sysIdx = 0;
-    regions.forEach((reg) => {
-      for (let k = 0; k < reg._size && sysIdx < count; k++) {
-        let x = 0, y = 0;
-        for (let a = 0; a < 12; a++) {
-          x = gauss(rand, reg.cx, reg._sigma);
-          y = gauss(rand, reg.cy, reg._sigma);
-          x = Math.max(MARGIN, Math.min(W - MARGIN, x));
-          y = Math.max(MARGIN, Math.min(H - MARGIN, y));
-          let ok = true;
-          for (const p of placed) { if ((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) < 15 * 15) { ok = false; break; } }
-          if (ok) break;
+    // ---- 2) 格点归属：层带 ∩ 角度窗口 → 同层最近种子（带坐标扰动）----
+    //   遗迹核心（r < 第一条边界）一格都不生成 ⇒ 中心是真空洞，留给后续「先驱遗迹」玩法。
+    //   段窗口之外同样是空洞 ⇒ 外圈高安天然断成三段孤岛带，而不是一整圈靶环。
+    const seedXY = regions.map(r => ({ x: r.cx, y: r.cy }));
+    const cells = [];
+    for (let gx = -LAY_LIM; gx <= LAY_LIM; gx += LAY_STEP) {
+      for (let gy = -Math.round(LAY_LIM * LAY_YS); gy <= Math.round(LAY_LIM * LAY_YS); gy += LAY_STEP) {
+        const t = Math.atan2(gy / LAY_YS, gx), r = Math.hypot(gx, gy / LAY_YS);
+        const b = layBandR(t);
+        if (r < b[0]) continue;                             // 遗迹核心：全空
+        let ring = -1;
+        for (let k = 0; k < 4; k++) if (r <= b[k + 1]) { ring = k; break; }
+        if (ring < 0) continue;                             // 外缘之外
+        if (!laySegOK(ring, t * 180 / Math.PI)) continue;   // 段间缺口 = 深空
+        const w = layWarp(gx, gy);
+        let bi = -1, bd = Infinity;
+        for (const di of LAY_BY_RING[ring]) {
+          const dx = seedXY[di].x - w.x, dy = seedXY[di].y - w.y;
+          const dd = dx * dx + dy * dy;
+          if (dd < bd) { bd = dd; bi = di; }
         }
-        placed.push({ x: x, y: y });
-        // 富裕度完全由安等决定（EVE 式：高安贫、0.0 富），不再有独立 T 评级
-        const richness = richnessOf(reg.secLevel);
+        cells.push({ x: gx, y: gy, slot: bi });
+      }
+    }
+    // 相邻域统计：两域共享的格点边数（供区域间星门判断「几何上是否贴在一起」）
+    const gidx = new Map();
+    cells.forEach((c, i) => gidx.set((c.x / LAY_STEP) + "," + (c.y / LAY_STEP), i));
+    const layAdj = {};
+    for (const c of cells) {
+      for (let d = 0; d < 2; d++) {
+        const nx = c.x + (d ? 0 : LAY_STEP), ny = c.y + (d ? LAY_STEP : 0);
+        const n = gidx.get((nx / LAY_STEP) + "," + (ny / LAY_STEP));
+        if (n == null) continue;
+        const o2 = cells[n].slot;
+        if (o2 === c.slot) continue;
+        const k = c.slot < o2 ? c.slot + "|" + o2 : o2 + "|" + c.slot;
+        layAdj[k] = (layAdj[k] || 0) + 1;
+      }
+    }
+    const poolBySlot = regions.map(() => []);
+    for (const c of cells) if (c.slot >= 0) poolBySlot[c.slot].push(c);
+
+    // ---- 2b) 系统落点：从所属域的格点池里抽，带最小间距（Poisson-disk 式均匀铺满）----
+    const nodes = [];
+    let sysIdx = 0;
+    regions.forEach((reg, ri) => {
+      const pool = poolBySlot[ri];
+      const gap = LAY_GAP[reg.ring];
+      const picked = [];
+      const want = Math.min(reg._size, count - sysIdx);
+      for (let g = 0; g < 240000 && picked.length < want && pool.length; g++) {
+        const p = pool[Math.floor(rand() * pool.length)];
+        const x = p.x + (rand() - 0.5) * LAY_STEP * 1.4;
+        const y = p.y + (rand() - 0.5) * LAY_STEP * 1.4;
+        if (picked.some(q => (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y) < gap * gap)) continue;
+        picked.push({ x: x, y: y });
+      }
+      // 兜底：域面积偏小时逐步放松最小间距（先保点数，形态次要）
+      for (let g = 0; picked.length < want && pool.length && g < 400000; g++) {
+        const p = pool[Math.floor(rand() * pool.length)];
+        const f = Math.max(0.34, 1 - g / 400000 * 0.85);
+        const x = p.x + (rand() - 0.5) * LAY_STEP, y = p.y + (rand() - 0.5) * LAY_STEP;
+        if (picked.some(q => (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y) < (gap * f) * (gap * f))) continue;
+        picked.push({ x: x, y: y });
+      }
+      // 富裕度完全由安等决定（EVE 式：高安贫、0.0 富），不再有独立 T 评级
+      const richness = richnessOf(reg.secLevel);
+      for (const p of picked) {
         // 全矿种 abundance：每个矿种都可出现，倍率由「矿种 tier vs 节点富裕度」决定丰寡
         const abundance = {};
         for (const ore of ALL_ORES) abundance[ore] = +oreAbundance(ORE_TIER[ore], richness, rand).toFixed(3);
@@ -518,8 +617,8 @@
           name: names[sysIdx],
           richness: richness,
           abundance: abundance,
-          x: Math.round(x),
-          y: Math.round(y),
+          x: Math.round(p.x),
+          y: Math.round(p.y),
           region: reg.id,
           constellation: null,
           discovered: false,
@@ -540,7 +639,7 @@
       nodes.forEach((n, i) => { if (n.region === reg.id) idxs.push(i); });
       if (!idxs.length) return;
       const pts = idxs.map(i => ({ x: nodes[i].x, y: nodes[i].y }));
-      const k = Math.max(3, Math.min(6, Math.round(idxs.length / 6)));
+      const k = reg._cons > 0 ? reg._cons : Math.max(3, Math.min(6, Math.round(idxs.length / 6)));
       const r = kmeans(pts, k, rand);
       const local = [];
       for (let c = 0; c < r.centers.length; c++) {
@@ -553,20 +652,10 @@
       idxs.forEach((i, j) => { nodes[i].constellation = local[r.assign[j]].id; });
     });
 
-    // ---- 3b) 结点收紧：把各星座成员往其质心拉 40% -> 局部成紧密结点（EVE 团簇质感），
-    //          区域间仍因高斯重叠而犬牙交错，不会被拉成方块网格 ----
-    constellations.forEach((con) => {
-      const ids = [];
-      nodes.forEach((n, i) => { if (n.constellation === con.id) ids.push(i); });
-      if (ids.length < 2) return;
-      let cx = 0, cy = 0;
-      for (const i of ids) { cx += nodes[i].x; cy += nodes[i].y; }
-      cx /= ids.length; cy /= ids.length;
-      for (const i of ids) {
-        nodes[i].x = nodes[i].x + (cx - nodes[i].x) * 0.42;
-        nodes[i].y = nodes[i].y + (cy - nodes[i].y) * 0.42;
-      }
-    });
+    // ---- 3b) 【已移除】星座收紧 ----
+    // 旧版把每个星座成员往其质心拉 42% 造「EVE 团簇质感」。径向分层布局下这一步有害：
+    // 节点已由「域格点池 + 最小间距」均匀铺满层带，再拉向星座质心会把层带塌成若干个点簇，
+    // 域边界与层厚一起被破坏（2026-11-28 布局改版实测）。层带形态优先，收紧取消。
 
     // ---- 3c) 松弛：把距离过近的节点对推开（防收紧后圆点重叠糊成一坨）----
     for (let it = 0; it < 8; it++) {
@@ -656,14 +745,68 @@
       const hubs = constellations.filter(c => c.regionId === reg.id).map(c => closestIdx(allIdx.filter(i => nodes[i].constellation === c.id), reg.cx, reg.cy));
       if (hubs.length >= 2) { mstOver(hubs, "bridge"); nearestExtra(hubs, 2, "bridge"); }
     });
-    // 区域间长途星门：各域枢纽(离域心最近) 连 MST + 1 近邻（距离长 -> 高燃料，战略要冲）
-    const regHubs = regions.map(reg => closestIdx(allIdx.filter(i => nodes[i].region === reg.id), reg.cx, reg.cy));
-    mstOver(regHubs, "choke");
-    nearestExtra(regHubs, 2, "choke");
+    // 区域间长途星门：**几何相邻的域**之间各连一条，端点取「边界上最近的一对节点」。
+    //   · 相邻由格点共边数判定（layAdj ≥ LAY_ADJ_MIN），不是拿域心距离拍脑袋；
+    //   · 端点不用 hub：hub 落在弧带中段，相邻两域的 hub 可能隔着上千像素，
+    //     星门会变成一条贯穿全图的斜长线（2026-11-28 布局改版实测的观感问题）。
+    //   · adjacency 规则缺省 null = 全允许；传规则可禁跨档直连（让 00 只能从低安进，EVE 语义）。
+    const regHubs = regions.map(reg => {
+      const ids = allIdx.filter(i => nodes[i].region === reg.id);
+      return ids.length ? closestIdx(ids, reg.cx, reg.cy) : -1;
+    });
+    const regIdxOf = {};
+    regions.forEach((r, i) => { regIdxOf[r.id] = i; });
+    const allowLink = (ia, ib) => !adjacencyRule || adjacencyRule(nodes[regHubs[ia]].region, nodes[regHubs[ib]].region, regions);
+    function chokePair(ia, ib) {
+      const A = allIdx.filter(i => nodes[i].region === regions[ia].id);
+      const B = allIdx.filter(i => nodes[i].region === regions[ib].id);
+      if (!A.length || !B.length) return false;
+      let ba = -1, bb = -1, bd = Infinity;
+      for (const a of A) for (const b of B) {
+        if (connected(a, b)) continue;
+        const d = dist(a, b);
+        if (d < bd) { bd = d; ba = a; bb = b; }
+      }
+      if (ba < 0) return false;
+      addEdge(ba, bb, "choke");
+      return true;
+    }
+    (function linkRegions() {
+      // 1) 几何相邻 → 各连一条关口感
+      for (const k in layAdj) {
+        if (layAdj[k] < LAY_ADJ_MIN) continue;
+        const parts = k.split("|");
+        const ia = Number(parts[0]), ib = Number(parts[1]);
+        if (ia === ib || ia < 0 || ib < 0) continue;
+        if (regHubs[ia] < 0 || regHubs[ib] < 0) continue;
+        if (!allowLink(ia, ib)) continue;
+        chokePair(ia, ib);
+      }
+      // 2) 兜底连通：几何阈值把某域滤成孤岛时，按域心距离补最近的一对，直到全图连通
+      const parent = regions.map((_, i) => i);
+      const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+      const uni = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+      for (const e of edges) {
+        if (e.kind !== "choke") continue;
+        uni(regIdxOf[nodes[idxOf[e.from]].region], regIdxOf[nodes[idxOf[e.to]].region]);
+      }
+      for (let guard = 0; guard < 24; guard++) {
+        let bi = -1, bj = -1, bd = Infinity;
+        for (let i = 0; i < regions.length; i++) for (let j = i + 1; j < regions.length; j++) {
+          if (find(i) === find(j)) continue;
+          const dd = (regions[i].cx - regions[j].cx) ** 2 + (regions[i].cy - regions[j].cy) ** 2;
+          if (dd < bd) { bd = dd; bi = i; bj = j; }
+        }
+        if (bi < 0) break;
+        chokePair(bi, bj);
+        uni(bi, bj);
+      }
+    })();
 
     // ---- 5) 起点 = 起始区域(region_0)枢纽；揭示起点 + 直接邻居 ----
-    const startId = nodes[regHubs[0]].id;
-    nodes[regHubs[0]].discovered = true;
+    const startIdx = regHubs[0] >= 0 ? regHubs[0] : (allIdx.filter(i => nodes[i].trialOpen)[0] || 0);
+    const startId = nodes[startIdx].id;
+    nodes[startIdx].discovered = true;
     for (const e of edges) {
       if (e.from === startId) nodes[idxOf[e.to]].discovered = true;
       else if (e.to === startId) nodes[idxOf[e.from]].discovered = true;

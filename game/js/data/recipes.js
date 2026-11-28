@@ -112,10 +112,12 @@
   // 高纯富勒烯→high_purity_fullerene、稀有气体→planet_gas），时长 / 产量 / xp 一律不动。
   // 1 代产出是「消耗品燃料单元」；本作燃料是唯一池、同样无容量上限，
   // 故队列项 outType:"fuel"，结算走 Engine.Base.setFuel 而不是 gain(state.res, ...)。
+  // level 为 1 代 ammunition.js 原值（1 / 20 / 55），2026-11-27 补：原表漏字段导致燃料完全无等级门禁。
+  // 映射沿用装备同一函数 equipGateLevel(lv)=min(3,floor((lv-1)/20)) ⇒ 核心 Lv1 / Lv1 / Lv3。
   const FUEL = [
-    { id: "fuel_t1", name: "标准燃料单元", in: { crude_fullerene: 3 },                              out: "fuel", qty: 100, dur: 15, xp: 10 },
-    { id: "fuel_t2", name: "强化燃料单元", in: { stable_fullerene: 2 },                              out: "fuel", qty: 250, dur: 25, xp: 25 },
-    { id: "fuel_t3", name: "超纯燃料单元", in: { high_purity_fullerene: 2, planet_gas: 50 },          out: "fuel", qty: 550, dur: 50, xp: 150 },
+    { id: "fuel_t1", name: "标准燃料单元", level: 1,  in: { crude_fullerene: 3 },                     out: "fuel", qty: 100, dur: 15, xp: 10 },
+    { id: "fuel_t2", name: "强化燃料单元", level: 20, in: { stable_fullerene: 2 },                     out: "fuel", qty: 250, dur: 25, xp: 25 },
+    { id: "fuel_t3", name: "超纯燃料单元", level: 55, in: { high_purity_fullerene: 2, planet_gas: 50 }, out: "fuel", qty: 550, dur: 50, xp: 150 },
   ];
 
   // 按 id 查

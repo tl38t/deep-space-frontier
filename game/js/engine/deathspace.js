@@ -304,6 +304,9 @@
       ammoUsed: null, drops: null, probeDrops: null, kills: { normal: 0, elite: 0, boss: 0 },
       wiped: false, allDry: false, simmed: false,
       dsClears: 0, dsTickets: 0, dsSpent: 0, siteId: run ? run.siteId : null,
+      // 战斗技能经验账本（settle 的 grantCombatSkillXp 消费）：
+      //   1 代副本战斗与普通战斗共用同一段经验循环，故这里必须与 Combat.advance 同形暴露。
+      combatants: null, fuelPerVolley: 0, band: 0,
     };
     if (!run || !Combat) return EMPTY;
     const site = _siteById(run.siteId);
@@ -326,6 +329,8 @@
       ammoUsed: {}, drops: {}, probeDrops: {}, kills: { normal: 0, elite: 0, boss: 0 },
       wiped: false, allDry: false, simmed: false,
       dsClears: 0, dsTickets: 0, dsSpent: 0, siteId: site.id,
+      // 与 Combat.advance 同形：参战成员技能键 + 每齐射燃料 + 安等（供 settle 统一发战斗经验）
+      combatants: P.combatants || null, fuelPerVolley: P.fuelPerVolley || 0, band: site.band,
     };
     const absorb = function (r) {
       if (!r) return;
@@ -419,7 +424,10 @@
 
     // 一次算完 k 本：纯乘除，与 dt 大小无关（O(1)）
     acc.waves += k * book.waves;
-    acc.damage += book.net * k;
+    // ⚠️ 承伤只记**一本**的净伤，不是 ×k：1 代每本之间回满血（见 poolOf 注释），
+    //   所以打完 k 本后成员的剩余血量 = 血池 − 最后一本的承伤。曾经写成 book.net×k，
+    //   会让离线折叠把整队当场打穿（k 本伤害累加），与「副本内每本回血」直接矛盾。
+    acc.damage += book.net;
     acc.fightSec += book.sec * k;
     for (const ty of Combat.AMMO_TYPES) {
       if (book.ammo[ty] > 0) acc.ammoUsed[Combat.AMMO_OF[ty]] = book.ammo[ty] * k;

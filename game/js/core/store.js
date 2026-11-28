@@ -16,12 +16,16 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_KEY = "nsk_save_v8";
+  const SAVE_KEY = "nsk_save_v9";
   // v7：星域安全等级改 EVE 式 secLevel 分档（弃用旧 sec 浮点）；新增玩家持久战斗小队 squad + base.squadTier。
   //     旧 v6 存档 region 无 secLevel、无 squad，作废重开。
   // v8（2026-11-27，STATE_VERSION 9）：星图 9→12 星域（4 安等×3 势力）+ 据点 band 改节点级。
   //     旧档 9 域固定星图无法平移到 12 域（节点坐标/归属/band 全变），用户授权强制升级 ⇒ 旧档作废重开。
-  const STATE_VERSION = 9;
+  // v9（2026-11-28，STATE_VERSION 10）：星图布局改「径向分层 + 先驱遗迹居中」（用户定案）。
+  //     4×3 等距阵列作废：12 域坐标、域归属、区域间星门、每跳燃料全部重排，
+  //     节点 id 与名字的对应关系也变（node_0 起仍按 高安→边境→低安→00 顺序分配），
+  //     ⇒ 旧档作废重开（用户当次授权）。
+  const STATE_VERSION = 10;
 
   // 本地存档 NSK2：轻量混淆 + 完整性摘要。仅用于阻止误改/随手改，不等同于服务端防作弊签名。
   // 与 EVE 的 DSI2 同算法，前缀 / 掩码解耦为本作字面。无 NSK2 前缀的旧明文档走 JSON.parse 兼容。
@@ -81,13 +85,26 @@
   // 成员字段规范化（防御旧档/半成品档缺字段导致 UI 报错）
   function normalizeMembers(s) {
     if (!s || typeof s !== "object") return s;
-    // 蓝图所有权（1 代同义，state.ownedBlueprints）：旧档补字段；
-    // 势力商店未实装期间按 Data.Equipment.BP_GRANT_ALL 全量授予（幂等，已授予的不重复 push）。
+    // 蓝图所有权（1 代同义，state.ownedBlueprints）：旧档补字段。
     // 放在 members 校验之前，避免 members 异常时整段规范化被提前 return 掉。
     if (!Array.isArray(s.ownedBlueprints)) s.ownedBlueprints = [];
     const EqData = (typeof window !== "undefined" && window.NSK && window.NSK.Data)
       ? window.NSK.Data.Equipment : null;
+    // BP_GRANT_ALL 已于 2026-11-28 关掉（势力商店上线），调用点保留、函数内部短路。
     if (EqData && EqData.grantAllBlueprints) EqData.grantAllBlueprints(s);
+
+    // —— 2026-11-28 势力商店一次性回落（设计稿 §3，幂等，不升 STATE_VERSION）——
+    //   老档被 BP_GRANT_ALL 全量污染 → 清空 → 发初始免费集 → 打 shopMigrated 标记。
+    //   Engine.FactionShop 由引擎层提供；未就绪时用同形兜底（免费集键只从 EqData 取，不写字面量）。
+    try {
+      const FS = (typeof window !== "undefined" && window.NSK && window.NSK.Engine)
+        ? window.NSK.Engine.FactionShop : null;
+      if (FS && FS.migrate) FS.migrate(s);
+      else if (s.shopMigrated !== true) {
+        s.ownedBlueprints = (EqData && EqData.FREE_BLUEPRINT_KEYS) ? EqData.FREE_BLUEPRINT_KEYS.slice() : [];
+        s.shopMigrated = true;
+      }
+    } catch (e) { /* 迁移失败不阻断读档（下一轮会重试） */ }
 
     // 蓝图效率研究状态（2026-11-08）：旧档无 state.invention 时幂等补齐，
     // **不升 STATE_VERSION**（沿用 ensure*() 既有模式）。放在 members 校验之前，
@@ -230,7 +247,9 @@
       if (m.wage === undefined) m.wage = 0;
       if (m.merit === undefined) m.merit = 0;
       if (!m.hp) {
-        const hp = Ships ? Ships.maxHp(m.shipId) : { shield: 100, armor: 100, structure: 100 };
+        // 用 maxHpOf 而非 maxHp：缺失 hp 的旧档也应按「舰船 + 防御技能容量」建池，
+        // 否则会被填成不含技能容量的旧值（虽然 refreshHpCaps 会补，但读档当帧 UI 会先闪一下）。
+        const hp = Ships ? (Ships.maxHpOf ? Ships.maxHpOf(m) : Ships.maxHp(m.shipId)) : { shield: 100, armor: 100, structure: 100 };
         m.hp = { shield: hp.shield, armor: hp.armor, structure: hp.structure };
       }
       // 舰船装配（2026-10-31）：旧档成员补 fitted/enhancementLevel，避免 UI 读 undefined
@@ -522,6 +541,11 @@
       const s = decodeLocalSave(raw); // 处理 NSK2 + 旧明文兼容
       // 版本兼容：接受 ≤ 当前版本的旧档（normalizeMembers 补新字段后升版），拒绝更高版本（未知存档格式）。
       if (!s || typeof s.version !== "number" || s.version > STATE_VERSION) return null;
+      // 布局改版硬门槛（STATE_VERSION 10，2026-11-28 径向分层）：
+      // 旧 4×3 阵列的星图没有 region.ring，坐标/域归属/燃料无法平移到新布局，只能作废重开。
+      // 本地档靠 SAVE_KEY 换名（v8→v9）已经挡掉；这里再挡云端存档、存档码导入、外部夹具等旁路。
+      const _regs = (s.starMap && s.starMap.regions) || [];
+      if (!_regs.length || _regs.some(r => r.ring == null)) return null;
       const n = normalizeMembers(s);
       n.version = STATE_VERSION;
       return n;

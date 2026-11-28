@@ -55,11 +55,11 @@
     // —— 改装件（rig）：同位素节流器（archaeologyFuelEfficiency，降低考古每周期燃料成本；乘性叠加）——
     //    仅 battlecruiser 及以上有 rig 槽（slots.js SLOT_LAYOUT），故小舰只能靠船体 fuelEfficiency。
     //    数值为提议值，待平衡 pass（见数值标定清单）。
-    fe_rig_t1: { id: "fe_rig_t1", name: "同位素节流器 I",   slot: "rig", level: 1,  time: 20,  xp: 14,  cost: { fe_alloy: 40,  ni_alloy: 15 },                                  bonuses: { archaeologyFuelEfficiency: 0.92 }, cat: "archaeology" },
-    fe_rig_t2: { id: "fe_rig_t2", name: "同位素节流器 II",  slot: "rig", level: 15, time: 40,  xp: 35,  cost: { fe_alloy: 160, ni_alloy: 60, mx_alloy: 15 },                       bonuses: { archaeologyFuelEfficiency: 0.86 }, cat: "archaeology" },
-    fe_rig_t3: { id: "fe_rig_t3", name: "同位素节流器 III", slot: "rig", level: 35, time: 70,  xp: 60,  cost: { fe_alloy: 400, ni_alloy: 150, bo_alloy: 25, no_alloy: 12 },         bonuses: { archaeologyFuelEfficiency: 0.80 }, cat: "archaeology" },
-    fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5 },          bonuses: { archaeologyFuelEfficiency: 0.74 }, cat: "archaeology" },
-    fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40 },      bonuses: { archaeologyFuelEfficiency: 0.68 }, cat: "archaeology" },
+    fe_rig_t1: { id: "fe_rig_t1", name: "同位素节流器 I",   slot: "rig", level: 1,  time: 20,  xp: 14,  cost: { fe_alloy: 40,  ni_alloy: 15, "art:art_i_calib": 1 },                                  bonuses: { archaeologyFuelEfficiency: 0.92 }, cat: "archaeology" },
+    fe_rig_t2: { id: "fe_rig_t2", name: "同位素节流器 II",  slot: "rig", level: 15, time: 40,  xp: 35,  cost: { fe_alloy: 160, ni_alloy: 60, mx_alloy: 15, "art:art_ii_calib": 1 },                       bonuses: { archaeologyFuelEfficiency: 0.86 }, cat: "archaeology" },
+    fe_rig_t3: { id: "fe_rig_t3", name: "同位素节流器 III", slot: "rig", level: 35, time: 70,  xp: 60,  cost: { fe_alloy: 400, ni_alloy: 150, bo_alloy: 25, no_alloy: 12, "art:art_iii_calib": 2 },         bonuses: { archaeologyFuelEfficiency: 0.80 }, cat: "archaeology" },
+    fe_rig_t4: { id: "fe_rig_t4", name: "同位素节流器 IV",  slot: "rig", level: 55, time: 120, xp: 110, cost: { fe_alloy: 900, px_alloy: 40, hy_gas: 20, morph_alloy: 5, "art:art_iv_calib": 2 },          bonuses: { archaeologyFuelEfficiency: 0.74 }, cat: "archaeology" },
+    fe_rig_t5: { id: "fe_rig_t5", name: "同位素节流器 V",   slot: "rig", level: 80, time: 200, xp: 180, cost: { fe_alloy: 2000, px_alloy: 15, morph_alloy: 10, poly_gas: 40, "art:art_v_calib": 3 },      bonuses: { archaeologyFuelEfficiency: 0.68 }, cat: "archaeology" },
 
     // ★ 2026-11-27 S5：1 代考古稀有池专属 7 件（research.js/data/archaeology.js 逐值）。
     //   资源键按 display-names 冻结映射：三钛→fe_alloy、类银→ni_alloy、类晶体胶矿→mx_alloy、
@@ -202,14 +202,27 @@
       state.ownedBlueprints.includes(bpKey(equipmentId));
   }
 
-  // ⏳ 势力商店尚未实装期间的临时开关。
-  //    true  = 建档 / 首次加载旧档时，把所有 requiresBlueprint 装备的蓝图直接授予
-  //            （机制在位、门不拦人，玩家体验与现在完全一致）
-  //    false = 未解锁的装备会被 Production.buildEquipment 拦下，蓝图需从势力商店获得
-  // 商店做完后只需把这里改成 false；机制本身不需要再动。
-  // ⚠️ 老档一旦写过 ownedBlueprints，改成 false 后仍是全解锁（存档已持久化）。
-  //    要真门禁需配合一次性回落（清空该字段后重新授予），那属于商店上线时的迁移工作。
-  const BP_GRANT_ALL = true;
+  // 势力商店（2026-11-28 实装）：蓝图改由「势力商店」永久买断获得，全量授予关闭。
+  //   关闭后生效的三处门禁：Production.buildEquipment / Booster.canCraft / Production.buildShip。
+  //   老档一次性回落见 Engine.FactionShop.migrate（清空 → 发 FREE_BLUEPRINT_KEYS → 打 shopMigrated）。
+  //   保留 grantAllBlueprints 函数体（被 store.js 调用），由本开关短路，避免破坏调用点。
+  const BP_GRANT_ALL = false;
+
+  // 初始免费集（设计稿 §3/§0-6）：federation 两件基础采集装备蓝图。
+  //   选 Lv25 的联邦采矿/气云件 —— 开局不卡新手，也不至于白送高阶货。
+  //   ⚠️ 与 Engine.FactionShop.migrate 同源，两侧都只读这一处，禁各写一份字面量。
+  const FREE_BLUEPRINT_KEYS = ["equipment:raider_mining_laser", "equipment:raider_gas_harvester"];
+
+  // 商店定价（设计稿 §4 提议值，待标定）：按装备 level 分档 20/40/80/160/320。
+  //   本作装备 level 实际取值 1/10/15/25/35/45/55/65/80/85，落在下列台阶上：
+  //   <15 → 20；15~34 → 40；35~54 → 80；55~79 → 160；≥80 → 320。
+  const SHOP_PRICE_STEPS = [[80, 320], [55, 160], [35, 80], [15, 40]];
+  function shopPrice(eq) {
+    if (!eq) return 40;
+    const lv = Number(eq.level) || 1;
+    for (const [min, price] of SHOP_PRICE_STEPS) if (lv >= min) return price;
+    return 20;
+  }
 
   // ★ 2026-11-27 S5：考古稀有池专属蓝图**不参与**全授予。
   //   这 7 件的唯一来源是考古稀有发现（data/archaeology-content.js LOCATIONS[].equipmentBlueprints），
@@ -260,5 +273,6 @@
   };
 
   return { EQUIPMENT, byId, all, bySlot, byCategory, BONUS_LABELS,
-           bpKey, hasBlueprint, BP_GRANT_ALL, grantAllBlueprints };
+           bpKey, hasBlueprint, BP_GRANT_ALL, grantAllBlueprints,
+           FREE_BLUEPRINT_KEYS, SHOP_PRICE_STEPS, shopPrice };
 });

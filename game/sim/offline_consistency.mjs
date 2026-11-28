@@ -63,7 +63,11 @@ function mk(weapons, ammo) {
   const st = {
     version: 8, lastSeen: Date.now(), rngSeed: 9, starMap: map,
     res: { credits: 0, rep: 0, ammo_laser: 0, ammo_missile: 0, ammo_cannon: 0 },
-    base: { nodeId: nid, fuel: 200, fuelMax: 200, industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [] }, repairQueue: [] },
+    // ⚠ 燃料夹具给满（2026-11-28 修）：本探针量的是「结算数学与 dt 粒度无关」，
+    //    而「燃料耗尽即停火」是 2026-11-08 才实装的独立门禁。原值 200 在 6 人 18 门炮下
+    //    约 33 秒打空 → fuelStarved=true 提前停火，量到的就不是结算误差而是燃料预算。
+    //    燃料本身的扣减/停火另有专门断言（Combat.advance 的 fuelStarved 路径）。
+    base: { nodeId: nid, fuel: 1e9, fuelMax: 1e9, industry: { smeltQueue: [], manufactureQueue: [], inventQueue: [] }, repairQueue: [] },
     members: [], tech: { levels: {}, active: null },
     factions: [], reports: [], battles: {}, combatWaveHp: {}, combatFocus: null,
     equipment: { [LASER]: 999, [MISSILE]: 999, [CANNON]: 999 },

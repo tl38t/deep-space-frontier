@@ -355,9 +355,12 @@
       for (const w of f.weapons) { const k = SKILL_OF_WEAPON[w.type]; if (k && keys.indexOf(k) < 0) keys.push(k); }
       combatants.push({ id: m.id, keys: keys });
       repairRaw += f.repair;
-      // 减伤：装配（损伤控制）+ defense 技能「统合护盾/装甲/结构」。
-      // 走同一个 dmgRedRaw 累积、同一个 DMG_RED_CAP 上限 —— 不另起变量，否则两套上限互不知情。
-      dmgRedRaw += f.dmgRed + Settle.levelOf((m.skills || {}).defense || 0) * 0.02;
+      // 减伤：只来自装配（损伤控制单元 globalDamageReduction，1 代同）。
+      // ⚠️ 2026-11-27 定案 A：defense 技能**不再进减伤**。1 代四个防御技能中
+      //    shieldOperation/armorReinforcement/hullEngineering 是三层容量、defense 是维修量，
+      //    没有任何一个产生减伤（selectors.js:2532/2544/2555/2705）；本作三合一后
+      //    由 Data.Ships.maxHpOf → Settle.defenseCapBonus 接为三围容量上限。
+      dmgRedRaw += f.dmgRed;
     }
     if (!cnt) return null;
 
@@ -1528,6 +1531,8 @@
       dmgReduction: P.dmgReduction,
       band: P.band,
       combatants: P.combatants,
+      // 参战装备每齐射燃料（未乘电容折扣）。settle 用它算电容管理经验（1 代 volleyFuel×0.3）。
+      fuelPerVolley: P.fuelPerVolley || 0,
       drops: tacticDrops,
       // ★ P1a：本段击杀的敌舰索引（升序，对应当前波 fleet.ships 下标）；P2 掉落按它逐只结算
       killed: killed,
@@ -1759,7 +1764,7 @@
       waveSec: 0, progress: 0, fleet: null, fleetHp: 0,
       squadDps: 0, weaponDps: 0, fleetDps: 0, incomingDps: 0,
       repairPerSec: 0, dmgReduction: 0, band: band,
-      combatants: [], drops: null, fuelStarved: false, noWeapon: false,
+      combatants: [], drops: null, fuelStarved: false, noWeapon: false, fuelPerVolley: 0,
       wave: state.combatWave[nodeId] || 1, clears: state.combatClears[nodeId] || 0,
       compId: compId, isBossWave: compId === "boss",
       killed: [], kills: { normal: 0, elite: 0, boss: 0 }, enemiesLeft: 0,
@@ -2008,6 +2013,9 @@
       dmgReduction: Pf.dmgReduction,
       band: band,
       combatants: Pf.combatants,
+      // 参战装备每齐射燃料（未乘电容折扣）：settle 用 r.fuelPerVolley × capMult × 0.3
+      // 复刻 1 代电容管理经验（combat.js:1771 volleyFuel×0.3）。装配不变 ⇒ 取 P0 即可。
+      fuelPerVolley: P0.fuelPerVolley || 0,
       drops: Object.keys(dropsTotal).length ? dropsTotal : null,
       wave: state.combatWave[nodeId] || 1,
       clears: state.combatClears[nodeId] || 0,
